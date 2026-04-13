@@ -1,0 +1,5 @@
+error: unrecognized subcommand 'unknown'
+
+Usage: forkspace <COMMAND>
+
+For more information, try '--help'.

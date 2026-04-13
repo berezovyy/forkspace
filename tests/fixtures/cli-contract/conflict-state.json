@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "workspaces": {
+    "parent": {
+      "name": "parent", "base": "/tmp/base", "upper": "/tmp/parent/upper",
+      "work": "/tmp/parent/work", "merged": "/tmp/parent/merged", "parent": null,
+      "created": "2025-01-01T00:00:00Z", "session": null
+    },
+    "child": {
+      "name": "child", "base": "/tmp/parent/merged", "upper": "/tmp/child/upper",
+      "work": "/tmp/child/work", "merged": "/tmp/child/merged", "parent": "parent",
+      "created": "2025-01-01T00:00:01Z", "session": null
+    }
+  },
+  "proxy": null
+}

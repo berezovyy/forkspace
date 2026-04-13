@@ -4,6 +4,7 @@ use crate::diff::{
     collect_cumulative_changes_fast, format_diff, generate_unified_diff, DiffFormat, DiffOutput,
 };
 use crate::error::{ForkspaceError, Result};
+use crate::filter::ChangeFilter;
 use crate::state::State;
 
 pub fn exec(args: DiffArgs) -> Result {
@@ -23,6 +24,12 @@ pub fn exec(args: DiffArgs) -> Result {
         collect_changes_fast(workspace)?
     };
 
+    let changes = if args.no_gitignore {
+        changes
+    } else {
+        ChangeFilter::build(&workspace.base).filter_changes(changes)
+    };
+
     if changes.is_empty() {
         if args.json {
             let output = DiffOutput {
@@ -30,8 +37,11 @@ pub fn exec(args: DiffArgs) -> Result {
                 base: workspace.base.clone(),
                 changes: Vec::new(),
             };
-            println!("{}", serde_json::to_string_pretty(&output)
-                .map_err(|e| ForkspaceError::Serialization(e.to_string()))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output)
+                    .map_err(|e| ForkspaceError::Serialization(e.to_string()))?
+            );
         } else {
             println!("clean — no changes");
         }
@@ -44,8 +54,11 @@ pub fn exec(args: DiffArgs) -> Result {
             base: workspace.base.clone(),
             changes,
         };
-        println!("{}", serde_json::to_string_pretty(&output)
-                .map_err(|e| ForkspaceError::Serialization(e.to_string()))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output)
+                .map_err(|e| ForkspaceError::Serialization(e.to_string()))?
+        );
     } else if args.full {
         for change in &changes {
             print!("{}", generate_unified_diff(workspace, change));

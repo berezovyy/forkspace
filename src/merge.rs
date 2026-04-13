@@ -4,6 +4,7 @@ use std::process::Command;
 
 use crate::diff::{self, ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
+use crate::filter::ChangeFilter;
 use crate::util::{ensure_parent_dir, IoContext};
 use crate::workspace::Workspace;
 
@@ -33,9 +34,9 @@ impl PackageManager {
 }
 
 pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
-    let changes = diff::collect_changes_fast(workspace)?;
+    let all_changes = diff::collect_changes_fast(workspace)?;
 
-    if changes.is_empty() {
+    if all_changes.is_empty() {
         return Ok(MergeResult {
             added: 0,
             modified: 0,
@@ -44,18 +45,17 @@ pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
         });
     }
 
+    let filter = ChangeFilter::build(&workspace.base);
+    let total = all_changes.len();
+    let changes = filter.filter_changes(all_changes);
+    let skipped_by_filter = total - changes.len();
+
     let mut added = 0usize;
     let mut modified = 0usize;
     let mut deleted = 0usize;
-    let mut skipped = 0usize;
+    let skipped = skipped_by_filter;
 
     for change in &changes {
-        let path_str = change.path.to_string_lossy();
-        if path_str.starts_with("node_modules/") || path_str == "node_modules" {
-            skipped += 1;
-            continue;
-        }
-
         match change.kind {
             ChangeKind::Added | ChangeKind::Modified => {
                 let src = workspace.upper.join(&change.path);
@@ -63,9 +63,8 @@ pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
 
                 ensure_parent_dir(&dst)?;
 
-                fs::copy(&src, &dst).io_context(|| {
-                    format!("copy {} -> {}", src.display(), dst.display())
-                })?;
+                fs::copy(&src, &dst)
+                    .io_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
 
                 if matches!(change.kind, ChangeKind::Added) {
                     added += 1;
@@ -77,13 +76,11 @@ pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
                 let target = workspace.base.join(&change.path);
                 if target.exists() {
                     if target.is_dir() {
-                        fs::remove_dir_all(&target).io_context(|| {
-                            format!("remove directory {}", target.display())
-                        })?;
+                        fs::remove_dir_all(&target)
+                            .io_context(|| format!("remove directory {}", target.display()))?;
                     } else {
-                        fs::remove_file(&target).io_context(|| {
-                            format!("remove {}", target.display())
-                        })?;
+                        fs::remove_file(&target)
+                            .io_context(|| format!("remove {}", target.display()))?;
                     }
                 }
                 deleted += 1;

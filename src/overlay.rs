@@ -14,7 +14,9 @@ impl Whiteout {
         if filename == ".wh..wh..opq" {
             Some(Whiteout::Opaque)
         } else {
-            filename.strip_prefix(".wh.").map(|name| Whiteout::Deletion(name.to_string()))
+            filename
+                .strip_prefix(".wh.")
+                .map(|name| Whiteout::Deletion(name.to_string()))
         }
     }
 }
@@ -37,6 +39,37 @@ pub fn find_fusermount() -> &'static str {
     }
 }
 
+pub fn probe_fuse_overlayfs() -> std::result::Result<(), String> {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/fuse")
+        .map_err(|e| format!("cannot open /dev/fuse: {e}"))?;
+
+    let root = std::env::temp_dir().join(format!(
+        "forkspace-fuse-probe-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let lower = root.join("lower");
+    let upper = root.join("upper");
+    let work = root.join("work");
+    let merged = root.join("merged");
+    for path in [&lower, &upper, &work, &merged] {
+        fs::create_dir_all(path)
+            .map_err(|e| format!("cannot create probe directory {}: {e}", path.display()))?;
+    }
+
+    let result = mount_overlay(&lower, &upper, &work, &merged, &OverlayOpts::default())
+        .map_err(|e| e.to_string())
+        .and_then(|()| unmount_overlay(&merged).map_err(|e| e.to_string()));
+    let _ = fs::remove_dir_all(&root);
+    result
+}
+
 pub(crate) struct OverlayOpts {
     pub tmpfs: bool,
     pub tmpfs_size: String,
@@ -52,16 +85,10 @@ impl Default for OverlayOpts {
 }
 
 pub(crate) fn mount_tmpfs(path: &Path, size: &str) -> Result {
-    if !Path::new("/dev/shm").exists() {
-        eprintln!(
-            "warning: /dev/shm not available, using regular directory for tmpfs (size={}) at {}",
-            size,
-            path.display()
-        );
-    }
-    fs::create_dir_all(path).map_err(|e| {
-        ForkspaceError::MountFailed(format!("failed to create dir at {}: {}", path.display(), e))
-    })
+    let _ = (path, size);
+    Err(ForkspaceError::CapabilityUnsupported(
+        "--tmpfs is not implemented; omit --tmpfs to use disk-backed workspace storage".to_string(),
+    ))
 }
 
 pub(crate) fn unmount_tmpfs(path: &Path) -> Result {
@@ -70,7 +97,10 @@ pub(crate) fn unmount_tmpfs(path: &Path) -> Result {
     }
     if path.exists() {
         if let Err(e) = fs::remove_dir_all(path) {
-            eprintln!("warning: failed to remove directory {}: {e}", path.display());
+            eprintln!(
+                "warning: failed to remove directory {}: {e}",
+                path.display()
+            );
         }
     }
     Ok(())
@@ -108,12 +138,8 @@ pub(crate) fn mount_overlay(
         Ok(status) if status.success() => return Ok(()),
         Ok(_status) => ForkspaceError::MountFailed(diagnose_mount_failure(merged)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            ForkspaceError::MountFailed(
-                "fuse-overlayfs not found. Install it:\n  \
-                 Ubuntu/Debian: sudo apt install fuse-overlayfs\n  \
-                 Fedora:        sudo dnf install fuse-overlayfs\n  \
-                 Arch:          sudo pacman -S fuse-overlayfs\n  \
-                 macOS:         brew install fuse-overlayfs"
+            ForkspaceError::BackendUnavailable(
+                "fuse-overlayfs was not found; install the fuse-overlayfs package for your Linux distribution"
                     .to_string(),
             )
         }
@@ -174,9 +200,7 @@ fn diagnose_mount_failure(merged: &Path) -> String {
         }
     }
 
-    if let Ok(val) = fs::read_to_string(
-        "/proc/sys/kernel/apparmor_restrict_unprivileged_userns",
-    ) {
+    if let Ok(val) = fs::read_to_string("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") {
         if val.trim() == "1" {
             hints.push(
                 "  AppArmor is blocking unprivileged user namespaces.\n  \
@@ -210,6 +234,17 @@ fn diagnose_mount_failure(merged: &Path) -> String {
 }
 
 pub fn unmount_overlay(merged: &Path) -> Result {
+    if let Ok(mountinfo) = fs::read_to_string("/proc/self/mountinfo") {
+        let mounted = mountinfo.lines().any(|line| {
+            line.split_whitespace()
+                .nth(4)
+                .is_some_and(|field| field == merged.to_string_lossy())
+        });
+        if !mounted {
+            return Ok(());
+        }
+    }
+
     match fuse_unmount(merged) {
         Ok(()) => Ok(()),
         Err(e) => {
@@ -244,15 +279,12 @@ fn fuse_unmount(path: &Path) -> Result {
                 stderr.trim()
             )))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Err(ForkspaceError::UnmountFailed(
-                "fusermount3 not found — install fuse3".to_string(),
-            ))
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(ForkspaceError::UnmountFailed(
+            "fusermount3 not found — install fuse3".to_string(),
+        )),
         Err(e) => Err(ForkspaceError::UnmountFailed(format!(
             "failed to run {}: {}",
             fusermount, e
         ))),
     }
 }
-

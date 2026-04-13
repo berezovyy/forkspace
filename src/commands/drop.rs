@@ -14,9 +14,7 @@ pub(crate) fn remove_workspace(state: &mut State, name: &str) -> Result {
         }
     }
 
-    if let Err(e) = unmount_overlay(&ws.merged) {
-        eprintln!("warning: failed to unmount overlay for '{}': {e}", name);
-    }
+    unmount_overlay(&ws.merged)?;
 
     if ws.tmpfs {
         if let Err(e) = unmount_tmpfs(&ws.upper) {
@@ -28,13 +26,23 @@ pub(crate) fn remove_workspace(state: &mut State, name: &str) -> Result {
     }
 
     let ws_dir = forkspace_home().join(name);
-    if let Err(e) = fs::remove_dir_all(&ws_dir) {
-        eprintln!("warning: failed to remove workspace directory {}: {e}", ws_dir.display());
-    }
-
-    state.remove_workspace(name)?;
+    remove_workspace_record_after_cleanup(state, name, || fs::remove_dir_all(&ws_dir))?;
 
     Ok(())
+}
+
+fn remove_workspace_record_after_cleanup<F>(state: &mut State, name: &str, cleanup: F) -> Result
+where
+    F: FnOnce() -> std::io::Result<()>,
+{
+    cleanup().map_err(|e| ForkspaceError::Io {
+        context: format!(
+            "remove workspace directory {}; retry `forkspace drop {name}` after closing processes using it",
+            forkspace_home().join(name).display()
+        ),
+        source: e,
+    })?;
+    state.remove_workspace(name)
 }
 
 fn collect_descendants(state: &State, name: &str) -> Vec<String> {
@@ -156,4 +164,26 @@ fn run_drop_glob(pattern: &str) -> Result {
         println!("removed {} workspaces matching '{}'", count, pattern);
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remove_workspace_record_after_cleanup;
+    use crate::state::State;
+    use crate::workspace::Workspace;
+
+    #[test]
+    fn ebusy_cleanup_retains_workspace_state() {
+        let mut state = State::default();
+        state
+            .add_workspace(Workspace::new("busy", "/tmp/base".into(), None))
+            .unwrap();
+
+        let result = remove_workspace_record_after_cleanup(&mut state, "busy", || {
+            Err(std::io::Error::from_raw_os_error(libc::EBUSY))
+        });
+
+        assert!(result.is_err());
+        assert!(state.workspaces.contains_key("busy"));
+    }
 }

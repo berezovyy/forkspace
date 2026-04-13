@@ -1,0 +1,12 @@
+Start a process in a workspace (dev server, Electron, etc.)
+
+Usage: forkspace run [OPTIONS] <NAME> [-- <COMMAND>...]
+
+Arguments:
+  <NAME>        Name of the workspace
+  [COMMAND]...  Command to run (e.g. npm run dev)
+
+Options:
+      --port <PORT>  Port the app listens on inside the workspace [default: 3000]
+      --stop         Stop the running process instead of starting one
+  -h, --help         Print help

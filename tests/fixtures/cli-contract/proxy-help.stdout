@@ -1,0 +1,7 @@
+Internal: run the TCP proxy daemon
+
+Usage: forkspace proxy-daemon [OPTIONS]
+
+Options:
+      --port <PORT>  Port to listen on [default: 4000]
+  -h, --help         Print help

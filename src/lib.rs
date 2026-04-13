@@ -2,6 +2,7 @@ pub mod cli;
 pub mod commands;
 pub mod diff;
 pub mod error;
+pub mod filter;
 pub mod merge;
 pub mod overlay;
 pub(crate) mod proxy;

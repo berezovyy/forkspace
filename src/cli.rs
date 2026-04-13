@@ -41,9 +41,6 @@ pub enum Commands {
     /// Apply workspace changes back to the base directory
     Merge(MergeArgs),
 
-    /// Remove all workspaces and state
-    Nuke(NukeArgs),
-
     /// Generate shell completions
     #[command(hide = true)]
     Completions(CompletionsArgs),
@@ -55,16 +52,25 @@ pub enum Commands {
 
 #[derive(Args)]
 pub struct ForkArgs {
-    #[arg(default_value = ".", help = "Directory to fork (defaults to current directory)")]
+    #[arg(
+        default_value = ".",
+        help = "Directory to fork (defaults to current directory)"
+    )]
     pub base: PathBuf,
 
-    #[arg(long, help = "Name for the new workspace (defaults to directory basename)")]
+    #[arg(
+        long,
+        help = "Name for the new workspace (defaults to directory basename)"
+    )]
     pub name: Option<String>,
 
     #[arg(long, help = "Session identifier for grouping related workspaces")]
     pub session: Option<String>,
 
-    #[arg(long, help = "Back the workspace with tmpfs (RAM-only, vanishes on reboot)")]
+    #[arg(
+        long,
+        help = "Back the workspace with tmpfs (RAM-only, vanishes on reboot)"
+    )]
     pub tmpfs: bool,
 
     #[arg(long, help = "Size limit for the tmpfs backing store (e.g. 512M, 2G)")]
@@ -73,7 +79,10 @@ pub struct ForkArgs {
 
 #[derive(Args)]
 pub struct DropArgs {
-    #[arg(required_unless_present = "all", help = "Name of the workspace to remove")]
+    #[arg(
+        required_unless_present = "all",
+        help = "Name of the workspace to remove"
+    )]
     pub name: Option<String>,
 
     #[arg(long, help = "Force removal even if the workspace has children")]
@@ -82,7 +91,10 @@ pub struct DropArgs {
     #[arg(long, help = "Remove all workspaces")]
     pub all: bool,
 
-    #[arg(long, help = "Treat name as a glob pattern to match multiple workspaces")]
+    #[arg(
+        long,
+        help = "Treat name as a glob pattern to match multiple workspaces"
+    )]
     pub glob: bool,
 }
 
@@ -91,7 +103,11 @@ pub struct EnterArgs {
     #[arg(help = "Name of the workspace to enter (omit to auto-detect)")]
     pub name: Option<String>,
 
-    #[arg(long, alias = "new", help = "Create the workspace if it does not exist")]
+    #[arg(
+        long,
+        alias = "new",
+        help = "Create the workspace if it does not exist"
+    )]
     pub create: bool,
 
     #[arg(long, help = "Base directory when creating a new workspace on entry")]
@@ -100,16 +116,25 @@ pub struct EnterArgs {
     #[arg(long, help = "Destroy the workspace automatically on exit")]
     pub ephemeral: bool,
 
-    #[arg(long, help = "Back the workspace with tmpfs (RAM-only, vanishes on reboot)")]
+    #[arg(
+        long,
+        help = "Back the workspace with tmpfs (RAM-only, vanishes on reboot)"
+    )]
     pub tmpfs: bool,
 
-    #[arg(long, help = "Merge changes back to the base directory when exiting the shell")]
+    #[arg(
+        long,
+        help = "Merge changes back to the base directory when exiting the shell"
+    )]
     pub merge_on_exit: bool,
 
     #[arg(long, help = "Session identifier to set in the spawned shell")]
     pub session: Option<String>,
 
-    #[arg(last = true, help = "Command to run inside the workspace instead of a shell")]
+    #[arg(
+        last = true,
+        help = "Command to run inside the workspace instead of a shell"
+    )]
     pub command: Vec<String>,
 }
 
@@ -118,7 +143,11 @@ pub struct RunArgs {
     #[arg(help = "Name of the workspace")]
     pub name: String,
 
-    #[arg(long, default_value_t = 3000, help = "Port the app listens on inside the workspace")]
+    #[arg(
+        long,
+        default_value_t = 3000,
+        help = "Port the app listens on inside the workspace"
+    )]
     pub port: u16,
 
     #[arg(long, help = "Stop the running process instead of starting one")]
@@ -138,6 +167,12 @@ pub struct SwitchArgs {
 pub struct LsArgs {
     #[arg(long, help = "Output only workspace names, one per line")]
     pub names: bool,
+
+    #[arg(
+        long,
+        help = "Show all files including gitignored paths (build artifacts, node_modules, etc.)"
+    )]
+    pub no_gitignore: bool,
 }
 
 #[derive(Args)]
@@ -165,6 +200,12 @@ pub struct DiffArgs {
 
     #[arg(long, conflicts_with_all = ["stat", "full", "files"], help = "Output diff information as JSON")]
     pub json: bool,
+
+    #[arg(
+        long,
+        help = "Show all files including gitignored paths (build artifacts, node_modules, etc.)"
+    )]
+    pub no_gitignore: bool,
 }
 
 #[derive(Args)]
@@ -186,12 +227,6 @@ pub struct MergeArgs {
 
     #[arg(long, help = "Skip automatic dependency installation after merge")]
     pub no_install: bool,
-}
-
-#[derive(Args)]
-pub struct NukeArgs {
-    #[arg(long, short = 'y', help = "Skip confirmation prompt")]
-    pub yes: bool,
 }
 
 #[derive(Args)]

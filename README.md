@@ -8,7 +8,7 @@
 
 <p align="center">
   No Docker. No root. Nothing is actually copied. Only what you change gets stored. <br/>
-~5ms to fork any project, any size.
+Fork time depends on the project and storage backend; release benchmarks are not published yet.
 </p>
 
 <p align="center">
@@ -16,7 +16,7 @@
   <a href="https://github.com/berezovyy/forkspace/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-a371f7?style=flat-square" alt="license" /></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/Linux-only-FCC624?style=flat-square&logo=linux&logoColor=black" alt="linux" /></a>
   <a href="#install"><img src="https://img.shields.io/badge/no_root-required-238636?style=flat-square" alt="no root" /></a>
-  <a href="#how-it-works"><img src="https://img.shields.io/badge/fork_time-~5ms-58a6ff?style=flat-square" alt="~5ms" /></a>
+  <a href="#how-it-works"><img src="https://img.shields.io/badge/fork_time-unbenchmarked-58a6ff?style=flat-square" alt="fork time unbenchmarked" /></a>
 </p>
 
 <br/>
@@ -27,7 +27,7 @@
 
 |                         |  `cp -r`  |  Docker   | Git Worktree |   **forkspace**   |
 | :---------------------- | :-------: | :-------: | :----------: | :-----------: |
-| **Speed**               |   Slow    |   Slow    |     Fast     |   **~5ms**    |
+| **Speed**               |   Slow    |   Slow    |     Fast     | **Unbenchmarked** |
 | `.env` / `node_modules` |    Yes    |    No     |      No      |    **Yes**    |
 | **Isolation**           |   Full    |   Full    |   Partial    |   **Full**    |
 | **Disk usage**          | Full copy | Full copy |   Partial    | **Zero-copy** |
@@ -147,8 +147,7 @@ forkspace enter --ephemeral
 # or run a single command
 forkspace enter --ephemeral -- make test
 
-# RAM-backed - vanishes on reboot, zero trace
-forkspace enter --ephemeral --tmpfs
+# `--tmpfs` is reserved but not implemented yet; use disk-backed ephemeral workspaces.
 ```
 
 </details>
@@ -167,7 +166,6 @@ forkspace enter --ephemeral --tmpfs
 | `ls`     | List workspaces                                                        |
 | `run`    | Start a dev server with automatic proxy setup                          |
 | `switch` | Hot-swap which workspace the proxy routes to                           |
-| `nuke`   | Remove everything                                                      |
 
 <br/>
 
@@ -184,7 +182,7 @@ merged/    ← you work here (reads from both layers)
 
 When you read a file, it comes from the original. When you write, the file is copied to upper first (copy-on-write), then modified there. The original never changes. Deletes are tracked as whiteout markers. The upper directory _is_ the diff - no diffing algorithm needed.
 
-Forking is instant (~5ms) because nothing is copied. Merging moves files from upper back to the base. Dropping unmounts and deletes the upper.
+Forking avoids copying project contents on the Linux overlay backend. Merging moves files from upper back to the base. Dropping unmounts and deletes the upper.
 
 <br/>
 

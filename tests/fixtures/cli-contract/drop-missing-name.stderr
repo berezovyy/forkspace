@@ -1,0 +1,6 @@
+error: the following required arguments were not provided:
+  <NAME>
+
+Usage: forkspace drop <NAME>
+
+For more information, try '--help'.

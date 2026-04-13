@@ -4,6 +4,7 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::error::{ForkspaceError, Result};
 use crate::util::forkspace_home;
@@ -11,6 +12,22 @@ use crate::workspace::Workspace;
 
 fn default_version() -> u32 {
     1
+}
+
+#[cfg(test)]
+static PARENT_DIRECTORY_SYNCED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn sync_parent_directory(path: &std::path::Path) -> Result {
+    fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|e| ForkspaceError::Io {
+            context: format!("sync state directory {}", path.display()),
+            source: e,
+        })?;
+    #[cfg(test)]
+    PARENT_DIRECTORY_SYNCED.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +47,8 @@ pub struct State {
     pub workspaces: HashMap<String, Workspace>,
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
+    #[serde(flatten)]
+    pub unknown_fields: Map<String, Value>,
 }
 
 impl Default for State {
@@ -38,6 +57,7 @@ impl Default for State {
             version: 1,
             workspaces: HashMap::new(),
             proxy: None,
+            unknown_fields: Map::new(),
         }
     }
 }
@@ -49,11 +69,10 @@ impl State {
             return Ok(State::default());
         }
 
-        let content = fs::read_to_string(&path)
-            .map_err(|e| ForkspaceError::Io {
-                context: format!("read state file {}", path.display()),
-                source: e,
-            })?;
+        let content = fs::read_to_string(&path).map_err(|e| ForkspaceError::Io {
+            context: format!("read state file {}", path.display()),
+            source: e,
+        })?;
 
         if content.trim().is_empty() {
             return Ok(State::default());
@@ -73,39 +92,46 @@ impl State {
     }
 
     pub fn save(&self) -> Result {
+        if self.version > 1 {
+            return Err(ForkspaceError::StateFailed(format!(
+                "refusing to overwrite state version {} with a version 1 binary; upgrade forkspace and retry",
+                self.version
+            )));
+        }
+
         let path = forkspace_home().join("state.json");
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| ForkspaceError::Io {
-                    context: format!("create state directory {}", parent.display()),
-                    source: e,
-                })?;
+            fs::create_dir_all(parent).map_err(|e| ForkspaceError::Io {
+                context: format!("create state directory {}", parent.display()),
+                source: e,
+            })?;
         }
 
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| ForkspaceError::StateFailed(format!("failed to serialize state: {e}")))?;
 
         let tmp_path = path.with_extension("json.tmp");
-        let mut file = fs::File::create(&tmp_path)
-            .map_err(|e| ForkspaceError::Io {
-                context: format!("create temp state file {}", tmp_path.display()),
-                source: e,
-            })?;
+        let mut file = fs::File::create(&tmp_path).map_err(|e| ForkspaceError::Io {
+            context: format!("create temp state file {}", tmp_path.display()),
+            source: e,
+        })?;
         file.write_all(json.as_bytes())
             .map_err(|e| ForkspaceError::Io {
                 context: format!("write state file {}", tmp_path.display()),
                 source: e,
             })?;
-        file.sync_all()
-            .map_err(|e| ForkspaceError::Io {
-                context: format!("sync state file {}", tmp_path.display()),
-                source: e,
-            })?;
-        fs::rename(&tmp_path, &path)
-            .map_err(|e| ForkspaceError::Io {
-                context: format!("rename {} to {}", tmp_path.display(), path.display()),
-                source: e,
-            })?;
+        file.sync_all().map_err(|e| ForkspaceError::Io {
+            context: format!("sync state file {}", tmp_path.display()),
+            source: e,
+        })?;
+        fs::rename(&tmp_path, &path).map_err(|e| ForkspaceError::Io {
+            context: format!("rename {} to {}", tmp_path.display(), path.display()),
+            source: e,
+        })?;
+        let parent = path.parent().ok_or_else(|| {
+            ForkspaceError::StateFailed("state file has no parent directory".to_string())
+        })?;
+        sync_parent_directory(parent)?;
 
         Ok(())
     }
@@ -154,11 +180,10 @@ impl State {
     {
         let lock_path = forkspace_home().join("state.lock");
         if let Some(parent) = lock_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| ForkspaceError::Io {
-                    context: format!("create lock directory {}", parent.display()),
-                    source: e,
-                })?;
+            fs::create_dir_all(parent).map_err(|e| ForkspaceError::Io {
+                context: format!("create lock directory {}", parent.display()),
+                source: e,
+            })?;
         }
 
         let lock_file = fs::OpenOptions::new()
@@ -226,10 +251,27 @@ impl State {
     }
 
     pub fn workspace_names(&self) -> Vec<String> {
-        self.workspaces.iter().map(|(name, _)| name.clone()).collect()
+        self.workspaces.keys().cloned().collect()
     }
 
     pub fn sorted_deepest_first(&self, names: &mut [String]) {
         names.sort_by_key(|name| std::cmp::Reverse(self.depth_of(name)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{State, PARENT_DIRECTORY_SYNCED};
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn save_syncs_parent_directory() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("FORKSPACE_HOME", home.path()) };
+        PARENT_DIRECTORY_SYNCED.store(false, Ordering::SeqCst);
+
+        State::default().save().unwrap();
+
+        assert!(PARENT_DIRECTORY_SYNCED.load(Ordering::SeqCst));
     }
 }

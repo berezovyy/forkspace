@@ -26,6 +26,12 @@ pub enum ForkspaceError {
     #[error("mount failed: {0}")]
     MountFailed(String),
 
+    #[error("unsupported capability: {0}")]
+    CapabilityUnsupported(String),
+
+    #[error("backend unavailable: {0}")]
+    BackendUnavailable(String),
+
     #[error("unmount failed: {0}")]
     UnmountFailed(String),
 
@@ -38,7 +44,9 @@ pub enum ForkspaceError {
     #[error("no available ports in range 5501-5600")]
     PortRangeExhausted,
 
-    #[error("process already running in workspace '{0}' — stop it first with `forkspace run {0} --stop`")]
+    #[error(
+        "process already running in workspace '{0}' — stop it first with `forkspace run {0} --stop`"
+    )]
     ProcessAlreadyRunning(String),
 
     #[error("no process running in workspace '{0}'")]
@@ -62,6 +70,19 @@ pub enum ForkspaceError {
         #[source]
         source: std::io::Error,
     },
+}
+
+impl ForkspaceError {
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            Self::WorkspaceNotFound(_) => 3,
+            Self::WorkspaceExists(_) => 4,
+            Self::HasChildren { .. } => 5,
+            Self::CapabilityUnsupported(_) => 6,
+            Self::BackendUnavailable(_) | Self::MountFailed(_) => 7,
+            _ => 1,
+        }
+    }
 }
 
 pub type Result<T = ()> = std::result::Result<T, ForkspaceError>;

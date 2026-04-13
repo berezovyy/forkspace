@@ -49,7 +49,7 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
                 shorten_path(&ws.base)
             };
 
-            let file_count = ws.changed_file_count();
+            let file_count = ws.changed_file_count(!args.no_gitignore);
             let changed = if file_count == 1 {
                 "1 file".to_string()
             } else {

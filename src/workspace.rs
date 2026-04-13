@@ -1,3 +1,4 @@
+use crate::filter::ChangeFilter;
 use crate::util::{forkspace_home, now_rfc3339};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -49,10 +50,17 @@ impl Workspace {
         }
     }
 
-    pub(crate) fn changed_file_count(&self) -> usize {
+    pub(crate) fn changed_file_count(&self, respect_gitignore: bool) -> usize {
         if !self.upper.exists() {
             return 0;
         }
+
+        let filter = if respect_gitignore {
+            Some(ChangeFilter::build(&self.base))
+        } else {
+            None
+        };
+
         WalkDir::new(&self.upper)
             .min_depth(1)
             .into_iter()
@@ -63,6 +71,12 @@ impl Workspace {
                     .to_str()
                     .is_some_and(|name| !name.starts_with(".wh."))
             })
+            .filter(
+                |e| match (&filter, e.path().strip_prefix(&self.upper).ok()) {
+                    (Some(f), Some(rel)) => !f.is_ignored(rel, false),
+                    _ => true,
+                },
+            )
             .count()
     }
 }

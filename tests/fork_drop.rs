@@ -19,7 +19,7 @@ fn test_fork_creates_workspace() {
     assert!(ws.merged.exists());
 
     let state = State::load().unwrap();
-    assert!(state.workspaces.get("test-ws").is_some());
+    assert!(state.workspaces.contains_key("test-ws"));
 
     common::cleanup_workspace(&ws);
 }
@@ -48,7 +48,10 @@ fn test_fork_duplicate_name() {
     let ws = common::fork_helper(base.path().to_path_buf(), "dup-ws", None, None).unwrap();
 
     let result = common::fork_helper(base.path().to_path_buf(), "dup-ws", None, None);
-    assert!(matches!(result.unwrap_err(), ForkspaceError::WorkspaceExists(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        ForkspaceError::WorkspaceExists(_)
+    ));
 
     common::cleanup_workspace(&ws);
 }
@@ -57,7 +60,12 @@ fn test_fork_duplicate_name() {
 #[serial]
 fn test_fork_nonexistent_base() {
     let _dir = common::setup_test_env();
-    let result = common::fork_helper(PathBuf::from("/tmp/does-not-exist-forkspace-test"), "bad-ws", None, None);
+    let result = common::fork_helper(
+        PathBuf::from("/tmp/does-not-exist-forkspace-test"),
+        "bad-ws",
+        None,
+        None,
+    );
     assert!(result.is_err());
 }
 
@@ -83,7 +91,13 @@ fn test_fork_writes_state() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws = common::fork_helper(base.path().to_path_buf(), "state-ws", None, Some("my-session".into())).unwrap();
+    let ws = common::fork_helper(
+        base.path().to_path_buf(),
+        "state-ws",
+        None,
+        Some("my-session".into()),
+    )
+    .unwrap();
 
     let state = State::load().unwrap();
     let stored = state.workspaces.get("state-ws").unwrap();
@@ -111,11 +125,12 @@ fn test_drop_workspace() {
         force: false,
         all: false,
         glob: false,
-    }).unwrap();
+    })
+    .unwrap();
 
     assert!(!ws_dir.exists());
     let state = State::load().unwrap();
-    assert!(state.workspaces.get("drop-ws").is_none());
+    assert!(!state.workspaces.contains_key("drop-ws"));
     let _ = ws;
 }
 
@@ -129,7 +144,10 @@ fn test_drop_nonexistent() {
         all: false,
         glob: false,
     });
-    assert!(matches!(result.unwrap_err(), ForkspaceError::WorkspaceNotFound(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        ForkspaceError::WorkspaceNotFound(_)
+    ));
 }
 
 #[test]
@@ -148,7 +166,10 @@ fn test_drop_with_children_requires_force() {
         glob: false,
     });
     match result.unwrap_err() {
-        ForkspaceError::HasChildren { workspace, children } => {
+        ForkspaceError::HasChildren {
+            workspace,
+            children,
+        } => {
             assert_eq!(workspace, "parent-drop");
             assert!(children.contains(&"child-drop".to_string()));
         }
@@ -156,8 +177,8 @@ fn test_drop_with_children_requires_force() {
     }
 
     let state = State::load().unwrap();
-    assert!(state.workspaces.get("parent-drop").is_some());
-    assert!(state.workspaces.get("child-drop").is_some());
+    assert!(state.workspaces.contains_key("parent-drop"));
+    assert!(state.workspaces.contains_key("child-drop"));
 
     common::cleanup_workspace(&ws2);
     common::cleanup_workspace(&ws1);
@@ -169,19 +190,22 @@ fn test_drop_force_cascade() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let _ws1 = common::fork_helper(base.path().to_path_buf(), "cascade-parent", None, None).unwrap();
-    let _ws2 = common::fork_helper(PathBuf::from("cascade-parent"), "cascade-child", None, None).unwrap();
+    let _ws1 =
+        common::fork_helper(base.path().to_path_buf(), "cascade-parent", None, None).unwrap();
+    let _ws2 =
+        common::fork_helper(PathBuf::from("cascade-parent"), "cascade-child", None, None).unwrap();
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
         name: Some("cascade-parent".to_string()),
         force: true,
         all: false,
         glob: false,
-    }).unwrap();
+    })
+    .unwrap();
 
     let state = State::load().unwrap();
-    assert!(state.workspaces.get("cascade-parent").is_none());
-    assert!(state.workspaces.get("cascade-child").is_none());
+    assert!(!state.workspaces.contains_key("cascade-parent"));
+    assert!(!state.workspaces.contains_key("cascade-child"));
 }
 
 // ── Ls tests ──
@@ -190,7 +214,11 @@ fn test_drop_force_cascade() {
 #[serial]
 fn test_ls_empty() {
     let _dir = common::setup_test_env();
-    forkspace::commands::ls::exec(forkspace::cli::LsArgs { names: false }).unwrap();
+    forkspace::commands::ls::exec(forkspace::cli::LsArgs {
+        names: false,
+        no_gitignore: false,
+    })
+    .unwrap();
 }
 
 #[test]
@@ -200,10 +228,14 @@ fn test_ls_shows_workspaces() {
     let (_dir, base) = common::setup_with_project();
 
     let ws = common::fork_helper(base.path().to_path_buf(), "ls-test-ws", None, None).unwrap();
-    forkspace::commands::ls::exec(forkspace::cli::LsArgs { names: false }).unwrap();
+    forkspace::commands::ls::exec(forkspace::cli::LsArgs {
+        names: false,
+        no_gitignore: false,
+    })
+    .unwrap();
 
     let state = State::load().unwrap();
-    assert!(state.workspaces.get("ls-test-ws").is_some());
+    assert!(state.workspaces.contains_key("ls-test-ws"));
 
     common::cleanup_workspace(&ws);
 }
@@ -211,7 +243,6 @@ fn test_ls_shows_workspaces() {
 #[test]
 #[serial]
 fn test_fork_tmpfs_with_overlay() {
-    skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
     let result = forkspace::commands::fork::create_workspace(
@@ -223,16 +254,23 @@ fn test_fork_tmpfs_with_overlay() {
         Some("128m".to_string()),
     );
 
-    match result {
-        Ok(ws) => {
-            let state = State::load().unwrap();
-            let stored = state.workspaces.get("tmpfs-overlay-ws").unwrap();
-            assert!(stored.tmpfs);
-            assert_eq!(stored.tmpfs_size, Some("128m".to_string()));
-            common::cleanup_workspace(&ws);
-        }
-        Err(_) => {
-            eprintln!("skipping: tmpfs mount not available");
-        }
+    assert!(matches!(result, Err(ForkspaceError::CapabilityUnsupported(_))));
+    assert!(State::load().unwrap().workspaces.is_empty());
+}
+
+#[test]
+#[serial]
+fn test_fork_rejects_unsafe_workspace_names() {
+    let (_dir, base) = common::setup_with_project();
+    for name in ["", ".", "..", "a/b", "a\0b"] {
+        let error = common::fork_helper(base.path().to_path_buf(), name, None, None).unwrap_err();
+        assert!(
+            matches!(error, ForkspaceError::InvalidArgument(_)),
+            "accepted {name:?}"
+        );
     }
+
+    let long_name = "x".repeat(256);
+    let error = common::fork_helper(base.path().to_path_buf(), &long_name, None, None).unwrap_err();
+    assert!(matches!(error, ForkspaceError::InvalidArgument(_)));
 }

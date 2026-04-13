@@ -15,7 +15,11 @@ fn test_diff_no_changes() {
 
     let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
     let changes = collect_changes(&ws).unwrap();
-    assert!(changes.is_empty(), "expected no changes, got: {:?}", changes);
+    assert!(
+        changes.is_empty(),
+        "expected no changes, got: {:?}",
+        changes
+    );
 }
 
 #[test]
@@ -43,7 +47,11 @@ fn test_diff_modified_file() {
     let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
 
     fs::write(base.join("file.txt"), "line1\nline2\nline3\n").unwrap();
-    fs::write(ws.upper.join("file.txt"), "line1\nmodified\nline3\nnew_line\n").unwrap();
+    fs::write(
+        ws.upper.join("file.txt"),
+        "line1\nmodified\nline3\nnew_line\n",
+    )
+    .unwrap();
 
     let changes = collect_changes(&ws).unwrap();
     assert_eq!(changes.len(), 1);
@@ -149,11 +157,17 @@ fn test_diff_binary_detection() {
     assert!(!is_binary(&ws.upper.join("text.txt")));
 
     let changes = collect_changes(&ws).unwrap();
-    let binary_change = changes.iter().find(|c| c.path == PathBuf::from("image.png")).unwrap();
+    let binary_change = changes
+        .iter()
+        .find(|c| c.path == std::path::Path::new("image.png"))
+        .unwrap();
     assert!(binary_change.is_binary);
     assert!(binary_change.additions.is_none());
 
-    let text_change = changes.iter().find(|c| c.path == PathBuf::from("text.txt")).unwrap();
+    let text_change = changes
+        .iter()
+        .find(|c| c.path == std::path::Path::new("text.txt"))
+        .unwrap();
     assert!(!text_change.is_binary);
 }
 
@@ -197,8 +211,12 @@ fn test_diff_command_workspace_not_found() {
         files: false,
         cumulative: false,
         json: false,
+        no_gitignore: false,
     });
-    assert!(matches!(result.unwrap_err(), forkspace::error::ForkspaceError::WorkspaceNotFound(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        forkspace::error::ForkspaceError::WorkspaceNotFound(_)
+    ));
 }
 
 #[test]
@@ -232,6 +250,12 @@ fn test_diff_default_format() {
     let changes = collect_changes(&ws).unwrap();
     let output = forkspace::diff::format_diff(&changes, &DiffFormat::Default);
     let plain = common::strip_ansi(&output);
-    assert!(plain.contains("M  mod.rs"), "expected 'M  mod.rs' in: {plain}");
-    assert!(plain.contains("A  new.rs"), "expected 'A  new.rs' in: {plain}");
+    assert!(
+        plain.contains("M  mod.rs"),
+        "expected 'M  mod.rs' in: {plain}"
+    );
+    assert!(
+        plain.contains("A  new.rs"),
+        "expected 'A  new.rs' in: {plain}"
+    );
 }

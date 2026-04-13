@@ -1,0 +1,9 @@
+Switch the active workspace (hot-swap via proxy)
+
+Usage: forkspace switch <NAME>
+
+Arguments:
+  <NAME>  Name of the workspace to switch to
+
+Options:
+  -h, --help  Print help

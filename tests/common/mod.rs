@@ -88,18 +88,15 @@ pub fn cleanup_workspace(ws: &forkspace::workspace::Workspace) {
     let _ = forkspace::overlay::unmount_overlay(&ws.merged);
 }
 
-/// Skips the test if fuse-overlayfs is not available.
-/// Uses the same binary detection logic as production code.
 #[macro_export]
 macro_rules! skip_without_overlay {
-    () => {
-        {
-            let fuse_bin = std::path::Path::new(forkspace::overlay::find_fuse_overlayfs());
-            let mount_bin = std::path::Path::new(forkspace::overlay::find_fusermount());
-            if !fuse_bin.exists() || !mount_bin.exists() {
-                eprintln!("skipping test: fuse-overlayfs not available or cannot mount");
-                return;
-            }
+    () => {{
+        if let Err(reason) = forkspace::overlay::probe_fuse_overlayfs() {
+            eprintln!(
+                "FORKSPACE_TEST_SKIP {{\"capability\":\"fuse-overlayfs\",\"reason\":{}}}",
+                serde_json::to_string(&reason).expect("serialize skip reason")
+            );
+            return;
         }
-    };
+    }};
 }

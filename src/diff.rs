@@ -9,8 +9,8 @@ use similar::{ChangeTag, TextDiff};
 use walkdir::WalkDir;
 
 use crate::error::{ForkspaceError, Result};
-use crate::state::State;
 use crate::overlay::Whiteout;
+use crate::state::State;
 use crate::util::WalkDirExt;
 use crate::workspace::Workspace;
 
@@ -167,7 +167,12 @@ fn classify_file(
         let additions = if binary {
             None
         } else {
-            Some(fs::read_to_string(upper_path).unwrap_or_default().lines().count())
+            Some(
+                fs::read_to_string(upper_path)
+                    .unwrap_or_default()
+                    .lines()
+                    .count(),
+            )
         };
         Some(FileChange {
             path: rel_path,
@@ -195,10 +200,7 @@ pub fn collect_changes_fast(workspace: &Workspace) -> Result<Vec<FileChange>> {
     collect_changes_inner(workspace, false)
 }
 
-fn collect_changes_inner(
-    workspace: &Workspace,
-    need_line_counts: bool,
-) -> Result<Vec<FileChange>> {
+fn collect_changes_inner(workspace: &Workspace, need_line_counts: bool) -> Result<Vec<FileChange>> {
     let upper = &workspace.upper;
     if !upper.exists() {
         return Ok(Vec::new());
@@ -212,15 +214,13 @@ fn collect_changes_inner(
         let rel = entry
             .path()
             .strip_prefix(upper)
-            .map_err(|_| {
-                ForkspaceError::Io {
-                    context: format!(
-                        "entry {} is not under upper dir {}",
-                        entry.path().display(),
-                        upper.display()
-                    ),
-                    source: std::io::Error::new(std::io::ErrorKind::Other, "prefix mismatch"),
-                }
+            .map_err(|_| ForkspaceError::Io {
+                context: format!(
+                    "entry {} is not under upper dir {}",
+                    entry.path().display(),
+                    upper.display()
+                ),
+                source: std::io::Error::other("prefix mismatch"),
             })?;
 
         let file_name = match entry.file_name().to_str() {
@@ -232,7 +232,10 @@ fn collect_changes_inner(
             match whiteout {
                 Whiteout::Opaque => continue,
                 Whiteout::Deletion(original_name) => {
-                    changes.push(FileChange::deletion(whiteout_target_path(rel, &original_name)));
+                    changes.push(FileChange::deletion(whiteout_target_path(
+                        rel,
+                        &original_name,
+                    )));
                     continue;
                 }
             }
@@ -270,11 +273,7 @@ pub fn format_diff(changes: &[FileChange], mode: &DiffFormat) -> String {
                         format!(" {}", format!("(+{a})").green())
                     }
                     (ChangeKind::Modified, Some(a), Some(d)) => {
-                        format!(
-                            " {} {}",
-                            format!("(+{a})").green(),
-                            format!("(-{d})").red()
-                        )
+                        format!(" {} {}", format!("(+{a})").green(), format!("(-{d})").red())
                     }
                     (ChangeKind::Deleted, _, _) => String::new(),
                     _ => {
@@ -498,7 +497,9 @@ fn collect_cumulative_changes_inner(
 
     for (rel_path, upper_path) in &file_map {
         let base_path = original_base.join(rel_path);
-        if let Some(change) = classify_file(rel_path.clone(), upper_path, &base_path, need_line_counts) {
+        if let Some(change) =
+            classify_file(rel_path.clone(), upper_path, &base_path, need_line_counts)
+        {
             changes.push(change);
         }
     }

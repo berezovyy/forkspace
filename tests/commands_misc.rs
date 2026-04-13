@@ -1,7 +1,5 @@
 mod common;
 
-use std::fs;
-
 use forkspace::error::ForkspaceError;
 use forkspace::state::State;
 use forkspace::util::forkspace_home;
@@ -12,64 +10,6 @@ fn add_fake_workspace(state: &mut State, name: &str, parent: Option<String>) {
     let fake_base = std::path::PathBuf::from("/tmp/fake-base");
     let ws = common::make_test_workspace(&home, name, &fake_base, parent);
     state.add_workspace(ws).unwrap();
-}
-
-// ── Nuke tests ──
-
-#[test]
-#[serial]
-fn test_nuke_no_forkspace_home() {
-    let _dir = common::setup_test_env();
-    let home = forkspace_home();
-    let _ = fs::remove_dir_all(&home);
-    assert!(!home.exists());
-
-    forkspace::commands::nuke::exec(forkspace::cli::NukeArgs { yes: true }).unwrap();
-}
-
-#[test]
-#[serial]
-fn test_nuke_removes_forkspace_home() {
-    let _dir = common::setup_test_env();
-
-    let mut state = State::default();
-    add_fake_workspace(&mut state, "ws-nuke-1", None);
-    state.save().unwrap();
-
-    let home = forkspace_home();
-    assert!(home.exists());
-    assert!(home.join("state.json").exists());
-
-    forkspace::commands::nuke::exec(forkspace::cli::NukeArgs { yes: true }).unwrap();
-
-    assert!(!home.exists());
-}
-
-#[test]
-#[serial]
-fn test_nuke_corrupted_state() {
-    let _dir = common::setup_test_env();
-
-    let home = forkspace_home();
-    fs::create_dir_all(&home).unwrap();
-    fs::write(home.join("state.json"), "this is not json {{{").unwrap();
-
-    forkspace::commands::nuke::exec(forkspace::cli::NukeArgs { yes: true }).unwrap();
-
-    assert!(!home.exists());
-}
-
-#[test]
-#[serial]
-fn test_nuke_missing_state() {
-    let _dir = common::setup_test_env();
-
-    let home = forkspace_home();
-    fs::create_dir_all(&home).unwrap();
-
-    forkspace::commands::nuke::exec(forkspace::cli::NukeArgs { yes: true }).unwrap();
-
-    assert!(!home.exists());
 }
 
 // ── Drop --all tests ──
@@ -119,9 +59,9 @@ fn test_drop_glob() {
     .unwrap();
 
     let state = State::load().unwrap();
-    assert!(state.workspaces.get("auth-1").is_none());
-    assert!(state.workspaces.get("auth-2").is_none());
-    assert!(state.workspaces.get("other").is_some());
+    assert!(!state.workspaces.contains_key("auth-1"));
+    assert!(!state.workspaces.contains_key("auth-2"));
+    assert!(state.workspaces.contains_key("other"));
 }
 
 #[test]
@@ -142,7 +82,7 @@ fn test_drop_glob_no_match() {
     .unwrap();
 
     let state = State::load().unwrap();
-    assert!(state.workspaces.get("foo").is_some());
+    assert!(state.workspaces.contains_key("foo"));
 }
 
 // ── Error message tests ──

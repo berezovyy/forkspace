@@ -7,6 +7,13 @@ use forkspace::state::State;
 use forkspace::workspace::Workspace;
 use serial_test::serial;
 
+fn install_state_fixture(dir: &tempfile::TempDir, name: &str) {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    std::fs::copy(fixture, dir.path().join("state.json")).unwrap();
+}
+
 fn make_workspace(name: &str, parent: Option<String>) -> Workspace {
     let base = PathBuf::from("/tmp/base");
     let root = forkspace::util::forkspace_home();
@@ -43,7 +50,10 @@ fn test_add_duplicate() {
     state.add_workspace(make_workspace("dup", None)).unwrap();
     let result = state.add_workspace(make_workspace("dup", None));
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), ForkspaceError::WorkspaceExists(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        ForkspaceError::WorkspaceExists(_)
+    ));
 }
 
 #[test]
@@ -52,10 +62,10 @@ fn test_remove_workspace() {
     let _dir = common::setup_test_env();
     let mut state = State::load().unwrap();
     state.add_workspace(make_workspace("rm-me", None)).unwrap();
-    assert!(state.workspaces.get("rm-me").is_some());
+    assert!(state.workspaces.contains_key("rm-me"));
 
     state.remove_workspace("rm-me").unwrap();
-    assert!(state.workspaces.get("rm-me").is_none());
+    assert!(!state.workspaces.contains_key("rm-me"));
 }
 
 #[test]
@@ -65,7 +75,10 @@ fn test_remove_nonexistent() {
     let mut state = State::load().unwrap();
     let result = state.remove_workspace("nope");
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), ForkspaceError::WorkspaceNotFound(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        ForkspaceError::WorkspaceNotFound(_)
+    ));
 }
 
 #[test]
@@ -129,8 +142,12 @@ fn test_children_of() {
     let _dir = common::setup_test_env();
     let mut state = State::load().unwrap();
     state.add_workspace(make_workspace("root", None)).unwrap();
-    state.add_workspace(make_workspace("child1", Some("root".into()))).unwrap();
-    state.add_workspace(make_workspace("child2", Some("root".into()))).unwrap();
+    state
+        .add_workspace(make_workspace("child1", Some("root".into())))
+        .unwrap();
+    state
+        .add_workspace(make_workspace("child2", Some("root".into())))
+        .unwrap();
     state.add_workspace(make_workspace("other", None)).unwrap();
 
     let children = state.children_of("root");
@@ -148,9 +165,15 @@ fn test_children_of() {
 fn test_parent_chain() {
     let _dir = common::setup_test_env();
     let mut state = State::load().unwrap();
-    state.add_workspace(make_workspace("grandparent", None)).unwrap();
-    state.add_workspace(make_workspace("parent", Some("grandparent".into()))).unwrap();
-    state.add_workspace(make_workspace("child", Some("parent".into()))).unwrap();
+    state
+        .add_workspace(make_workspace("grandparent", None))
+        .unwrap();
+    state
+        .add_workspace(make_workspace("parent", Some("grandparent".into())))
+        .unwrap();
+    state
+        .add_workspace(make_workspace("child", Some("parent".into())))
+        .unwrap();
 
     let chain = state.parent_chain("child");
     let names: Vec<&str> = chain.iter().map(|ws| ws.name.as_str()).collect();
@@ -183,8 +206,12 @@ fn test_state_persistence() {
 
     {
         let mut state = State::load().unwrap();
-        state.add_workspace(make_workspace("persist", None)).unwrap();
-        state.add_workspace(make_workspace("persist-child", Some("persist".into()))).unwrap();
+        state
+            .add_workspace(make_workspace("persist", None))
+            .unwrap();
+        state
+            .add_workspace(make_workspace("persist-child", Some("persist".into())))
+            .unwrap();
         state.save().unwrap();
     }
 
@@ -196,4 +223,50 @@ fn test_state_persistence() {
         let child = state.workspaces.get("persist-child").unwrap();
         assert_eq!(child.parent.as_deref(), Some("persist"));
     }
+}
+
+#[test]
+#[serial]
+fn test_state_v1_fixture_round_trips_without_loss() {
+    let dir = common::setup_test_env();
+    install_state_fixture(&dir, "state-v1.json");
+    let before: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("state.json")).unwrap()).unwrap();
+
+    State::load().unwrap().save().unwrap();
+
+    let after: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("state.json")).unwrap()).unwrap();
+    assert_eq!(after, before);
+}
+
+#[test]
+#[serial]
+fn test_unknown_state_fields_survive_load_and_save() {
+    let dir = common::setup_test_env();
+    install_state_fixture(&dir, "state-v1-with-unknown-fields.json");
+
+    let state = State::load().unwrap();
+    state.save().unwrap();
+
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("state.json")).unwrap()).unwrap();
+    assert_eq!(saved["future_field"], serde_json::json!({"enabled": true}));
+}
+
+#[test]
+#[serial]
+fn test_newer_state_is_never_overwritten() {
+    let dir = common::setup_test_env();
+    let path = dir.path().join("state.json");
+    let original = b"{\"version\":99,\"workspaces\":{},\"future\":\"keep\"}\n";
+    std::fs::write(&path, original).unwrap();
+
+    let result = State::with_state(|state| {
+        state.proxy = None;
+        Ok(())
+    });
+
+    assert!(matches!(result, Err(ForkspaceError::StateFailed(_))));
+    assert_eq!(std::fs::read(path).unwrap(), original);
 }

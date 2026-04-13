@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "workspaces": {},
+  "proxy": null,
+  "future_field": {
+    "enabled": true
+  }
+}

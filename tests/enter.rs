@@ -190,7 +190,10 @@ fn test_enter_new_creates_workspace() {
     // Verify workspace was created in state
     let state = State::load().unwrap();
     let ws = state.workspaces.get("new-enter-ws");
-    assert!(ws.is_some(), "workspace 'new-enter-ws' should exist in state");
+    assert!(
+        ws.is_some(),
+        "workspace 'new-enter-ws' should exist in state"
+    );
 
     // Clean up
     if let Some(ws) = ws {
@@ -329,7 +332,7 @@ fn test_enter_ephemeral_with_name() {
     // Verify workspace is gone from state
     let state = State::load().unwrap();
     assert!(
-        state.workspaces.get("my-eph-ws").is_none(),
+        !state.workspaces.contains_key("my-eph-ws"),
         "ephemeral workspace 'my-eph-ws' should have been dropped"
     );
 }

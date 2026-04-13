@@ -1,0 +1,13 @@
+Create a new workspace from a directory
+
+Usage: forkspace fork [OPTIONS] [BASE]
+
+Arguments:
+  [BASE]  Directory to fork (defaults to current directory) [default: .]
+
+Options:
+      --name <NAME>        Name for the new workspace (defaults to directory basename)
+      --session <SESSION>  Session identifier for grouping related workspaces
+      --tmpfs              Back the workspace with tmpfs (RAM-only, vanishes on reboot)
+      --size <SIZE>        Size limit for the tmpfs backing store (e.g. 512M, 2G)
+  -h, --help               Print help

@@ -1,0 +1,12 @@
+Remove a workspace and unmount its overlay
+
+Usage: forkspace drop [OPTIONS] [NAME]
+
+Arguments:
+  [NAME]  Name of the workspace to remove
+
+Options:
+      --force  Force removal even if the workspace has children
+      --all    Remove all workspaces
+      --glob   Treat name as a glob pattern to match multiple workspaces
+  -h, --help   Print help

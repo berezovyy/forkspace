@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "workspaces": {
+    "fixture": {
+      "name": "fixture",
+      "base": "/tmp/base",
+      "upper": "/tmp/forkspace/fixture/upper",
+      "work": "/tmp/forkspace/fixture/work",
+      "merged": "/tmp/forkspace/fixture/merged",
+      "parent": null,
+      "created": "2025-01-01T00:00:00Z",
+      "session": "fixture-session",
+      "tmpfs": false,
+      "tmpfs_size": null,
+      "ephemeral": false
+    }
+  },
+  "proxy": null
+}

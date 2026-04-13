@@ -1,0 +1,8 @@
+List all active workspaces
+
+Usage: forkspace ls [OPTIONS]
+
+Options:
+      --names         Output only workspace names, one per line
+      --no-gitignore  Show all files including gitignored paths (build artifacts, node_modules, etc.)
+  -h, --help          Print help

@@ -1,0 +1,14 @@
+Apply workspace changes back to the base directory
+
+Usage: forkspace merge [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  Name of the workspace to merge
+
+Options:
+      --commit             Create a git commit with the merged changes
+  -m, --message <MESSAGE>  Commit message (implies --commit)
+      --patch              Generate a unified patch instead of merging
+      --drop               Drop the workspace after a successful merge
+      --no-install         Skip automatic dependency installation after merge
+  -h, --help               Print help

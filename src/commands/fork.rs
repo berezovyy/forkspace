@@ -31,7 +31,10 @@ fn apply_forkspaceclean(merged: &std::path::Path) {
         }
     }
     if cleaned > 0 {
-        eprintln!("forkspaceclean: removed {} overlay-incompatible file(s)", cleaned);
+        eprintln!(
+            "forkspaceclean: removed {} overlay-incompatible file(s)",
+            cleaned
+        );
     }
 }
 
@@ -43,6 +46,14 @@ pub fn create_workspace(
     tmpfs: bool,
     size: Option<String>,
 ) -> Result<Workspace> {
+    validate_workspace_name(name)?;
+    if tmpfs {
+        return Err(ForkspaceError::CapabilityUnsupported(
+            "--tmpfs is not implemented; omit --tmpfs to use disk-backed workspace storage"
+                .to_string(),
+        ));
+    }
+
     let (resolved_base, resolved_parent) = {
         let state = State::load()?;
         if state.workspaces.contains_key(name) {
@@ -69,7 +80,10 @@ pub fn create_workspace(
     }
 
     let resolved_base = resolved_base.canonicalize().io_context(|| {
-        format!("failed to canonicalize base path: {}", resolved_base.display())
+        format!(
+            "failed to canonicalize base path: {}",
+            resolved_base.display()
+        )
     })?;
 
     let mut ws = Workspace::new(name, resolved_base.clone(), resolved_parent);
@@ -77,15 +91,12 @@ pub fn create_workspace(
         ws.session = Some(s.clone());
     }
 
-    fs::create_dir_all(&ws.upper).io_context(|| {
-        format!("failed to create upper dir: {}", ws.upper.display())
-    })?;
-    fs::create_dir_all(&ws.work).io_context(|| {
-        format!("failed to create work dir: {}", ws.work.display())
-    })?;
-    fs::create_dir_all(&ws.merged).io_context(|| {
-        format!("failed to create merged dir: {}", ws.merged.display())
-    })?;
+    fs::create_dir_all(&ws.upper)
+        .io_context(|| format!("failed to create upper dir: {}", ws.upper.display()))?;
+    fs::create_dir_all(&ws.work)
+        .io_context(|| format!("failed to create work dir: {}", ws.work.display()))?;
+    fs::create_dir_all(&ws.merged)
+        .io_context(|| format!("failed to create merged dir: {}", ws.merged.display()))?;
 
     let opts = if tmpfs {
         OverlayOpts {
@@ -121,6 +132,20 @@ pub fn create_workspace(
     Ok(ws)
 }
 
+fn validate_workspace_name(name: &str) -> Result {
+    let invalid = name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.len() > 255
+        || name.bytes().any(|byte| byte == 0 || byte == b'/');
+    if invalid {
+        return Err(ForkspaceError::InvalidArgument(
+            "invalid workspace name; use 1-255 bytes without '/', NUL, '.' or '..'".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn exec(args: crate::cli::ForkArgs) -> Result {
     let name = match args.name {
         Some(n) => n,
@@ -129,11 +154,17 @@ pub fn exec(args: crate::cli::ForkArgs) -> Result {
             .file_name()
             .and_then(|n| n.to_str())
             .map(|s| s.to_string())
-            .ok_or_else(|| ForkspaceError::InvalidArgument(
-                "cannot derive workspace name from path; use --name".to_string(),
-            ))?,
+            .ok_or_else(|| {
+                ForkspaceError::InvalidArgument(
+                    "cannot derive workspace name from path; use --name".to_string(),
+                )
+            })?,
     };
     let ws = create_workspace(args.base, &name, None, args.session, args.tmpfs, args.size)?;
-    println!("created workspace '{}' from {}", ws.name, ws.merged.display());
+    println!(
+        "created workspace '{}' from {}",
+        ws.name,
+        ws.merged.display()
+    );
     Ok(())
 }
