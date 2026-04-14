@@ -201,7 +201,7 @@ pub fn collect_changes_fast(workspace: &Workspace) -> Result<Vec<FileChange>> {
 }
 
 fn collect_changes_inner(workspace: &Workspace, need_line_counts: bool) -> Result<Vec<FileChange>> {
-    let upper = &workspace.upper;
+    let upper = workspace.upper_path()?;
     if !upper.exists() {
         return Ok(Vec::new());
     }
@@ -332,7 +332,10 @@ fn colorize_unified_diff(plain: &str) -> String {
 }
 
 pub fn generate_unified_diff(workspace: &Workspace, change: &FileChange) -> String {
-    let upper_path = workspace.upper.join(&change.path);
+    let upper_path = workspace.upper_path().map_or_else(
+        |_| workspace.view_path.join(&change.path),
+        |upper| upper.join(&change.path),
+    );
     let base_path = workspace.base.join(&change.path);
 
     let a_label = format!("a/{}", change.path.display());
@@ -432,7 +435,10 @@ fn collect_cumulative_changes_inner(
 
     let original_base = &chain[0].base;
 
-    let uppers: Vec<&PathBuf> = chain.iter().map(|ws| &ws.upper).collect();
+    let uppers: Vec<PathBuf> = chain
+        .iter()
+        .map(|ws| ws.upper_path().map(Path::to_path_buf))
+        .collect::<Result<_>>()?;
 
     let mut file_map: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
     let mut deleted: BTreeSet<PathBuf> = BTreeSet::new();

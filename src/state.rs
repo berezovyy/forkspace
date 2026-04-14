@@ -6,12 +6,15 @@ use std::os::unix::io::AsRawFd;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::backend::{BackendKind, BackendState, LinuxBackendState};
 use crate::error::{ForkspaceError, Result};
 use crate::util::forkspace_home;
 use crate::workspace::Workspace;
 
+const CURRENT_VERSION: u32 = 2;
+
 fn default_version() -> u32 {
-    1
+    CURRENT_VERSION
 }
 
 #[cfg(test)]
@@ -37,6 +40,8 @@ pub struct ProxyConfig {
     pub target_port: Option<u16>,
     #[serde(default)]
     pub proxy_pid: Option<u32>,
+    #[serde(flatten)]
+    pub unknown_fields: Map<String, Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,7 +59,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: CURRENT_VERSION,
             workspaces: HashMap::new(),
             proxy: None,
             unknown_fields: Map::new(),
@@ -62,9 +67,150 @@ impl Default for State {
     }
 }
 
+#[derive(Deserialize)]
+struct LegacyState {
+    #[serde(default, rename = "version")]
+    _version: u32,
+    #[serde(default)]
+    workspaces: HashMap<String, LegacyWorkspace>,
+    #[serde(default)]
+    proxy: Option<ProxyConfig>,
+    #[serde(flatten)]
+    unknown_fields: Map<String, Value>,
+}
+
+#[derive(Deserialize)]
+struct LegacyWorkspace {
+    name: String,
+    base: std::path::PathBuf,
+    upper: std::path::PathBuf,
+    work: std::path::PathBuf,
+    merged: std::path::PathBuf,
+    parent: Option<String>,
+    created: String,
+    session: Option<String>,
+    #[serde(default)]
+    tmpfs: bool,
+    #[serde(default)]
+    tmpfs_size: Option<String>,
+    #[serde(default)]
+    ephemeral: bool,
+    #[serde(default)]
+    process: Option<crate::workspace::RunningProcess>,
+    #[serde(flatten)]
+    unknown_fields: Map<String, Value>,
+}
+
+impl From<LegacyWorkspace> for Workspace {
+    fn from(value: LegacyWorkspace) -> Self {
+        Self {
+            name: value.name,
+            base: value.base,
+            parent: value.parent,
+            created: value.created,
+            session: value.session,
+            ephemeral: value.ephemeral,
+            process: value.process,
+            view_path: value.merged.clone(),
+            fork_time_ns: 0,
+            backend_kind: BackendKind::Linux,
+            backend_state: BackendState::Linux(LinuxBackendState {
+                upper: value.upper,
+                work: value.work,
+                merged: value.merged,
+                tmpfs: value.tmpfs,
+                tmpfs_size: value.tmpfs_size,
+                unknown_fields: Map::new(),
+            }),
+            unknown_fields: value.unknown_fields,
+        }
+    }
+}
+
+fn migration_paths(path: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    (parent.join("state.v1.bak"), parent.join(".migrating"))
+}
+
+fn recover_interrupted_migration(path: &std::path::Path) -> Result {
+    let (backup, marker) = migration_paths(path);
+    if !marker.exists() {
+        return Ok(());
+    }
+    if backup.exists() {
+        fs::copy(&backup, path).map_err(|source| ForkspaceError::Io {
+            context: format!(
+                "restore interrupted state migration from {}",
+                backup.display()
+            ),
+            source,
+        })?;
+        fs::File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(|source| ForkspaceError::Io {
+                context: format!("sync restored state file {}", path.display()),
+                source,
+            })?;
+    }
+    fs::remove_file(&marker).map_err(|source| ForkspaceError::Io {
+        context: format!("remove migration marker {}", marker.display()),
+        source,
+    })?;
+    sync_parent_directory(path.parent().unwrap_or_else(|| std::path::Path::new(".")))
+}
+
+fn migrate_v1(path: &std::path::Path, content: &str, legacy: LegacyState) -> Result<State> {
+    let (backup, marker) = migration_paths(path);
+    fs::write(&marker, b"1 -> 2\n").map_err(|source| ForkspaceError::Io {
+        context: format!("create migration marker {}", marker.display()),
+        source,
+    })?;
+    fs::File::open(&marker)
+        .and_then(|file| file.sync_all())
+        .map_err(|source| ForkspaceError::Io {
+            context: format!("sync migration marker {}", marker.display()),
+            source,
+        })?;
+
+    let backup_tmp = backup.with_extension("bak.tmp");
+    fs::write(&backup_tmp, content).map_err(|source| ForkspaceError::Io {
+        context: format!("write state migration backup {}", backup_tmp.display()),
+        source,
+    })?;
+    fs::File::open(&backup_tmp)
+        .and_then(|file| file.sync_all())
+        .map_err(|source| ForkspaceError::Io {
+            context: format!("sync state migration backup {}", backup_tmp.display()),
+            source,
+        })?;
+    fs::rename(&backup_tmp, &backup).map_err(|source| ForkspaceError::Io {
+        context: format!("install state migration backup {}", backup.display()),
+        source,
+    })?;
+
+    let state = State {
+        version: CURRENT_VERSION,
+        workspaces: legacy
+            .workspaces
+            .into_iter()
+            .map(|(name, workspace)| (name, workspace.into()))
+            .collect(),
+        proxy: legacy.proxy,
+        unknown_fields: legacy.unknown_fields,
+    };
+    state.save()?;
+    fs::remove_file(&marker).map_err(|source| ForkspaceError::Io {
+        context: format!("remove migration marker {}", marker.display()),
+        source,
+    })?;
+    sync_parent_directory(path.parent().unwrap_or_else(|| std::path::Path::new(".")))?;
+    Ok(state)
+}
+
 impl State {
     pub fn load() -> Result<State> {
         let path = forkspace_home().join("state.json");
+        recover_interrupted_migration(&path)?;
         if !path.exists() {
             return Ok(State::default());
         }
@@ -78,13 +224,26 @@ impl State {
             return Ok(State::default());
         }
 
-        let state: State = serde_json::from_str(&content)
-            .map_err(|e| ForkspaceError::StateCorrupted(format!("invalid JSON in state file: {e}")))?;
+        let value: Value = serde_json::from_str(&content).map_err(|e| {
+            ForkspaceError::StateCorrupted(format!("invalid JSON in state file: {e}"))
+        })?;
+        let version = value.get("version").and_then(Value::as_u64).unwrap_or(1) as u32;
 
-        if state.version > 1 {
+        if version <= 1 {
+            let legacy: LegacyState = serde_json::from_value(value).map_err(|e| {
+                ForkspaceError::StateCorrupted(format!("invalid version 1 state file: {e}"))
+            })?;
+            return migrate_v1(&path, &content, legacy);
+        }
+
+        let state: State = serde_json::from_value(value).map_err(|e| {
+            ForkspaceError::StateCorrupted(format!("invalid JSON in state file: {e}"))
+        })?;
+
+        if state.version > CURRENT_VERSION {
             eprintln!(
-                "warning: state file has version {}, this binary only knows version 1",
-                state.version
+                "warning: state file has version {}, this binary only knows version {}",
+                state.version, CURRENT_VERSION
             );
         }
 
@@ -92,10 +251,10 @@ impl State {
     }
 
     pub fn save(&self) -> Result {
-        if self.version > 1 {
+        if self.version > CURRENT_VERSION {
             return Err(ForkspaceError::StateFailed(format!(
-                "refusing to overwrite state version {} with a version 1 binary; upgrade forkspace and retry",
-                self.version
+                "refusing to overwrite state version {} with a version {} binary; upgrade forkspace and retry",
+                self.version, CURRENT_VERSION
             )));
         }
 

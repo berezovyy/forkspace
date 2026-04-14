@@ -26,11 +26,11 @@ pub enum ForkspaceError {
     #[error("mount failed: {0}")]
     MountFailed(String),
 
-    #[error("unsupported capability: {0}")]
-    CapabilityUnsupported(String),
+    #[error("unsupported capability: {diagnosis}; {remedy}")]
+    CapabilityUnsupported { diagnosis: String, remedy: String },
 
-    #[error("backend unavailable: {0}")]
-    BackendUnavailable(String),
+    #[error("backend unavailable: {diagnosis}; {remedy}")]
+    BackendUnavailable { diagnosis: String, remedy: String },
 
     #[error("unmount failed: {0}")]
     UnmountFailed(String),
@@ -78,8 +78,8 @@ impl ForkspaceError {
             Self::WorkspaceNotFound(_) => 3,
             Self::WorkspaceExists(_) => 4,
             Self::HasChildren { .. } => 5,
-            Self::CapabilityUnsupported(_) => 6,
-            Self::BackendUnavailable(_) | Self::MountFailed(_) => 7,
+            Self::CapabilityUnsupported { .. } => 6,
+            Self::BackendUnavailable { .. } | Self::MountFailed(_) => 7,
             _ => 1,
         }
     }

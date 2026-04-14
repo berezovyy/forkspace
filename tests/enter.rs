@@ -38,7 +38,11 @@ fn test_enter_command_passthrough() {
         "expected 'hello' in stdout, got: {}",
         stdout
     );
-    assert!(output.status.success(), "forkspace enter failed: {:?}", output);
+    assert!(
+        output.status.success(),
+        "forkspace enter failed: {:?}",
+        output
+    );
 
     common::cleanup_workspace(&ws);
 }
@@ -59,7 +63,7 @@ fn test_enter_env_vars() {
             "--",
             "sh",
             "-c",
-            "echo $FORKSPACE_WORKSPACE",
+            "printf '%s\\n%s\\n%s\\n' \"$FORKSPACE_WORKSPACE\" \"$FORKSPACE_VIEW\" \"$FORKSPACE_UPPER\"",
         ])
         .output()
         .expect("failed to run forkspace enter");
@@ -70,6 +74,8 @@ fn test_enter_env_vars() {
         "expected workspace name in stdout, got: {}",
         stdout
     );
+    assert!(stdout.contains(&ws.view_path.display().to_string()));
+    assert!(stdout.contains(&ws.upper_path().unwrap().display().to_string()));
 
     common::cleanup_workspace(&ws);
 }
@@ -221,23 +227,17 @@ fn test_ephemeral_flag_recorded_in_state() {
 #[serial]
 fn test_ephemeral_state_without_ephemeral_field() {
     let _dir = common::setup_test_env();
-
-    let json = r#"{
-        "name": "old-ws",
-        "base": "/tmp/base",
-        "upper": "/tmp/upper",
-        "work": "/tmp/work",
-        "merged": "/tmp/merged",
-        "parent": null,
-        "created": "2025-01-01T00:00:00Z",
-        "state": "running",
-        "session": null
-    }"#;
-
-    let ws: forkspace::workspace::Workspace = serde_json::from_str(json).unwrap();
+    let mut value = serde_json::to_value(forkspace::workspace::Workspace::new(
+        "old-ws",
+        "/tmp/base".into(),
+        None,
+    ))
+    .unwrap();
+    value.as_object_mut().unwrap().remove("ephemeral");
+    let ws: forkspace::workspace::Workspace = serde_json::from_value(value).unwrap();
     assert!(!ws.ephemeral);
-    assert!(!ws.tmpfs);
-    assert_eq!(ws.tmpfs_size, None);
+    assert!(!ws.tmpfs());
+    assert_eq!(ws.tmpfs_size(), None);
 }
 
 #[test]

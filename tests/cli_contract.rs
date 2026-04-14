@@ -96,6 +96,20 @@ fn every_exit_code_has_a_contract_case() {
         .exit_code(),
         5
     );
-    assert_eq!(ForkspaceError::CapabilityUnsupported("x".into()).exit_code(), 6);
-    assert_eq!(ForkspaceError::BackendUnavailable("x".into()).exit_code(), 7);
+    assert_eq!(
+        ForkspaceError::CapabilityUnsupported {
+            diagnosis: "x".into(),
+            remedy: "y".into(),
+        }
+        .exit_code(),
+        6
+    );
+    assert_eq!(
+        ForkspaceError::BackendUnavailable {
+            diagnosis: "x".into(),
+            remedy: "y".into(),
+        }
+        .exit_code(),
+        7
+    );
 }

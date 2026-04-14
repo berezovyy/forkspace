@@ -14,9 +14,9 @@ fn test_fork_creates_workspace() {
 
     let ws = common::fork_helper(base.path().to_path_buf(), "test-ws", None, None).unwrap();
 
-    assert!(ws.upper.exists());
-    assert!(ws.work.exists());
-    assert!(ws.merged.exists());
+    assert!(ws.upper_path().unwrap().exists());
+    assert!(ws.work_path().unwrap().exists());
+    assert!(ws.view_path.exists());
 
     let state = State::load().unwrap();
     assert!(state.workspaces.contains_key("test-ws"));
@@ -32,9 +32,9 @@ fn test_fork_merged_shows_files() {
 
     let ws = common::fork_helper(base.path().to_path_buf(), "files-ws", None, None).unwrap();
 
-    assert!(ws.merged.join("README.md").exists());
-    assert!(ws.merged.join("src/main.rs").exists());
-    assert!(ws.merged.join("Cargo.toml").exists());
+    assert!(ws.view_path.join("README.md").exists());
+    assert!(ws.view_path.join("src/main.rs").exists());
+    assert!(ws.view_path.join("Cargo.toml").exists());
 
     common::cleanup_workspace(&ws);
 }
@@ -79,7 +79,7 @@ fn test_fork_stacked() {
     let ws2 = common::fork_helper(PathBuf::from("parent-ws"), "child-ws", None, None).unwrap();
 
     assert_eq!(ws2.parent.as_deref(), Some("parent-ws"));
-    assert_eq!(ws2.base, ws1.merged.canonicalize().unwrap());
+    assert_eq!(ws2.base, ws1.view_path.canonicalize().unwrap());
 
     common::cleanup_workspace(&ws2);
     common::cleanup_workspace(&ws1);
@@ -254,7 +254,10 @@ fn test_fork_tmpfs_with_overlay() {
         Some("128m".to_string()),
     );
 
-    assert!(matches!(result, Err(ForkspaceError::CapabilityUnsupported(_))));
+    assert!(matches!(
+        result,
+        Err(ForkspaceError::CapabilityUnsupported { .. })
+    ));
     assert!(State::load().unwrap().workspaces.is_empty());
 }
 

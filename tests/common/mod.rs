@@ -51,20 +51,15 @@ pub fn make_test_workspace(
     std::fs::create_dir_all(ws_dir.join("work")).expect("create work");
     std::fs::create_dir_all(ws_dir.join("merged")).expect("create merged");
 
-    Workspace {
-        name: name.to_string(),
-        base: base.to_path_buf(),
-        upper: ws_dir.join("upper"),
-        work: ws_dir.join("work"),
-        merged: ws_dir.join("merged"),
-        parent,
-        created: now_rfc3339(),
-        session: None,
-        tmpfs: false,
-        tmpfs_size: None,
-        ephemeral: false,
-        process: None,
+    let mut workspace = Workspace::new(name, base.to_path_buf(), parent);
+    workspace.created = now_rfc3339();
+    workspace.view_path = ws_dir.join("merged");
+    if let forkspace::backend::BackendState::Linux(state) = &mut workspace.backend_state {
+        state.upper = ws_dir.join("upper");
+        state.work = ws_dir.join("work");
+        state.merged = ws_dir.join("merged");
     }
+    workspace
 }
 
 pub fn strip_ansi(s: &str) -> String {
@@ -85,7 +80,7 @@ pub fn strip_ansi(s: &str) -> String {
 }
 
 pub fn cleanup_workspace(ws: &forkspace::workspace::Workspace) {
-    let _ = forkspace::overlay::unmount_overlay(&ws.merged);
+    let _ = forkspace::overlay::unmount_overlay(&ws.view_path);
 }
 
 #[macro_export]

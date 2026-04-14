@@ -1,3 +1,5 @@
+pub mod backend;
+pub mod capabilities;
 pub mod cli;
 pub mod commands;
 pub mod diff;

@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use crate::backend::select_backend;
 use crate::diff::{self, ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::filter::ChangeFilter;
@@ -34,7 +35,7 @@ impl PackageManager {
 }
 
 pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
-    let all_changes = diff::collect_changes_fast(workspace)?;
+    let all_changes = select_backend(Some(workspace.backend_kind))?.changes(workspace)?;
 
     if all_changes.is_empty() {
         return Ok(MergeResult {
@@ -58,7 +59,7 @@ pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
     for change in &changes {
         match change.kind {
             ChangeKind::Added | ChangeKind::Modified => {
-                let src = workspace.upper.join(&change.path);
+                let src = workspace.upper_path()?.join(&change.path);
                 let dst = workspace.base.join(&change.path);
 
                 ensure_parent_dir(&dst)?;
@@ -97,7 +98,7 @@ pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
 }
 
 pub fn detect_package_manager(workspace: &Workspace) -> Option<PackageManager> {
-    let upper = &workspace.upper;
+    let upper = workspace.upper_path().ok()?;
 
     if !upper.join("package.json").exists() {
         return None;

@@ -1,7 +1,8 @@
+use crate::backend::select_backend;
 use crate::cli::DiffArgs;
 use crate::diff::{
-    collect_changes, collect_changes_fast, collect_cumulative_changes,
-    collect_cumulative_changes_fast, format_diff, generate_unified_diff, DiffFormat, DiffOutput,
+    collect_cumulative_changes, collect_cumulative_changes_fast, format_diff,
+    generate_unified_diff, DiffFormat, DiffOutput,
 };
 use crate::error::{ForkspaceError, Result};
 use crate::filter::ChangeFilter;
@@ -18,10 +19,8 @@ pub fn exec(args: DiffArgs) -> Result {
         } else {
             collect_cumulative_changes_fast(workspace, &state)?
         }
-    } else if need_line_counts {
-        collect_changes(workspace)?
     } else {
-        collect_changes_fast(workspace)?
+        select_backend(Some(workspace.backend_kind))?.changes(workspace)?
     };
 
     let changes = if args.no_gitignore {

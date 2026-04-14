@@ -1,42 +1,10 @@
-use std::fs;
-use std::io::BufRead;
 use std::path::PathBuf;
 
+use crate::backend::{select_backend, CreateReq};
 use crate::error::{ForkspaceError, Result};
-use crate::overlay::{mount_overlay, OverlayOpts};
 use crate::state::State;
 use crate::util::IoContext;
 use crate::workspace::Workspace;
-
-fn apply_forkspaceclean(merged: &std::path::Path) {
-    let cleanfile = merged.join(".forkspaceclean");
-    let file = match fs::File::open(&cleanfile) {
-        Ok(f) => f,
-        Err(_) => return,
-    };
-    let mut cleaned = 0usize;
-    for line in std::io::BufReader::new(file).lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
-        let line = line.trim().to_string();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let target = merged.join(&line);
-        if target.exists() {
-            let _ = fs::remove_file(&target);
-            cleaned += 1;
-        }
-    }
-    if cleaned > 0 {
-        eprintln!(
-            "forkspaceclean: removed {} overlay-incompatible file(s)",
-            cleaned
-        );
-    }
-}
 
 pub fn create_workspace(
     base: PathBuf,
@@ -47,37 +15,20 @@ pub fn create_workspace(
     size: Option<String>,
 ) -> Result<Workspace> {
     validate_workspace_name(name)?;
-    if tmpfs {
-        return Err(ForkspaceError::CapabilityUnsupported(
-            "--tmpfs is not implemented; omit --tmpfs to use disk-backed workspace storage"
-                .to_string(),
-        ));
-    }
-
-    let (resolved_base, resolved_parent) = {
+    let (resolved_base, resolved_parent, backend) = {
         let state = State::load()?;
         if state.workspaces.contains_key(name) {
             return Err(ForkspaceError::WorkspaceExists(name.to_string()));
         }
         if let Some(ws) = state.workspaces.get(base.to_str().unwrap_or("")) {
-            (ws.merged.clone(), Some(ws.name.clone()))
+            let backend = select_backend(Some(ws.backend_kind))?;
+            (backend.view_path(ws), Some(ws.name.clone()), backend)
         } else {
-            (base.clone(), parent)
+            (base.clone(), parent, select_backend(None)?)
         }
     };
 
-    if !resolved_base.exists() {
-        return Err(ForkspaceError::Io {
-            context: format!("base path does not exist: {}", resolved_base.display()),
-            source: std::io::Error::new(std::io::ErrorKind::NotFound, "base path not found"),
-        });
-    }
-    if !resolved_base.is_dir() {
-        return Err(ForkspaceError::Io {
-            context: format!("base path is not a directory: {}", resolved_base.display()),
-            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a directory"),
-        });
-    }
+    backend.preflight(&resolved_base)?;
 
     let resolved_base = resolved_base.canonicalize().io_context(|| {
         format!(
@@ -85,44 +36,20 @@ pub fn create_workspace(
             resolved_base.display()
         )
     })?;
-
-    let mut ws = Workspace::new(name, resolved_base.clone(), resolved_parent);
-    if let Some(ref s) = session {
-        ws.session = Some(s.clone());
-    }
-
-    fs::create_dir_all(&ws.upper)
-        .io_context(|| format!("failed to create upper dir: {}", ws.upper.display()))?;
-    fs::create_dir_all(&ws.work)
-        .io_context(|| format!("failed to create work dir: {}", ws.work.display()))?;
-    fs::create_dir_all(&ws.merged)
-        .io_context(|| format!("failed to create merged dir: {}", ws.merged.display()))?;
-
-    let opts = if tmpfs {
-        OverlayOpts {
-            tmpfs: true,
-            tmpfs_size: size.unwrap_or_else(|| "256m".to_string()),
-        }
-    } else {
-        OverlayOpts::default()
-    };
-
-    ws.tmpfs = opts.tmpfs;
-    if opts.tmpfs {
-        ws.tmpfs_size = Some(opts.tmpfs_size.clone());
-    }
-
-    if let Err(e) = mount_overlay(&resolved_base, &ws.upper, &ws.work, &ws.merged, &opts) {
-        let _ = fs::remove_dir_all(&ws.merged);
-        let _ = fs::remove_dir_all(&ws.work);
-        let _ = fs::remove_dir_all(&ws.upper);
-        if let Some(root) = ws.upper.parent() {
-            let _ = fs::remove_dir(root);
-        }
-        return Err(e);
-    }
-
-    apply_forkspaceclean(&ws.merged);
+    let view = backend.create(&CreateReq {
+        name: name.to_string(),
+        base: resolved_base.clone(),
+        tmpfs,
+        tmpfs_size: size,
+    })?;
+    let ws = Workspace::from_view(
+        name.to_string(),
+        resolved_base,
+        resolved_parent,
+        session,
+        backend.kind(),
+        view,
+    );
 
     State::with_state(|state| {
         state.add_workspace(ws.clone())?;
@@ -164,7 +91,7 @@ pub fn exec(args: crate::cli::ForkArgs) -> Result {
     println!(
         "created workspace '{}' from {}",
         ws.name,
-        ws.merged.display()
+        ws.view_path.display()
     );
     Ok(())
 }

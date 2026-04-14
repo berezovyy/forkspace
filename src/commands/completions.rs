@@ -29,14 +29,13 @@ _forkspace() {
     local -a commands
     commands=(
         'fork:Create a new workspace from a directory'
-        'drop:Remove a workspace and unmount its overlay'
+        'drop:Remove a workspace'
         'enter:Open a shell (or run a command) inside a workspace'
         'run:Start a process in a workspace'
         'switch:Switch the active workspace'
         'ls:List all active workspaces'
         'diff:Show what changed in a workspace'
         'merge:Apply workspace changes back to the base directory'
-        'nuke:Remove all workspaces and state'
     )
 
     _arguments -C \
@@ -94,6 +93,7 @@ _forkspace() {
                 ls)
                     _arguments \
                         '--names[Output only workspace names]' \
+                        '--no-gitignore[Include ignored files]' \
                         '--help[Show help]'
                     ;;
                 diff)
@@ -104,6 +104,7 @@ _forkspace() {
                         '--files[List changed file paths]' \
                         '--cumulative[Include ancestor layers]' \
                         '--json[Output as JSON]' \
+                        '--no-gitignore[Include ignored files]' \
                         '--help[Show help]'
                     ;;
                 merge)
@@ -115,12 +116,6 @@ _forkspace() {
                         '--patch[Generate unified patch]' \
                         '--drop[Drop workspace after merge]' \
                         '--no-install[Skip dependency installation]' \
-                        '--help[Show help]'
-                    ;;
-                nuke)
-                    _arguments \
-                        '-y[Skip confirmation]' \
-                        '--yes[Skip confirmation]' \
                         '--help[Show help]'
                     ;;
             esac

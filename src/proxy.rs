@@ -6,8 +6,9 @@ use crate::error::{ForkspaceError, Result};
 use crate::state::State;
 
 pub fn run_proxy(listen_port: u16) -> Result {
-    let listener = TcpListener::bind(("127.0.0.1", listen_port))
-        .map_err(|e| ForkspaceError::ProxyFailed(format!("failed to bind :{}: {}", listen_port, e)))?;
+    let listener = TcpListener::bind(("127.0.0.1", listen_port)).map_err(|e| {
+        ForkspaceError::ProxyFailed(format!("failed to bind :{}: {}", listen_port, e))
+    })?;
 
     eprintln!("proxy: listening on http://127.0.0.1:{}", listen_port);
 

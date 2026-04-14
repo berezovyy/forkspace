@@ -1,9 +1,7 @@
-use std::fs;
-
+use crate::backend::{select_backend, DestroyMode};
 use crate::error::{ForkspaceError, Result};
-use crate::overlay::{unmount_overlay, unmount_tmpfs};
 use crate::state::State;
-use crate::util::{glob_matches, forkspace_home, is_pid_alive, kill_process};
+use crate::util::{glob_matches, is_pid_alive, kill_process};
 
 pub(crate) fn remove_workspace(state: &mut State, name: &str) -> Result {
     let ws = state.require_workspace(name)?.clone();
@@ -14,34 +12,19 @@ pub(crate) fn remove_workspace(state: &mut State, name: &str) -> Result {
         }
     }
 
-    unmount_overlay(&ws.merged)?;
-
-    if ws.tmpfs {
-        if let Err(e) = unmount_tmpfs(&ws.upper) {
-            eprintln!("warning: failed to unmount tmpfs upper for '{}': {e}", name);
-        }
-        if let Err(e) = unmount_tmpfs(&ws.work) {
-            eprintln!("warning: failed to unmount tmpfs work for '{}': {e}", name);
-        }
-    }
-
-    let ws_dir = forkspace_home().join(name);
-    remove_workspace_record_after_cleanup(state, name, || fs::remove_dir_all(&ws_dir))?;
+    let backend = select_backend(Some(ws.backend_kind))?;
+    remove_workspace_record_after_cleanup(state, name, || {
+        backend.destroy(&ws, DestroyMode::Normal)
+    })?;
 
     Ok(())
 }
 
 fn remove_workspace_record_after_cleanup<F>(state: &mut State, name: &str, cleanup: F) -> Result
 where
-    F: FnOnce() -> std::io::Result<()>,
+    F: FnOnce() -> Result,
 {
-    cleanup().map_err(|e| ForkspaceError::Io {
-        context: format!(
-            "remove workspace directory {}; retry `forkspace drop {name}` after closing processes using it",
-            forkspace_home().join(name).display()
-        ),
-        source: e,
-    })?;
+    cleanup()?;
     state.remove_workspace(name)
 }
 
@@ -180,7 +163,10 @@ mod tests {
             .unwrap();
 
         let result = remove_workspace_record_after_cleanup(&mut state, "busy", || {
-            Err(std::io::Error::from_raw_os_error(libc::EBUSY))
+            Err(crate::error::ForkspaceError::Io {
+                context: "remove busy workspace".to_string(),
+                source: std::io::Error::from_raw_os_error(libc::EBUSY),
+            })
         });
 
         assert!(result.is_err());

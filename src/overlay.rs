@@ -86,9 +86,10 @@ impl Default for OverlayOpts {
 
 pub(crate) fn mount_tmpfs(path: &Path, size: &str) -> Result {
     let _ = (path, size);
-    Err(ForkspaceError::CapabilityUnsupported(
-        "--tmpfs is not implemented; omit --tmpfs to use disk-backed workspace storage".to_string(),
-    ))
+    Err(ForkspaceError::CapabilityUnsupported {
+        diagnosis: "--tmpfs is not implemented".to_string(),
+        remedy: "omit --tmpfs to use disk-backed workspace storage".to_string(),
+    })
 }
 
 pub(crate) fn unmount_tmpfs(path: &Path) -> Result {
@@ -137,15 +138,11 @@ pub(crate) fn mount_overlay(
     let err = match result {
         Ok(status) if status.success() => return Ok(()),
         Ok(_status) => ForkspaceError::MountFailed(diagnose_mount_failure(merged)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            ForkspaceError::BackendUnavailable(
-                "fuse-overlayfs was not found; install the fuse-overlayfs package for your Linux distribution"
-                    .to_string(),
-            )
-        }
-        Err(e) => {
-            ForkspaceError::MountFailed(format!("failed to run fuse-overlayfs: {}", e))
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => ForkspaceError::BackendUnavailable {
+            diagnosis: "fuse-overlayfs was not found".to_string(),
+            remedy: "install the fuse-overlayfs package for your Linux distribution".to_string(),
+        },
+        Err(e) => ForkspaceError::MountFailed(format!("failed to run fuse-overlayfs: {}", e)),
     };
 
     if opts.tmpfs {

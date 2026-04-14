@@ -2,8 +2,8 @@ use std::io::{self, Read as _};
 use std::path::PathBuf;
 use std::process::Command;
 
+use crate::backend::select_backend;
 use crate::commands::{drop as drop_cmd, fork};
-use crate::diff;
 use crate::error::{ForkspaceError, Result};
 use crate::merge;
 use crate::state::State;
@@ -72,7 +72,7 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
         println!(
             "created workspace '{}' from {}",
             ws.name,
-            ws.merged.display()
+            ws.view_path.display()
         );
 
         name
@@ -86,6 +86,7 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
 
     let state = State::load()?;
     let workspace = state.require_workspace(&ws_name)?;
+    let backend = select_backend(Some(workspace.backend_kind))?;
 
     let mut cmd = if !args.command.is_empty() {
         let mut c = Command::new(&args.command[0]);
@@ -96,16 +97,20 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
         Command::new(shell)
     };
 
-    cmd.current_dir(&workspace.merged)
+    cmd.current_dir(backend.view_path(workspace))
         .env("FORKSPACE_WORKSPACE", &workspace.name)
-        .env("FORKSPACE_BASE", &workspace.base)
-        .env("FORKSPACE_UPPER", &workspace.upper);
+        .env("FORKSPACE_BASE", &workspace.base);
+    for (key, value) in backend.shell_env(workspace) {
+        cmd.env(key, value);
+    }
 
     if let Some(ref sess) = args.session.or_else(|| workspace.session.clone()) {
         cmd.env("FORKSPACE_SESSION", sess);
     }
 
-    let status = cmd.status().io_context(|| "failed to spawn command".to_string())?;
+    let status = cmd
+        .status()
+        .io_context(|| "failed to spawn command".to_string())?;
 
     if status.success() {
         println!("left '{}'", ws_name);
@@ -117,7 +122,7 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
     if args.merge_on_exit {
         let state = State::load()?;
         let workspace = state.require_workspace(&ws_name)?;
-        let changes = diff::collect_changes(workspace)?;
+        let changes = backend.changes(workspace)?;
 
         if changes.is_empty() {
             println!("clean — no changes to merge");

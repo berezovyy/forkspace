@@ -2,6 +2,7 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 
+use crate::backend::select_backend;
 use crate::cli::RunArgs;
 use crate::error::{ForkspaceError, Result};
 use crate::state::{ProxyConfig, State};
@@ -70,10 +71,18 @@ fn ensure_proxy(state: &mut State, listen_port: u16) -> Result {
 
     let log_dir = forkspace_home();
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
-        eprintln!("warning: failed to create log directory {}: {e}", log_dir.display());
+        eprintln!(
+            "warning: failed to create log directory {}: {e}",
+            log_dir.display()
+        );
     }
 
-    let (stdout, stderr) = open_log_pair(&log_dir, "proxy.log", "proxy.err", ForkspaceError::ProxyFailed)?;
+    let (stdout, stderr) = open_log_pair(
+        &log_dir,
+        "proxy.log",
+        "proxy.err",
+        ForkspaceError::ProxyFailed,
+    )?;
 
     let child = spawn_detached(
         Command::new(exe)
@@ -88,6 +97,7 @@ fn ensure_proxy(state: &mut State, listen_port: u16) -> Result {
         active_workspace: None,
         target_port: None,
         proxy_pid: Some(child.id()),
+        unknown_fields: serde_json::Map::new(),
     });
 
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -118,10 +128,16 @@ pub fn exec(args: RunArgs) -> Result {
         let app_port = args.port;
         let proxy_listen_port = allocate_port(state)?;
         let cmd = args.command.join(" ");
-        let merged = state.require_workspace(&args.name)?.merged.clone();
+        let workspace = state.require_workspace(&args.name)?;
+        let merged = select_backend(Some(workspace.backend_kind))?.view_path(workspace);
 
         let log_dir = forkspace_home().join(&args.name);
-        let (stdout, stderr) = open_log_pair(&log_dir, "stdout.log", "stderr.log", ForkspaceError::ProcessFailed)?;
+        let (stdout, stderr) = open_log_pair(
+            &log_dir,
+            "stdout.log",
+            "stderr.log",
+            ForkspaceError::ProcessFailed,
+        )?;
 
         let child = spawn_detached(
             Command::new("sh")
@@ -141,6 +157,7 @@ pub fn exec(args: RunArgs) -> Result {
             pid,
             command: cmd.clone(),
             port: app_port,
+            unknown_fields: serde_json::Map::new(),
         });
 
         ensure_proxy(state, proxy_listen_port)?;
@@ -150,7 +167,10 @@ pub fn exec(args: RunArgs) -> Result {
             proxy.target_port = Some(app_port);
         }
 
-        let proxy_port = state.proxy.as_ref().map_or(proxy_listen_port, |p| p.listen_port);
+        let proxy_port = state
+            .proxy
+            .as_ref()
+            .map_or(proxy_listen_port, |p| p.listen_port);
         println!("running '{}' on port {} (PID {})", cmd, app_port, pid);
         println!("proxy: http://localhost:{}", proxy_port);
 

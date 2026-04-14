@@ -7,6 +7,13 @@ pub fn now_rfc3339() -> String {
         .unwrap_or_default()
 }
 
+pub fn now_unix_ns() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+}
+
 pub fn forkspace_home() -> PathBuf {
     if let Ok(home) = std::env::var("FORKSPACE_HOME") {
         PathBuf::from(home)
@@ -36,9 +43,9 @@ pub(crate) trait WalkDirExt {
 impl WalkDirExt for std::result::Result<walkdir::DirEntry, walkdir::Error> {
     fn walk_context(self, dir: &Path) -> Result<walkdir::DirEntry> {
         self.map_err(|e| {
-            let source = e.into_io_error().unwrap_or_else(|| {
-                std::io::Error::other("directory walk error")
-            });
+            let source = e
+                .into_io_error()
+                .unwrap_or_else(|| std::io::Error::other("directory walk error"));
             ForkspaceError::Io {
                 context: format!("failed to walk {}", dir.display()),
                 source,
@@ -49,9 +56,8 @@ impl WalkDirExt for std::result::Result<walkdir::DirEntry, walkdir::Error> {
 
 pub(crate) fn ensure_parent_dir(path: &Path) -> Result {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).io_context(|| {
-            format!("create parent directory {}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .io_context(|| format!("create parent directory {}", parent.display()))?;
     }
     Ok(())
 }

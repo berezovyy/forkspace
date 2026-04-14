@@ -1,6 +1,6 @@
+use crate::backend::select_backend;
 use crate::cli::MergeArgs;
 use crate::commands::drop as drop_cmd;
-use crate::diff;
 use crate::error::Result;
 use crate::merge;
 use crate::state::State;
@@ -10,7 +10,7 @@ pub fn exec(args: MergeArgs) -> Result {
         let workspace = state.require_workspace(&args.name)?.clone();
 
         if args.patch {
-            let changes = diff::collect_changes_fast(&workspace)?;
+            let changes = select_backend(Some(workspace.backend_kind))?.changes(&workspace)?;
             if changes.is_empty() {
                 println!("nothing to merge in '{}'", args.name);
                 return Ok(());
@@ -41,7 +41,10 @@ pub fn exec(args: MergeArgs) -> Result {
         }
 
         if args.commit || args.message.is_some() {
-            let default_msg = format!("forkspace merge: applied changes from workspace {}", args.name);
+            let default_msg = format!(
+                "forkspace merge: applied changes from workspace {}",
+                args.name
+            );
             let msg = args.message.as_deref().unwrap_or(&default_msg);
             merge::git_commit(&workspace.base, msg)?;
         }

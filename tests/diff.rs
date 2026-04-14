@@ -29,7 +29,11 @@ fn test_diff_added_file() {
     fs::create_dir_all(&base).unwrap();
     let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
 
-    fs::write(ws.upper.join("new_file.rs"), "fn main() {}\n").unwrap();
+    fs::write(
+        ws.upper_path().unwrap().join("new_file.rs"),
+        "fn main() {}\n",
+    )
+    .unwrap();
 
     let changes = collect_changes(&ws).unwrap();
     assert_eq!(changes.len(), 1);
@@ -48,7 +52,7 @@ fn test_diff_modified_file() {
 
     fs::write(base.join("file.txt"), "line1\nline2\nline3\n").unwrap();
     fs::write(
-        ws.upper.join("file.txt"),
+        ws.upper_path().unwrap().join("file.txt"),
         "line1\nmodified\nline3\nnew_line\n",
     )
     .unwrap();
@@ -68,7 +72,7 @@ fn test_diff_deleted_file() {
     let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
 
     fs::write(base.join("removed.txt"), "content\n").unwrap();
-    fs::write(ws.upper.join(".wh.removed.txt"), "").unwrap();
+    fs::write(ws.upper_path().unwrap().join(".wh.removed.txt"), "").unwrap();
 
     let changes = collect_changes(&ws).unwrap();
     assert_eq!(changes.len(), 1);
@@ -83,8 +87,8 @@ fn test_diff_files_mode() {
     fs::create_dir_all(&base).unwrap();
     let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
 
-    fs::write(ws.upper.join("a.txt"), "hello\n").unwrap();
-    fs::write(ws.upper.join("b.txt"), "world\n").unwrap();
+    fs::write(ws.upper_path().unwrap().join("a.txt"), "hello\n").unwrap();
+    fs::write(ws.upper_path().unwrap().join("b.txt"), "world\n").unwrap();
 
     let changes = collect_changes(&ws).unwrap();
     let output = forkspace::diff::format_diff(&changes, &DiffFormat::Files);
@@ -101,11 +105,15 @@ fn test_diff_stat_mode() {
     fs::create_dir_all(&base).unwrap();
     let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
 
-    fs::write(ws.upper.join("new.txt"), "new\n").unwrap();
+    fs::write(ws.upper_path().unwrap().join("new.txt"), "new\n").unwrap();
     fs::write(base.join("changed.txt"), "old\n").unwrap();
-    fs::write(ws.upper.join("changed.txt"), "new content\n").unwrap();
+    fs::write(
+        ws.upper_path().unwrap().join("changed.txt"),
+        "new content\n",
+    )
+    .unwrap();
     fs::write(base.join("gone.txt"), "bye\n").unwrap();
-    fs::write(ws.upper.join(".wh.gone.txt"), "").unwrap();
+    fs::write(ws.upper_path().unwrap().join(".wh.gone.txt"), "").unwrap();
 
     let changes = collect_changes(&ws).unwrap();
     let output = forkspace::diff::format_diff(&changes, &DiffFormat::Stat);
@@ -122,7 +130,7 @@ fn test_diff_json_output() {
     fs::create_dir_all(&base).unwrap();
     let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
 
-    fs::write(ws.upper.join("added.rs"), "fn hello() {}\n").unwrap();
+    fs::write(ws.upper_path().unwrap().join("added.rs"), "fn hello() {}\n").unwrap();
 
     let changes = collect_changes(&ws).unwrap();
     let output = DiffOutput {
@@ -150,11 +158,11 @@ fn test_diff_binary_detection() {
     let mut binary_content = vec![0x89, 0x50, 0x4E, 0x47];
     binary_content.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D]);
     binary_content.extend_from_slice(&[0xFF; 100]);
-    fs::write(ws.upper.join("image.png"), &binary_content).unwrap();
-    fs::write(ws.upper.join("text.txt"), "hello world\n").unwrap();
+    fs::write(ws.upper_path().unwrap().join("image.png"), &binary_content).unwrap();
+    fs::write(ws.upper_path().unwrap().join("text.txt"), "hello world\n").unwrap();
 
-    assert!(is_binary(&ws.upper.join("image.png")));
-    assert!(!is_binary(&ws.upper.join("text.txt")));
+    assert!(is_binary(&ws.upper_path().unwrap().join("image.png")));
+    assert!(!is_binary(&ws.upper_path().unwrap().join("text.txt")));
 
     let changes = collect_changes(&ws).unwrap();
     let binary_change = changes
@@ -178,8 +186,12 @@ fn test_diff_nested_directory() {
     fs::create_dir_all(&base).unwrap();
     let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
 
-    fs::create_dir_all(ws.upper.join("src/nested")).unwrap();
-    fs::write(ws.upper.join("src/nested/deep.rs"), "fn deep() {}\n").unwrap();
+    fs::create_dir_all(ws.upper_path().unwrap().join("src/nested")).unwrap();
+    fs::write(
+        ws.upper_path().unwrap().join("src/nested/deep.rs"),
+        "fn deep() {}\n",
+    )
+    .unwrap();
 
     let changes = collect_changes(&ws).unwrap();
     assert_eq!(changes.len(), 1);
@@ -193,8 +205,8 @@ fn test_diff_opaque_whiteout_skipped() {
     fs::create_dir_all(base.join("subdir")).unwrap();
     let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
 
-    fs::create_dir_all(ws.upper.join("subdir")).unwrap();
-    fs::write(ws.upper.join("subdir/.wh..wh..opq"), "").unwrap();
+    fs::create_dir_all(ws.upper_path().unwrap().join("subdir")).unwrap();
+    fs::write(ws.upper_path().unwrap().join("subdir/.wh..wh..opq"), "").unwrap();
 
     let changes = collect_changes(&ws).unwrap();
     assert!(changes.is_empty());
@@ -226,9 +238,9 @@ fn test_diff_whiteout_in_subdirectory() {
     fs::create_dir_all(base.join("src")).unwrap();
     let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
 
-    fs::create_dir_all(ws.upper.join("src")).unwrap();
+    fs::create_dir_all(ws.upper_path().unwrap().join("src")).unwrap();
     fs::write(base.join("src/old.rs"), "fn old() {}\n").unwrap();
-    fs::write(ws.upper.join("src/.wh.old.rs"), "").unwrap();
+    fs::write(ws.upper_path().unwrap().join("src/.wh.old.rs"), "").unwrap();
 
     let changes = collect_changes(&ws).unwrap();
     assert_eq!(changes.len(), 1);
@@ -244,8 +256,8 @@ fn test_diff_default_format() {
     let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
 
     fs::write(base.join("mod.rs"), "line1\n").unwrap();
-    fs::write(ws.upper.join("mod.rs"), "line1\nline2\n").unwrap();
-    fs::write(ws.upper.join("new.rs"), "fn new() {}\n").unwrap();
+    fs::write(ws.upper_path().unwrap().join("mod.rs"), "line1\nline2\n").unwrap();
+    fs::write(ws.upper_path().unwrap().join("new.rs"), "fn new() {}\n").unwrap();
 
     let changes = collect_changes(&ws).unwrap();
     let output = forkspace::diff::format_diff(&changes, &DiffFormat::Default);

@@ -2,7 +2,9 @@ use std::path::Path;
 
 use owo_colors::OwoColorize;
 
+use crate::backend::select_backend;
 use crate::error::Result;
+use crate::filter::ChangeFilter;
 use crate::state::State;
 use crate::util::is_pid_alive;
 
@@ -42,14 +44,19 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
 
     let rows: Vec<(String, String, String, String)> = workspaces
         .iter()
-        .map(|ws| {
+        .map(|ws| -> Result<_> {
             let origin = if let Some(ref parent) = ws.parent {
                 parent.clone()
             } else {
                 shorten_path(&ws.base)
             };
 
-            let file_count = ws.changed_file_count(!args.no_gitignore);
+            let changes = select_backend(Some(ws.backend_kind))?.changes(ws)?;
+            let file_count = if args.no_gitignore {
+                changes.len()
+            } else {
+                ChangeFilter::build(&ws.base).filter_changes(changes).len()
+            };
             let changed = if file_count == 1 {
                 "1 file".to_string()
             } else {
@@ -64,9 +71,9 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
                 None => "-".to_string(),
             };
 
-            (ws.name.clone(), origin, changed, proc_info)
+            Ok((ws.name.clone(), origin, changed, proc_info))
         })
-        .collect();
+        .collect::<Result<_>>()?;
 
     let w_name = rows.iter().map(|r| r.0.len()).max().unwrap_or(0).max(4);
     let w_base = rows.iter().map(|r| r.1.len()).max().unwrap_or(0).max(4);

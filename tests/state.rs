@@ -25,7 +25,7 @@ fn make_workspace(name: &str, parent: Option<String>) -> Workspace {
 fn test_load_empty() {
     let _dir = common::setup_test_env();
     let state = State::load().unwrap();
-    assert_eq!(state.version, 1);
+    assert_eq!(state.version, 2);
     assert!(state.workspaces.is_empty());
 }
 
@@ -106,10 +106,12 @@ fn test_update_workspace() {
     state.add_workspace(make_workspace("upd", None)).unwrap();
 
     let ws = state.workspaces.get_mut("upd").unwrap();
-    ws.tmpfs = true;
+    if let forkspace::backend::BackendState::Linux(backend) = &mut ws.backend_state {
+        backend.tmpfs = true;
+    }
 
     let ws = state.workspaces.get("upd").unwrap();
-    assert!(ws.tmpfs);
+    assert!(ws.tmpfs());
 }
 
 #[test]
@@ -121,7 +123,10 @@ fn test_corrupted_json() {
 
     let result = State::load();
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), ForkspaceError::StateCorrupted(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        ForkspaceError::StateCorrupted(_)
+    ));
 }
 
 #[test]
@@ -132,7 +137,7 @@ fn test_empty_file() {
     std::fs::write(&state_path, "").unwrap();
 
     let state = State::load().unwrap();
-    assert_eq!(state.version, 1);
+    assert_eq!(state.version, 2);
     assert!(state.workspaces.is_empty());
 }
 
@@ -230,14 +235,16 @@ fn test_state_persistence() {
 fn test_state_v1_fixture_round_trips_without_loss() {
     let dir = common::setup_test_env();
     install_state_fixture(&dir, "state-v1.json");
-    let before: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(dir.path().join("state.json")).unwrap()).unwrap();
-
-    State::load().unwrap().save().unwrap();
+    let state = State::load().unwrap();
+    state.save().unwrap();
 
     let after: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("state.json")).unwrap()).unwrap();
-    assert_eq!(after, before);
+    assert_eq!(after["version"], 2);
+    assert_eq!(after["workspaces"]["fixture"]["name"], "fixture");
+    assert_eq!(after["workspaces"]["fixture"]["session"], "fixture-session");
+    assert_eq!(after["workspaces"]["fixture"]["backend_kind"], "linux");
+    assert!(dir.path().join("state.v1.bak").exists());
 }
 
 #[test]
