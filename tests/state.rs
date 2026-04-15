@@ -277,3 +277,25 @@ fn test_newer_state_is_never_overwritten() {
     assert!(matches!(result, Err(ForkspaceError::StateFailed(_))));
     assert_eq!(std::fs::read(path).unwrap(), original);
 }
+
+#[test]
+#[serial]
+fn test_trash_is_recorded_and_retried_on_load() {
+    let dir = common::setup_test_env();
+    let orphan = dir.path().join("trash/orphan");
+    std::fs::create_dir_all(&orphan).unwrap();
+    std::fs::write(orphan.join("file"), b"trash").unwrap();
+    State::default().save().unwrap();
+
+    let state = State::load().unwrap();
+    assert!(state.trash.iter().any(|record| record.path == orphan));
+
+    for _ in 0..100 {
+        if !orphan.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!orphan.exists());
+    assert!(State::load().unwrap().trash.is_empty());
+}

@@ -44,6 +44,23 @@ pub struct ProxyConfig {
     pub unknown_fields: Map<String, Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct PendingCreate {
+    pub name: String,
+    pub path: std::path::PathBuf,
+    pub backend_kind: BackendKind,
+    pub pid: u32,
+    #[serde(flatten)]
+    pub unknown_fields: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrashRecord {
+    pub path: std::path::PathBuf,
+    #[serde(flatten)]
+    pub unknown_fields: Map<String, Value>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct State {
     #[serde(default = "default_version")]
@@ -52,6 +69,10 @@ pub struct State {
     pub workspaces: HashMap<String, Workspace>,
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pending_creates: Vec<PendingCreate>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trash: Vec<TrashRecord>,
     #[serde(flatten)]
     pub unknown_fields: Map<String, Value>,
 }
@@ -62,6 +83,8 @@ impl Default for State {
             version: CURRENT_VERSION,
             workspaces: HashMap::new(),
             proxy: None,
+            pending_creates: Vec::new(),
+            trash: Vec::new(),
             unknown_fields: Map::new(),
         }
     }
@@ -196,6 +219,8 @@ fn migrate_v1(path: &std::path::Path, content: &str, legacy: LegacyState) -> Res
             .map(|(name, workspace)| (name, workspace.into()))
             .collect(),
         proxy: legacy.proxy,
+        pending_creates: Vec::new(),
+        trash: Vec::new(),
         unknown_fields: legacy.unknown_fields,
     };
     state.save()?;
@@ -208,11 +233,80 @@ fn migrate_v1(path: &std::path::Path, content: &str, legacy: LegacyState) -> Res
 }
 
 impl State {
+    pub(crate) fn reconcile_runtime(&mut self) -> Result<bool> {
+        let trash_root = forkspace_home().join("trash");
+        fs::create_dir_all(&trash_root).map_err(|source| ForkspaceError::Io {
+            context: format!("create trash directory {}", trash_root.display()),
+            source,
+        })?;
+        let mut changed = false;
+        let mut retained = Vec::new();
+        for pending in self.pending_creates.drain(..) {
+            if crate::util::is_pid_alive(pending.pid) {
+                retained.push(pending);
+                continue;
+            }
+            if !pending.path.exists() {
+                changed = true;
+                continue;
+            }
+            let destination = trash_root.join(format!(
+                "partial-{}-{}-{}",
+                pending.name,
+                crate::util::now_unix_ns(),
+                std::process::id()
+            ));
+            match fs::rename(&pending.path, &destination) {
+                Ok(()) => {
+                    self.trash.push(TrashRecord {
+                        path: destination,
+                        unknown_fields: Map::new(),
+                    });
+                    changed = true;
+                }
+                Err(_) => retained.push(pending),
+            }
+        }
+        self.pending_creates = retained;
+
+        if let Ok(entries) = fs::read_dir(&trash_root) {
+            for path in entries.filter_map(|entry| entry.ok().map(|value| value.path())) {
+                if !self.trash.iter().any(|record| record.path == path) {
+                    self.trash.push(TrashRecord {
+                        path,
+                        unknown_fields: Map::new(),
+                    });
+                    changed = true;
+                }
+            }
+        }
+
+        self.trash.retain(|record| {
+            if !record.path.exists() {
+                changed = true;
+                return false;
+            }
+            let _ = std::process::Command::new("rm")
+                .args(["-rf", "--"])
+                .arg(&record.path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+            true
+        });
+        Ok(changed)
+    }
+
     pub fn load() -> Result<State> {
         let path = forkspace_home().join("state.json");
         recover_interrupted_migration(&path)?;
         if !path.exists() {
-            return Ok(State::default());
+            let mut state = State::default();
+            if state.reconcile_runtime()? {
+                state.save()?;
+            }
+            return Ok(state);
         }
 
         let content = fs::read_to_string(&path).map_err(|e| ForkspaceError::Io {
@@ -221,7 +315,11 @@ impl State {
         })?;
 
         if content.trim().is_empty() {
-            return Ok(State::default());
+            let mut state = State::default();
+            if state.reconcile_runtime()? {
+                state.save()?;
+            }
+            return Ok(state);
         }
 
         let value: Value = serde_json::from_str(&content).map_err(|e| {
@@ -236,7 +334,7 @@ impl State {
             return migrate_v1(&path, &content, legacy);
         }
 
-        let state: State = serde_json::from_value(value).map_err(|e| {
+        let mut state: State = serde_json::from_value(value).map_err(|e| {
             ForkspaceError::StateCorrupted(format!("invalid JSON in state file: {e}"))
         })?;
 
@@ -247,6 +345,9 @@ impl State {
             );
         }
 
+        if state.version <= CURRENT_VERSION && state.reconcile_runtime()? {
+            state.save()?;
+        }
         Ok(state)
     }
 

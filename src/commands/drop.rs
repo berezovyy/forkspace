@@ -25,6 +25,7 @@ where
     F: FnOnce() -> Result,
 {
     cleanup()?;
+    state.reconcile_runtime()?;
     state.remove_workspace(name)
 }
 

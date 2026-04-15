@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod clone;
 mod linux;
 
 use std::path::{Path, PathBuf};
@@ -10,6 +12,8 @@ use crate::diff::FileChange;
 use crate::error::{ForkspaceError, Result};
 use crate::workspace::Workspace;
 
+#[cfg(target_os = "macos")]
+pub use clone::CloneBackend;
 pub use linux::{LinuxBackend, LinuxBackendState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +115,15 @@ pub fn select_backend(recorded: Option<BackendKind>) -> Result<Box<dyn Workspace
 
     match requested {
         BackendKind::Linux if cfg!(target_os = "linux") => Ok(Box::new(LinuxBackend::new())),
+        #[cfg(target_os = "macos")]
+        BackendKind::MacClone => Ok(Box::new(CloneBackend::new())),
         kind => Err(unavailable(kind)),
+    }
+}
+
+pub(crate) fn pending_create_path(kind: BackendKind, name: &str) -> PathBuf {
+    match kind {
+        BackendKind::Linux => crate::util::forkspace_home().join(name),
+        BackendKind::MacClone => crate::util::forkspace_home().join("workspaces").join(name),
     }
 }

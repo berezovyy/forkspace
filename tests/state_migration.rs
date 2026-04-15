@@ -50,6 +50,13 @@ fn v2_unknown_fields_survive_at_every_persisted_layer() {
     let json = serde_json::json!({
         "version": 2,
         "top_extra": "top",
+        "pending_creates": [{
+            "name": "active",
+            "path": "/tmp/active",
+            "backend_kind": "mac-clone",
+            "pid": std::process::id(),
+            "pending_extra": "pending"
+        }],
         "workspaces": {
             "fixture": {
                 "name": "fixture",
@@ -110,4 +117,12 @@ fn v2_unknown_fields_survive_at_every_persisted_layer() {
         "process"
     );
     assert_eq!(saved["proxy"]["proxy_extra"], "proxy");
+    assert_eq!(saved["pending_creates"][0]["pending_extra"], "pending");
+
+    let trash: forkspace::state::TrashRecord = serde_json::from_value(serde_json::json!({
+        "path": "/tmp/trash",
+        "trash_extra": "trash"
+    }))
+    .unwrap();
+    assert_eq!(serde_json::to_value(trash).unwrap()["trash_extra"], "trash");
 }

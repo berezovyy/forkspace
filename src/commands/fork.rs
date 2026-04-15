@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use crate::backend::{select_backend, CreateReq};
+use crate::backend::{pending_create_path, select_backend, CreateReq};
 use crate::error::{ForkspaceError, Result};
-use crate::state::State;
+use crate::state::{PendingCreate, State};
 use crate::util::IoContext;
 use crate::workspace::Workspace;
 
@@ -18,6 +18,13 @@ pub fn create_workspace(
     let (resolved_base, resolved_parent, backend) = {
         let state = State::load()?;
         if state.workspaces.contains_key(name) {
+            return Err(ForkspaceError::WorkspaceExists(name.to_string()));
+        }
+        if state
+            .pending_creates
+            .iter()
+            .any(|pending| pending.name == name)
+        {
             return Err(ForkspaceError::WorkspaceExists(name.to_string()));
         }
         if let Some(ws) = state.workspaces.get(base.to_str().unwrap_or("")) {
@@ -36,12 +43,41 @@ pub fn create_workspace(
             resolved_base.display()
         )
     })?;
-    let view = backend.create(&CreateReq {
+    let request = CreateReq {
         name: name.to_string(),
         base: resolved_base.clone(),
         tmpfs,
         tmpfs_size: size,
+    };
+    let intent = PendingCreate {
+        name: name.to_string(),
+        path: pending_create_path(backend.kind(), name),
+        backend_kind: backend.kind(),
+        pid: std::process::id(),
+        unknown_fields: serde_json::Map::new(),
+    };
+    State::with_state(|state| {
+        if state.workspaces.contains_key(name)
+            || state
+                .pending_creates
+                .iter()
+                .any(|pending| pending.name == name)
+        {
+            return Err(ForkspaceError::WorkspaceExists(name.to_string()));
+        }
+        state.pending_creates.push(intent);
+        Ok(())
     })?;
+    let view = match backend.create(&request) {
+        Ok(view) => view,
+        Err(error) => {
+            State::with_state(|state| {
+                state.pending_creates.retain(|pending| pending.name != name);
+                Ok(())
+            })?;
+            return Err(error);
+        }
+    };
     let ws = Workspace::from_view(
         name.to_string(),
         resolved_base,
@@ -52,6 +88,7 @@ pub fn create_workspace(
     );
 
     State::with_state(|state| {
+        state.pending_creates.retain(|pending| pending.name != name);
         state.add_workspace(ws.clone())?;
         Ok(())
     })?;

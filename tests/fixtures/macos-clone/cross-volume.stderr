@@ -1,0 +1,1 @@
+unsupported capability: base and workspace root are on different volumes; set FORKSPACE_HOME to an APFS directory on the base volume
