@@ -4,11 +4,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use forkspace::backend::{
-    select_backend, BackendKind, BackendState, CreateReq, DestroyMode, ViewInfo, WorkspaceBackend,
+    select_backend, BackendKind, BackendState, ChangeCount, CreateReq, DestroyMode, ViewInfo,
+    WorkspaceBackend,
 };
 use forkspace::capabilities::Capabilities;
 use forkspace::diff::FileChange;
 use forkspace::error::{ForkspaceError, Result};
+use forkspace::manifest::ManifestStatus;
 use forkspace::workspace::Workspace;
 use serial_test::serial;
 
@@ -53,6 +55,7 @@ impl WorkspaceBackend for FakeBackend {
             backend_state: BackendState::MacClone {
                 unknown_fields: serde_json::Map::new(),
             },
+            manifest_status: ManifestStatus::Ready,
         })
     }
 
@@ -68,6 +71,10 @@ impl WorkspaceBackend for FakeBackend {
 
     fn changes(&self, _ws: &Workspace) -> Result<Vec<FileChange>> {
         Ok(Vec::new())
+    }
+
+    fn change_count(&self, _ws: &Workspace, _include_ignored: bool) -> Result<ChangeCount> {
+        Ok(ChangeCount::Ready(0))
     }
 
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {

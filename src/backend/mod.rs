@@ -10,6 +10,7 @@ use serde_json::{Map, Value};
 use crate::capabilities::Capabilities;
 use crate::diff::FileChange;
 use crate::error::{ForkspaceError, Result};
+use crate::manifest::ManifestStatus;
 use crate::workspace::Workspace;
 
 #[cfg(target_os = "macos")]
@@ -68,6 +69,14 @@ pub struct ViewInfo {
     pub view_path: PathBuf,
     pub fork_time_ns: u128,
     pub backend_state: BackendState,
+    pub manifest_status: ManifestStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChangeCount {
+    Ready(usize),
+    Pending,
+    Degraded,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -83,6 +92,7 @@ pub trait WorkspaceBackend {
     fn destroy(&self, ws: &Workspace, mode: DestroyMode) -> Result<()>;
     fn view_path(&self, ws: &Workspace) -> PathBuf;
     fn changes(&self, ws: &Workspace) -> Result<Vec<FileChange>>;
+    fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount>;
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)>;
 }
 

@@ -299,3 +299,16 @@ fn test_trash_is_recorded_and_retried_on_load() {
     assert!(!orphan.exists());
     assert!(State::load().unwrap().trash.is_empty());
 }
+
+#[test]
+#[serial]
+fn test_orphan_manifest_is_removed_during_reconciliation() {
+    let dir = common::setup_test_env();
+    let orphan = dir.path().join("manifests/orphan.jsonl");
+    std::fs::create_dir_all(orphan.parent().unwrap()).unwrap();
+    std::fs::write(&orphan, b"{}\n").unwrap();
+    State::default().save().unwrap();
+
+    State::load().unwrap();
+    assert!(!orphan.exists());
+}

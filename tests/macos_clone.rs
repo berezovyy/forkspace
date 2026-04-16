@@ -12,7 +12,8 @@ mod macos {
     use std::ffi::CString;
     use std::fs;
     use std::hash::{Hash, Hasher};
-    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::os::unix::fs::MetadataExt;
     use std::path::Path;
     use std::process::{Command, Stdio};
     use std::sync::{Arc, Barrier};
@@ -23,6 +24,7 @@ mod macos {
     use forkspace::cli::DropArgs;
     use forkspace::commands;
     use forkspace::error::ForkspaceError;
+    use forkspace::manifest::{self, ManifestStatus};
     use forkspace::state::State;
     use serial_test::serial;
 
@@ -36,7 +38,37 @@ mod macos {
     }
 
     fn fork(base: &std::path::Path, name: &str) -> forkspace::workspace::Workspace {
-        commands::fork::create_workspace(base.to_path_buf(), name, None, None, false, None).unwrap()
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env(
+                "FORKSPACE_HOME",
+                std::env::var_os("FORKSPACE_HOME").unwrap(),
+            )
+            .args(["fork", base.to_str().unwrap(), "--name", name])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "fork failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        State::load().unwrap().workspaces.get(name).unwrap().clone()
+    }
+
+    fn wait_for_manifest(name: &str) -> forkspace::workspace::Workspace {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let state = State::load().unwrap();
+            let workspace = state.workspaces.get(name).unwrap().clone();
+            if workspace.manifest_status == ManifestStatus::Ready {
+                return workspace;
+            }
+            assert_ne!(workspace.manifest_status, ManifestStatus::Degraded);
+            assert!(
+                Instant::now() < deadline,
+                "manifest for {name} did not become ready"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 
     fn command_exists(command: &str) -> bool {
@@ -391,7 +423,14 @@ mod macos {
                 let base_path = base_path.clone();
                 thread::spawn(move || {
                     barrier.wait();
-                    commands::fork::create_workspace(base_path, "winner", None, None, false, None)
+                    Command::new(env!("CARGO_BIN_EXE_forkspace"))
+                        .env(
+                            "FORKSPACE_HOME",
+                            std::env::var_os("FORKSPACE_HOME").unwrap(),
+                        )
+                        .args(["fork", base_path.to_str().unwrap(), "--name", "winner"])
+                        .output()
+                        .unwrap()
                 })
             })
             .collect();
@@ -400,11 +439,17 @@ mod macos {
             .into_iter()
             .map(|handle| handle.join().unwrap())
             .collect();
-        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
         assert_eq!(
             results
                 .iter()
-                .filter(|result| matches!(result, Err(ForkspaceError::WorkspaceExists(_))))
+                .filter(|result| result.status.success())
+                .count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| result.status.code() == Some(4))
                 .count(),
             1
         );
@@ -444,6 +489,148 @@ mod macos {
         fs::write(base.path().join("cache.bin"), "native-compatible\n").unwrap();
         let workspace = fork(base.path(), "clean-contract");
         assert!(workspace.view_path.join("cache.bin").exists());
+    }
+
+    #[test]
+    #[serial]
+    fn background_manifest_drives_nonblocking_status_and_recovers_safely() {
+        let (home, base) = setup();
+        fs::write(base.path().join(".gitignore"), "ignored\n").unwrap();
+        for index in 0..2_000 {
+            fs::write(base.path().join(format!("file-{index:04}")), b"base").unwrap();
+        }
+        let workspace = fork(base.path(), "manifest");
+        assert!(matches!(
+            workspace.manifest_status,
+            ManifestStatus::Building | ManifestStatus::Ready
+        ));
+        let workspace = wait_for_manifest("manifest");
+        let rows = manifest::read("manifest").unwrap();
+        assert_eq!(rows.len(), 2_002);
+        let readme = rows.iter().find(|row| row.path == "README.md").unwrap();
+        let metadata = fs::metadata(workspace.view_path.join("README.md")).unwrap();
+        assert_eq!(readme.size, 5);
+        assert_eq!(
+            readme.mtime_ns,
+            i128::from(metadata.mtime()) * 1_000_000_000 + i128::from(metadata.mtime_nsec())
+        );
+
+        let _rebuild = fork(base.path(), "rebuild");
+        wait_for_manifest("rebuild");
+        fs::write(manifest::manifest_path("rebuild"), b"truncated\n").unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .arg("ls")
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&output.stdout).contains("  -"));
+        wait_for_manifest("rebuild");
+        assert_eq!(manifest::read("rebuild").unwrap().len(), 2_002);
+        commands::drop::exec(DropArgs {
+            name: Some("rebuild".into()),
+            force: false,
+            all: false,
+            glob: false,
+        })
+        .unwrap();
+
+        State::with_state(|state| {
+            state
+                .workspaces
+                .get_mut("manifest")
+                .unwrap()
+                .manifest_status = ManifestStatus::Building;
+            Ok(())
+        })
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["ls"])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&output.stdout).contains("  -"));
+        State::with_state(|state| {
+            state
+                .workspaces
+                .get_mut("manifest")
+                .unwrap()
+                .manifest_status = ManifestStatus::Ready;
+            Ok(())
+        })
+        .unwrap();
+
+        fs::write(workspace.view_path.join("file-0000"), b"changed").unwrap();
+        fs::remove_file(workspace.view_path.join("file-0001")).unwrap();
+        fs::write(workspace.view_path.join("new-file"), b"new").unwrap();
+        fs::write(workspace.view_path.join("ignored"), b"ignored").unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["ls"])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&output.stdout).contains("3 files"));
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["ls", "--no-gitignore"])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&output.stdout).contains("4 files"));
+
+        fs::write(manifest::manifest_path("manifest"), b"truncated\n").unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .arg("ls")
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&output.stdout).contains("degraded"));
+        assert_eq!(
+            State::load()
+                .unwrap()
+                .workspaces
+                .get("manifest")
+                .unwrap()
+                .manifest_status,
+            ManifestStatus::Degraded
+        );
+
+        commands::drop::exec(DropArgs {
+            name: Some("manifest".into()),
+            force: false,
+            all: false,
+            glob: false,
+        })
+        .unwrap();
+        assert!(!manifest::manifest_path("manifest").exists());
+    }
+
+    #[test]
+    #[serial]
+    fn fork_manifest_round_trips_byte_paths_long_paths_and_nfd() {
+        let (_home, base) = setup();
+        let non_utf = std::ffi::OsString::from_vec(vec![b'n', b'o', b'n', b'-', 0xff]);
+        fs::write(base.path().join(&non_utf), b"bytes").unwrap();
+        let nfd = "cafe\u{301}";
+        fs::write(base.path().join(nfd), b"nfd").unwrap();
+        let mut long = std::path::PathBuf::new();
+        for index in 0..6 {
+            long.push(format!("{index}-{}", "x".repeat(150)));
+        }
+        fs::create_dir_all(base.path().join(&long)).unwrap();
+        long.push("leaf");
+        fs::write(base.path().join(&long), b"long").unwrap();
+
+        fork(base.path(), "byte-paths");
+        wait_for_manifest("byte-paths");
+        let paths: Vec<_> = manifest::stream("byte-paths")
+            .unwrap()
+            .map(|row| manifest::decode_path(&row.unwrap().path).unwrap())
+            .collect();
+
+        assert!(paths
+            .iter()
+            .any(|path| path.as_os_str().as_bytes() == non_utf.as_os_str().as_bytes()));
+        assert!(paths.iter().any(|path| path == Path::new(nfd)));
+        assert!(paths.iter().any(|path| path == &long));
     }
 
     #[test]

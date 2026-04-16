@@ -5,10 +5,14 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::{BackendKind, BackendState, CreateReq, DestroyMode, ViewInfo, WorkspaceBackend};
+use super::{
+    BackendKind, BackendState, ChangeCount, CreateReq, DestroyMode, ViewInfo, WorkspaceBackend,
+};
 use crate::capabilities::Capabilities;
 use crate::diff::{self, FileChange};
 use crate::error::{ForkspaceError, Result};
+use crate::filter::ChangeFilter;
+use crate::manifest::ManifestStatus;
 use crate::overlay::{mount_overlay, unmount_overlay, unmount_tmpfs, OverlayOpts};
 use crate::util::{forkspace_home, IoContext};
 use crate::workspace::Workspace;
@@ -133,6 +137,7 @@ impl WorkspaceBackend for LinuxBackend {
                 tmpfs_size: req.tmpfs_size.clone(),
                 unknown_fields: Map::new(),
             }),
+            manifest_status: ManifestStatus::Absent,
         })
     }
 
@@ -159,6 +164,16 @@ impl WorkspaceBackend for LinuxBackend {
 
     fn changes(&self, ws: &Workspace) -> Result<Vec<FileChange>> {
         diff::collect_changes(ws)
+    }
+
+    fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount> {
+        let changes = self.changes(ws)?;
+        let count = if include_ignored {
+            changes.len()
+        } else {
+            ChangeFilter::build(&ws.base).filter_changes(changes).len()
+        };
+        Ok(ChangeCount::Ready(count))
     }
 
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {

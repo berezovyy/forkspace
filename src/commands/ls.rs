@@ -2,9 +2,8 @@ use std::path::Path;
 
 use owo_colors::OwoColorize;
 
-use crate::backend::select_backend;
+use crate::backend::{select_backend, ChangeCount};
 use crate::error::Result;
-use crate::filter::ChangeFilter;
 use crate::state::State;
 use crate::util::is_pid_alive;
 
@@ -51,17 +50,13 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
                 shorten_path(&ws.base)
             };
 
-            let changes = select_backend(Some(ws.backend_kind))?.changes(ws)?;
-            let file_count = if args.no_gitignore {
-                changes.len()
-            } else {
-                ChangeFilter::build(&ws.base).filter_changes(changes).len()
-            };
-            let changed = if file_count == 1 {
-                "1 file".to_string()
-            } else {
-                format!("{} files", file_count)
-            };
+            let changed =
+                match select_backend(Some(ws.backend_kind))?.change_count(ws, args.no_gitignore)? {
+                    ChangeCount::Ready(1) => "1 file".to_string(),
+                    ChangeCount::Ready(count) => format!("{count} files"),
+                    ChangeCount::Pending => "-".to_string(),
+                    ChangeCount::Degraded => "degraded".to_string(),
+                };
 
             let proc_info = match &ws.process {
                 Some(p) if is_pid_alive(p.pid) => {

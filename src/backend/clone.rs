@@ -7,10 +7,13 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use super::{BackendKind, BackendState, CreateReq, DestroyMode, ViewInfo, WorkspaceBackend};
+use super::{
+    BackendKind, BackendState, ChangeCount, CreateReq, DestroyMode, ViewInfo, WorkspaceBackend,
+};
 use crate::capabilities::Capabilities;
 use crate::diff::FileChange;
 use crate::error::{ForkspaceError, Result};
+use crate::manifest::{self, ManifestStatus};
 use crate::util::{forkspace_home, now_unix_ns};
 use crate::workspace::Workspace;
 
@@ -176,12 +179,19 @@ impl WorkspaceBackend for CloneBackend {
                 req.name
             );
         }
+        let manifest_status =
+            if manifest::spawn(req.name.clone(), destination.clone(), fork_time_ns).is_ok() {
+                ManifestStatus::Building
+            } else {
+                ManifestStatus::Degraded
+            };
         Ok(ViewInfo {
             view_path: destination,
             fork_time_ns,
             backend_state: BackendState::MacClone {
                 unknown_fields: serde_json::Map::new(),
             },
+            manifest_status,
         })
     }
 
@@ -220,6 +230,10 @@ impl WorkspaceBackend for CloneBackend {
 
     fn changes(&self, _ws: &Workspace) -> Result<Vec<FileChange>> {
         Ok(Vec::new())
+    }
+
+    fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount> {
+        manifest::change_count(ws, include_ignored)
     }
 
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {

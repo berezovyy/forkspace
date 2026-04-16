@@ -25,6 +25,7 @@ where
     F: FnOnce() -> Result,
 {
     cleanup()?;
+    crate::manifest::remove(name)?;
     state.reconcile_runtime()?;
     state.remove_workspace(name)
 }

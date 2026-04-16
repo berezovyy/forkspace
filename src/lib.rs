@@ -5,6 +5,7 @@ pub mod commands;
 pub mod diff;
 pub mod error;
 pub mod filter;
+pub mod manifest;
 pub mod merge;
 pub mod overlay;
 pub(crate) mod proxy;

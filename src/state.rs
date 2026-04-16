@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 
 use crate::backend::{BackendKind, BackendState, LinuxBackendState};
 use crate::error::{ForkspaceError, Result};
+use crate::manifest::ManifestStatus;
 use crate::util::forkspace_home;
 use crate::workspace::Workspace;
 
@@ -145,6 +146,7 @@ impl From<LegacyWorkspace> for Workspace {
                 tmpfs_size: value.tmpfs_size,
                 unknown_fields: Map::new(),
             }),
+            manifest_status: ManifestStatus::Absent,
             unknown_fields: value.unknown_fields,
         }
     }
@@ -268,6 +270,26 @@ impl State {
             }
         }
         self.pending_creates = retained;
+
+        let manifest_root = forkspace_home().join("manifests");
+        if let Ok(entries) = fs::read_dir(&manifest_root) {
+            for path in entries.filter_map(|entry| entry.ok().map(|value| value.path())) {
+                if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                let Some(name) = path.file_stem().and_then(|value| value.to_str()) else {
+                    continue;
+                };
+                let owned = self.workspaces.contains_key(name)
+                    || self
+                        .pending_creates
+                        .iter()
+                        .any(|pending| pending.name == name);
+                if !owned && fs::remove_file(&path).is_ok() {
+                    changed = true;
+                }
+            }
+        }
 
         if let Ok(entries) = fs::read_dir(&trash_root) {
             for path in entries.filter_map(|entry| entry.ok().map(|value| value.path())) {

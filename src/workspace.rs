@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::backend::{BackendKind, BackendState, LinuxBackendState, ViewInfo};
 use crate::error::{ForkspaceError, Result};
+use crate::manifest::ManifestStatus;
 use crate::util::{forkspace_home, now_rfc3339, now_unix_ns};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +32,8 @@ pub struct Workspace {
     pub fork_time_ns: u128,
     pub backend_kind: BackendKind,
     pub backend_state: BackendState,
+    #[serde(default, skip_serializing_if = "manifest_absent")]
+    pub manifest_status: ManifestStatus,
     #[serde(flatten)]
     pub unknown_fields: Map<String, Value>,
 }
@@ -58,6 +61,7 @@ impl Workspace {
                 tmpfs_size: None,
                 unknown_fields: Map::new(),
             }),
+            manifest_status: ManifestStatus::Absent,
             unknown_fields: Map::new(),
         }
     }
@@ -82,6 +86,7 @@ impl Workspace {
             fork_time_ns: view.fork_time_ns,
             backend_kind,
             backend_state: view.backend_state,
+            manifest_status: view.manifest_status,
             unknown_fields: Map::new(),
         }
     }
@@ -114,4 +119,8 @@ impl Workspace {
             .ok()
             .and_then(|state| state.tmpfs_size.as_deref())
     }
+}
+
+fn manifest_absent(status: &ManifestStatus) -> bool {
+    *status == ManifestStatus::Absent
 }
