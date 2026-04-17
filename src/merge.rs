@@ -35,7 +35,8 @@ impl PackageManager {
 }
 
 pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
-    let all_changes = select_backend(Some(workspace.backend_kind))?.changes(workspace)?;
+    let all_changes =
+        select_backend(Some(workspace.backend_kind))?.changes(workspace, true, true)?;
 
     if all_changes.is_empty() {
         return Ok(MergeResult {

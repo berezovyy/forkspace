@@ -69,7 +69,12 @@ impl WorkspaceBackend for FakeBackend {
         ws.view_path.clone()
     }
 
-    fn changes(&self, _ws: &Workspace) -> Result<Vec<FileChange>> {
+    fn changes(
+        &self,
+        _ws: &Workspace,
+        _include_ignored: bool,
+        _need_line_counts: bool,
+    ) -> Result<Vec<FileChange>> {
         Ok(Vec::new())
     }
 
@@ -112,7 +117,10 @@ fn fake_backend_passes_workspace_contract() {
     assert_eq!(backend.kind(), BackendKind::MacClone);
     assert!(backend.capabilities().tmpfs_backing);
     assert_eq!(backend.view_path(&workspace), root.path().join("view"));
-    assert!(backend.changes(&workspace).unwrap().is_empty());
+    assert!(backend
+        .changes(&workspace, false, false)
+        .unwrap()
+        .is_empty());
     assert_eq!(
         backend.shell_env(&workspace),
         vec![(

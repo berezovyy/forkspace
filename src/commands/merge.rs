@@ -10,7 +10,8 @@ pub fn exec(args: MergeArgs) -> Result {
         let workspace = state.require_workspace(&args.name)?.clone();
 
         if args.patch {
-            let changes = select_backend(Some(workspace.backend_kind))?.changes(&workspace)?;
+            let changes =
+                select_backend(Some(workspace.backend_kind))?.changes(&workspace, true, true)?;
             if changes.is_empty() {
                 println!("nothing to merge in '{}'", args.name);
                 return Ok(());

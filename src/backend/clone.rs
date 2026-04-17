@@ -228,8 +228,13 @@ impl WorkspaceBackend for CloneBackend {
         ws.view_path.clone()
     }
 
-    fn changes(&self, _ws: &Workspace) -> Result<Vec<FileChange>> {
-        Ok(Vec::new())
+    fn changes(
+        &self,
+        ws: &Workspace,
+        include_ignored: bool,
+        need_line_counts: bool,
+    ) -> Result<Vec<FileChange>> {
+        crate::diff::collect_clone_changes(ws, include_ignored, need_line_counts)
     }
 
     fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount> {

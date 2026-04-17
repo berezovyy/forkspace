@@ -276,7 +276,7 @@ fn has_post_fork_writes(workspace: &Workspace) -> Result<bool> {
 }
 
 fn visible(filter: Option<&ChangeFilter>, path: &Path) -> bool {
-    filter.is_none_or(|filter| !filter.is_ignored(path, false))
+    filter.is_none_or(|filter| filter.is_visible(path, false))
 }
 
 pub fn change_count(workspace: &Workspace, include_ignored: bool) -> Result<ChangeCount> {

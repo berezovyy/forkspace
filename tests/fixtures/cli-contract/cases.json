@@ -33,6 +33,7 @@
   {"name":"ls-empty","args":["ls"]},
   {"name":"ls-names-empty","args":["ls","--names"]},
   {"name":"diff-not-found","args":["diff","absent"]},
+  {"name":"diff-json-class","args":["diff","golden","--json"],"setup":"diff-class"},
   {"name":"merge-not-found","args":["merge","absent"]},
   {"name":"invalid-completion-shell","args":["completions","cmd.exe"]}
 ]

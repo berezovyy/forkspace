@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -9,12 +9,14 @@ use similar::{ChangeTag, TextDiff};
 use walkdir::WalkDir;
 
 use crate::error::{ForkspaceError, Result};
+use crate::filter::{ChangeClass, ChangeFilter};
+use crate::manifest::{self, ManifestKind, ManifestRow, ManifestStatus};
 use crate::overlay::Whiteout;
 use crate::state::State;
 use crate::util::WalkDirExt;
 use crate::workspace::Workspace;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChangeKind {
     Added,
@@ -26,19 +28,31 @@ pub enum ChangeKind {
 pub struct FileChange {
     pub path: PathBuf,
     pub kind: ChangeKind,
+    pub class: ChangeClass,
     pub additions: Option<usize>,
     pub deletions: Option<usize>,
     pub is_binary: bool,
+    #[serde(skip)]
+    pub old_content: OldContent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OldContent {
+    Available,
+    BaseAdvanced,
+    AncestorUnknown,
 }
 
 impl FileChange {
     pub(crate) fn deletion(path: PathBuf) -> Self {
         Self {
+            class: ChangeFilter::class(&path),
             path,
             kind: ChangeKind::Deleted,
             additions: None,
             deletions: None,
             is_binary: false,
+            old_content: OldContent::Available,
         }
     }
 }
@@ -48,6 +62,18 @@ fn whiteout_target_path(rel: &Path, original_name: &str) -> PathBuf {
         parent.join(original_name)
     } else {
         PathBuf::from(original_name)
+    }
+}
+
+fn valid_whiteout(rel: &Path, file_name: &str, base: &Path) -> Option<Whiteout> {
+    match Whiteout::parse(file_name)? {
+        Whiteout::Opaque => Some(Whiteout::Opaque),
+        Whiteout::Deletion(original_name) => {
+            let target = whiteout_target_path(rel, &original_name);
+            fs::symlink_metadata(base.join(target))
+                .is_ok()
+                .then_some(Whiteout::Deletion(original_name))
+        }
     }
 }
 
@@ -95,10 +121,19 @@ fn compute_line_diff(old: &Path, new: &Path) -> (usize, usize) {
 }
 
 fn files_differ(a: &Path, b: &Path) -> bool {
-    let (Ok(meta_a), Ok(meta_b)) = (fs::metadata(a), fs::metadata(b)) else {
+    use std::os::unix::fs::MetadataExt;
+
+    let (Ok(meta_a), Ok(meta_b)) = (fs::symlink_metadata(a), fs::symlink_metadata(b)) else {
         return true;
     };
-    if meta_a.len() != meta_b.len() {
+    if meta_a.file_type().is_symlink() || meta_b.file_type().is_symlink() {
+        return meta_a.file_type().is_symlink() != meta_b.file_type().is_symlink()
+            || fs::read_link(a).ok() != fs::read_link(b).ok();
+    }
+    if meta_a.is_dir() != meta_b.is_dir()
+        || meta_a.len() != meta_b.len()
+        || meta_a.mode() & 0o7777 != meta_b.mode() & 0o7777
+    {
         return true;
     }
 
@@ -131,40 +166,48 @@ fn classify_file(
     base_path: &Path,
     need_line_counts: bool,
 ) -> Option<FileChange> {
-    if base_path.exists() {
+    if fs::symlink_metadata(base_path).is_ok() {
         if need_line_counts {
-            let binary = is_binary(upper_path);
-            let (additions, deletions) = if binary {
+            let symlink = upper_path.is_symlink() || base_path.is_symlink();
+            let binary = !symlink && is_binary(upper_path);
+            let (additions, deletions) = if binary || symlink {
+                if !files_differ(base_path, upper_path) {
+                    return None;
+                }
                 (None, None)
             } else {
                 let (a, d) = compute_line_diff(base_path, upper_path);
-                if a == 0 && d == 0 {
+                if a == 0 && d == 0 && !files_differ(base_path, upper_path) {
                     return None;
                 }
                 (Some(a), Some(d))
             };
             Some(FileChange {
+                class: ChangeFilter::class(&rel_path),
                 path: rel_path,
                 kind: ChangeKind::Modified,
                 additions,
                 deletions,
                 is_binary: binary,
+                old_content: OldContent::Available,
             })
         } else {
             if !files_differ(base_path, upper_path) {
                 return None;
             }
             Some(FileChange {
+                class: ChangeFilter::class(&rel_path),
                 path: rel_path,
                 kind: ChangeKind::Modified,
                 additions: None,
                 deletions: None,
                 is_binary: false,
+                old_content: OldContent::Available,
             })
         }
     } else if need_line_counts {
-        let binary = is_binary(upper_path);
-        let additions = if binary {
+        let binary = !upper_path.is_symlink() && is_binary(upper_path);
+        let additions = if binary || upper_path.is_symlink() {
             None
         } else {
             Some(
@@ -175,19 +218,23 @@ fn classify_file(
             )
         };
         Some(FileChange {
+            class: ChangeFilter::class(&rel_path),
             path: rel_path,
             kind: ChangeKind::Added,
             additions,
             deletions: None,
             is_binary: binary,
+            old_content: OldContent::Available,
         })
     } else {
         Some(FileChange {
+            class: ChangeFilter::class(&rel_path),
             path: rel_path,
             kind: ChangeKind::Added,
             additions: None,
             deletions: None,
             is_binary: false,
+            old_content: OldContent::Available,
         })
     }
 }
@@ -228,15 +275,17 @@ fn collect_changes_inner(workspace: &Workspace, need_line_counts: bool) -> Resul
             None => continue,
         };
 
-        if let Some(whiteout) = Whiteout::parse(file_name) {
-            match whiteout {
-                Whiteout::Opaque => continue,
-                Whiteout::Deletion(original_name) => {
-                    changes.push(FileChange::deletion(whiteout_target_path(
-                        rel,
-                        &original_name,
-                    )));
-                    continue;
+        if entry.metadata().is_ok_and(|metadata| metadata.len() == 0) {
+            if let Some(whiteout) = valid_whiteout(rel, file_name, &workspace.base) {
+                match whiteout {
+                    Whiteout::Opaque => continue,
+                    Whiteout::Deletion(original_name) => {
+                        changes.push(FileChange::deletion(whiteout_target_path(
+                            rel,
+                            &original_name,
+                        )));
+                        continue;
+                    }
                 }
             }
         }
@@ -255,6 +304,233 @@ fn collect_changes_inner(workspace: &Workspace, need_line_counts: bool) -> Resul
     }
 
     changes.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(changes)
+}
+
+fn metadata_timestamp_ns(metadata: &fs::Metadata) -> i128 {
+    use std::os::unix::fs::MetadataExt;
+    i128::from(metadata.mtime()) * 1_000_000_000 + i128::from(metadata.mtime_nsec())
+}
+
+fn metadata_ctime_ns(metadata: &fs::Metadata) -> i128 {
+    use std::os::unix::fs::MetadataExt;
+    i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec())
+}
+
+fn metadata_kind(metadata: &fs::Metadata) -> ManifestKind {
+    if metadata.file_type().is_symlink() {
+        ManifestKind::Symlink
+    } else if metadata.is_dir() {
+        ManifestKind::Dir
+    } else {
+        ManifestKind::File
+    }
+}
+
+fn base_matches_manifest(base: &Path, row: &ManifestRow) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(base) else {
+        return false;
+    };
+    if metadata_kind(&metadata) != row.kind
+        || metadata.len() != row.size
+        || metadata_timestamp_ns(&metadata) != row.mtime_ns
+    {
+        return false;
+    }
+    if row.kind == ManifestKind::Symlink {
+        return fs::read_link(base)
+            .ok()
+            .is_some_and(|target| Some(manifest::encode_path(&target)) == row.target);
+    }
+    true
+}
+
+fn clone_change(
+    workspace: &Workspace,
+    path: PathBuf,
+    current_path: Option<&Path>,
+    baseline: Option<&ManifestRow>,
+    need_line_counts: bool,
+) -> FileChange {
+    let base_path = workspace.base.join(&path);
+    let kind = if current_path.is_none() {
+        ChangeKind::Deleted
+    } else if baseline.is_none()
+        || baseline.is_some_and(|row| row.dirty && fs::symlink_metadata(&base_path).is_err())
+    {
+        ChangeKind::Added
+    } else {
+        ChangeKind::Modified
+    };
+    let old_content = match baseline {
+        Some(row) if row.dirty => OldContent::AncestorUnknown,
+        Some(row) if base_matches_manifest(&base_path, row) => OldContent::Available,
+        Some(_) => OldContent::BaseAdvanced,
+        None if matches!(kind, ChangeKind::Added) => OldContent::Available,
+        None => OldContent::AncestorUnknown,
+    };
+    let binary =
+        need_line_counts && current_path.is_some_and(|path| !path.is_symlink() && is_binary(path));
+    let (additions, deletions) = match (&kind, current_path, old_content, need_line_counts) {
+        (_, _, _, false) => (None, None),
+        (ChangeKind::Added, Some(path), _, true)
+            if !binary && !path.is_symlink() && path.is_file() =>
+        {
+            (
+                Some(fs::read_to_string(path).unwrap_or_default().lines().count()),
+                None,
+            )
+        }
+        (ChangeKind::Modified, Some(path), OldContent::Available, true)
+            if !binary && !path.is_symlink() && path.is_file() =>
+        {
+            let (additions, deletions) = compute_line_diff(&base_path, path);
+            (Some(additions), Some(deletions))
+        }
+        _ => (None, None),
+    };
+    FileChange {
+        class: ChangeFilter::class(&path),
+        path,
+        kind,
+        additions,
+        deletions,
+        is_binary: binary,
+        old_content,
+    }
+}
+
+pub fn collect_clone_changes(
+    workspace: &Workspace,
+    include_ignored: bool,
+    need_line_counts: bool,
+) -> Result<Vec<FileChange>> {
+    let filter = (!include_ignored).then(|| ChangeFilter::build(&workspace.base));
+    let baseline = if workspace.manifest_status == ManifestStatus::Ready {
+        let streamed = manifest::stream(&workspace.name).and_then(|rows| {
+            rows.map(|row| {
+                let row = row?;
+                Ok((manifest::decode_path(&row.path)?, row))
+            })
+            .collect::<Result<HashMap<_, _>>>()
+        });
+        match streamed {
+            Ok(rows) => Some(rows),
+            Err(_) => {
+                let _ = manifest::change_count(workspace, include_ignored)?;
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let baseline_known = baseline.is_some();
+    let baseline = baseline.unwrap_or_default();
+    let fork_time_ns = i128::try_from(workspace.fork_time_ns).unwrap_or(i128::MAX);
+    let mut seen = BTreeSet::new();
+    let mut pruned = BTreeSet::new();
+    let root = &workspace.view_path;
+    let walker = WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            if entry.depth() == 0 || !entry.file_type().is_dir() || include_ignored {
+                return true;
+            }
+            let Ok(relative) = entry.path().strip_prefix(root) else {
+                return true;
+            };
+            let visible = filter
+                .as_ref()
+                .is_none_or(|filter| filter.is_visible(relative, true));
+            if !visible {
+                pruned.insert(relative.to_path_buf());
+            }
+            visible
+        });
+    let mut changes = Vec::new();
+    for entry in walker.skip(1) {
+        let entry = entry.walk_context(root)?;
+        let relative = entry
+            .path()
+            .strip_prefix(root)
+            .map_err(|_| {
+                ForkspaceError::StateFailed("clone scan escaped the workspace".to_string())
+            })?
+            .to_path_buf();
+        seen.insert(relative.clone());
+        let visible = filter
+            .as_ref()
+            .is_none_or(|filter| filter.is_visible(&relative, entry.file_type().is_dir()));
+        if !visible {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(entry.path()).map_err(|source| ForkspaceError::Io {
+            context: format!("scan clone metadata for {}", entry.path().display()),
+            source,
+        })?;
+        let baseline_row = baseline.get(&relative);
+        let changed = match baseline_row {
+            Some(row) => {
+                row.dirty
+                    || metadata_ctime_ns(&metadata) > fork_time_ns
+                    || metadata_kind(&metadata) != row.kind
+                    || metadata.len() != row.size
+                    || metadata_timestamp_ns(&metadata) != row.mtime_ns
+                    || (row.kind == ManifestKind::Symlink
+                        && fs::read_link(entry.path()).ok().is_none_or(|target| {
+                            Some(manifest::encode_path(&target)) != row.target
+                        }))
+            }
+            None => baseline_known || metadata_ctime_ns(&metadata) > fork_time_ns,
+        };
+        if changed
+            && (!metadata.is_dir() || baseline_row.is_some_and(|row| row.kind != ManifestKind::Dir))
+        {
+            changes.push(clone_change(
+                workspace,
+                relative,
+                Some(entry.path()),
+                baseline_row,
+                need_line_counts,
+            ));
+        }
+    }
+
+    let missing_directories: BTreeSet<&Path> = baseline
+        .iter()
+        .filter(|(path, row)| {
+            row.kind == ManifestKind::Dir
+                && !seen.contains(*path)
+                && !pruned.iter().any(|prefix| path.starts_with(prefix))
+                && filter
+                    .as_ref()
+                    .is_none_or(|filter| filter.is_visible(path, true))
+        })
+        .map(|(path, _)| path.as_path())
+        .collect();
+    for (path, row) in &baseline {
+        if seen.contains(path)
+            || pruned.iter().any(|prefix| path.starts_with(prefix))
+            || path
+                .ancestors()
+                .skip(1)
+                .any(|ancestor| missing_directories.contains(ancestor))
+            || filter
+                .as_ref()
+                .is_some_and(|filter| !filter.is_visible(path, row.kind == ManifestKind::Dir))
+        {
+            continue;
+        }
+        changes.push(clone_change(
+            workspace,
+            path.clone(),
+            None,
+            Some(row),
+            need_line_counts,
+        ));
+    }
+    changes.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(changes)
 }
 
@@ -340,6 +616,24 @@ pub fn generate_unified_diff(workspace: &Workspace, change: &FileChange) -> Stri
 
     let a_label = format!("a/{}", change.path.display());
     let b_label = format!("b/{}", change.path.display());
+
+    if !matches!(change.kind, ChangeKind::Added) {
+        match change.old_content {
+            OldContent::BaseAdvanced => {
+                return format!(
+                    "diff unavailable (base advanced): {}\n",
+                    change.path.display()
+                );
+            }
+            OldContent::AncestorUnknown => {
+                return format!(
+                    "diff unavailable (ancestor unknown; pending manifest): {}\n",
+                    change.path.display()
+                );
+            }
+            OldContent::Available => {}
+        }
+    }
 
     match change.kind {
         ChangeKind::Added => {
@@ -464,27 +758,29 @@ fn collect_cumulative_changes_inner(
                 None => continue,
             };
 
-            if let Some(whiteout) = Whiteout::parse(file_name) {
-                match whiteout {
-                    Whiteout::Opaque => {
-                        let opaque_dir = rel.parent().unwrap_or(Path::new(""));
-                        let to_remove: Vec<PathBuf> = file_map
-                            .keys()
-                            .filter(|p| p.starts_with(opaque_dir))
-                            .cloned()
-                            .collect();
-                        for p in to_remove {
-                            file_map.remove(&p);
+            if entry.metadata().is_ok_and(|metadata| metadata.len() == 0) {
+                if let Some(whiteout) = valid_whiteout(&rel, file_name, original_base) {
+                    match whiteout {
+                        Whiteout::Opaque => {
+                            let opaque_dir = rel.parent().unwrap_or(Path::new(""));
+                            let to_remove: Vec<PathBuf> = file_map
+                                .keys()
+                                .filter(|p| p.starts_with(opaque_dir))
+                                .cloned()
+                                .collect();
+                            for p in to_remove {
+                                file_map.remove(&p);
+                            }
+                            continue;
                         }
-                        continue;
-                    }
-                    Whiteout::Deletion(original_name) => {
-                        let deleted_path = whiteout_target_path(&rel, &original_name);
-                        file_map.remove(&deleted_path);
-                        if original_base.join(&deleted_path).exists() {
-                            deleted.insert(deleted_path);
+                        Whiteout::Deletion(original_name) => {
+                            let deleted_path = whiteout_target_path(&rel, &original_name);
+                            file_map.remove(&deleted_path);
+                            if original_base.join(&deleted_path).exists() {
+                                deleted.insert(deleted_path);
+                            }
+                            continue;
                         }
-                        continue;
                     }
                 }
             }

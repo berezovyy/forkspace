@@ -91,7 +91,12 @@ pub trait WorkspaceBackend {
     fn create(&self, req: &CreateReq) -> Result<ViewInfo>;
     fn destroy(&self, ws: &Workspace, mode: DestroyMode) -> Result<()>;
     fn view_path(&self, ws: &Workspace) -> PathBuf;
-    fn changes(&self, ws: &Workspace) -> Result<Vec<FileChange>>;
+    fn changes(
+        &self,
+        ws: &Workspace,
+        include_ignored: bool,
+        need_line_counts: bool,
+    ) -> Result<Vec<FileChange>>;
     fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount>;
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)>;
 }

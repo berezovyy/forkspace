@@ -12,6 +12,54 @@ struct Case {
     args: Vec<String>,
     #[serde(default)]
     state_fixture: Option<String>,
+    #[serde(default)]
+    setup: Option<String>,
+}
+
+fn setup_case(case: &Case, home: &Path) {
+    if case.setup.as_deref() != Some("diff-class") {
+        return;
+    }
+    let base = home.join("base");
+    let upper = home.join("golden/upper");
+    let work = home.join("golden/work");
+    let merged = home.join("golden/merged");
+    for directory in [&base, &upper, &work, &merged, &upper.join(".git")] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    fs::write(base.join("source.rs"), "old\n").unwrap();
+    fs::write(base.join(".gitignore"), "Cargo.lock\n").unwrap();
+    fs::write(upper.join("source.rs"), "new\n").unwrap();
+    fs::write(upper.join("Cargo.lock"), "lock\n").unwrap();
+    fs::write(upper.join(".git/index"), "internal\n").unwrap();
+    let state = serde_json::json!({
+        "version": 2,
+        "workspaces": {
+            "golden": {
+                "name": "golden",
+                "base": base,
+                "parent": null,
+                "created": "2025-01-01T00:00:00Z",
+                "session": null,
+                "view_path": merged,
+                "fork_time_ns": 1,
+                "backend_kind": "linux",
+                "backend_state": {
+                    "kind": "linux",
+                    "upper": upper,
+                    "work": work,
+                    "merged": merged,
+                    "tmpfs": false
+                }
+            }
+        },
+        "proxy": null
+    });
+    fs::write(
+        home.join("state.json"),
+        serde_json::to_vec_pretty(&state).unwrap(),
+    )
+    .unwrap();
 }
 
 fn fixture_dir() -> PathBuf {
@@ -32,6 +80,7 @@ fn golden_cli_contract() {
         if let Some(fixture) = &case.state_fixture {
             fs::copy(fixture_dir().join(fixture), home.path().join("state.json")).unwrap();
         }
+        setup_case(&case, home.path());
 
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .args(&case.args)
@@ -43,8 +92,16 @@ fn golden_cli_contract() {
             .unwrap();
 
         let prefix = fixture_dir().join(&case.name);
+        let stdout = if case.setup.is_some() {
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .replace(&home.path().display().to_string(), "<FORKSPACE_HOME>")
+                .into_bytes()
+        } else {
+            output.stdout
+        };
         assert_eq!(
-            output.stdout,
+            stdout,
             fs::read(prefix.with_extension("stdout")).unwrap(),
             "stdout changed for {}",
             case.name

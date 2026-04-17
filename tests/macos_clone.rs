@@ -635,6 +635,124 @@ mod macos {
 
     #[test]
     #[serial]
+    fn diff_reports_pending_deletions_and_base_advanced_full_content() {
+        let (home, base) = setup();
+        fs::write(base.path().join("modified"), b"old\n").unwrap();
+        fs::write(base.path().join("deleted"), b"old\n").unwrap();
+        let workspace = fork(base.path(), "diff-state");
+        wait_for_manifest("diff-state");
+        thread::sleep(Duration::from_millis(2));
+        fs::write(workspace.view_path.join("modified"), b"workspace\n").unwrap();
+        fs::write(workspace.view_path.join("added"), b"added\n").unwrap();
+        fs::remove_file(workspace.view_path.join("deleted")).unwrap();
+        fs::write(base.path().join("modified"), b"base advanced\n").unwrap();
+
+        State::with_state(|state| {
+            state
+                .workspaces
+                .get_mut("diff-state")
+                .unwrap()
+                .manifest_status = ManifestStatus::Building;
+            Ok(())
+        })
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["diff", "diff-state", "--json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("pending manifest"));
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let paths: Vec<_> = json["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|change| change["path"].as_str().unwrap())
+            .collect();
+        assert!(paths.contains(&"modified"));
+        assert!(paths.contains(&"added"));
+        assert!(!paths.contains(&"deleted"));
+
+        State::with_state(|state| {
+            state
+                .workspaces
+                .get_mut("diff-state")
+                .unwrap()
+                .manifest_status = ManifestStatus::Ready;
+            Ok(())
+        })
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["diff", "diff-state", "--full"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("base advanced"));
+    }
+
+    #[test]
+    #[serial]
+    fn git_finder_and_ignored_build_output_leave_default_diff_clean() {
+        let (home, base) = setup();
+        fs::write(base.path().join(".gitignore"), "target/\n").unwrap();
+        let git = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(base.path())
+            .status();
+        if !git.is_ok_and(|status| status.success()) {
+            eprintln!(
+                "FORKSPACE_TEST_SKIP {{\"capability\":\"git\",\"reason\":\"git is unavailable\"}}"
+            );
+            return;
+        }
+        let workspace = fork(base.path(), "noise");
+        wait_for_manifest("noise");
+        let _ = Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&workspace.view_path)
+            .output()
+            .unwrap();
+        fs::write(workspace.view_path.join(".DS_Store"), b"finder").unwrap();
+        fs::create_dir_all(workspace.view_path.join("target/debug")).unwrap();
+        fs::write(workspace.view_path.join("target/debug/build"), b"artifact").unwrap();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["diff", "noise", "--json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(json["changes"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn warm_clone_diff_scan_of_200k_files_is_subsecond() {
+        let (_home, base) = setup();
+        for index in 0..200_000 {
+            let directory = base.path().join(format!("scan/{:03}", index / 1_000));
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join(format!("{index:06}")), b"x").unwrap();
+        }
+        fork(base.path(), "scan-budget");
+        let workspace = wait_for_manifest("scan-budget");
+        let backend = select_backend(Some(workspace.backend_kind)).unwrap();
+        backend.changes(&workspace, false, false).unwrap();
+        let started = Instant::now();
+        let changes = backend.changes(&workspace, false, false).unwrap();
+        assert!(changes.is_empty());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "warm 200k-file scan took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    #[serial]
     fn pending_partial_clone_is_reconciled_and_never_listed() {
         let (home, _base) = setup();
         let partial = home.path().join("workspaces/partial");

@@ -1,0 +1,22 @@
+{
+  "workspace": "golden",
+  "base": "<FORKSPACE_HOME>/base",
+  "changes": [
+    {
+      "path": "Cargo.lock",
+      "kind": "added",
+      "class": "dependency",
+      "additions": 1,
+      "deletions": null,
+      "is_binary": false
+    },
+    {
+      "path": "source.rs",
+      "kind": "modified",
+      "class": "source",
+      "additions": 1,
+      "deletions": 1,
+      "is_binary": false
+    }
+  ]
+}

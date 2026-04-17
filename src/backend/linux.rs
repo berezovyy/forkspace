@@ -162,18 +162,28 @@ impl WorkspaceBackend for LinuxBackend {
         ws.view_path.clone()
     }
 
-    fn changes(&self, ws: &Workspace) -> Result<Vec<FileChange>> {
-        diff::collect_changes(ws)
+    fn changes(
+        &self,
+        ws: &Workspace,
+        include_ignored: bool,
+        need_line_counts: bool,
+    ) -> Result<Vec<FileChange>> {
+        let changes = if need_line_counts {
+            diff::collect_changes(ws)?
+        } else {
+            diff::collect_changes_fast(ws)?
+        };
+        if include_ignored {
+            Ok(changes)
+        } else {
+            Ok(ChangeFilter::build(&ws.base).filter_changes(changes))
+        }
     }
 
     fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount> {
-        let changes = self.changes(ws)?;
-        let count = if include_ignored {
-            changes.len()
-        } else {
-            ChangeFilter::build(&ws.base).filter_changes(changes).len()
-        };
-        Ok(ChangeCount::Ready(count))
+        Ok(ChangeCount::Ready(
+            self.changes(ws, include_ignored, false)?.len(),
+        ))
     }
 
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {

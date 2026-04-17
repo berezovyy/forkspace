@@ -122,7 +122,7 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
     if args.merge_on_exit {
         let state = State::load()?;
         let workspace = state.require_workspace(&ws_name)?;
-        let changes = backend.changes(workspace)?;
+        let changes = backend.changes(workspace, false, false)?;
 
         if changes.is_empty() {
             println!("clean — no changes to merge");

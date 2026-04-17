@@ -6,6 +6,7 @@ use crate::diff::{
 };
 use crate::error::{ForkspaceError, Result};
 use crate::filter::ChangeFilter;
+use crate::manifest::ManifestStatus;
 use crate::state::State;
 
 pub fn exec(args: DiffArgs) -> Result {
@@ -20,14 +21,34 @@ pub fn exec(args: DiffArgs) -> Result {
             collect_cumulative_changes_fast(workspace, &state)?
         }
     } else {
-        select_backend(Some(workspace.backend_kind))?.changes(workspace)?
+        select_backend(Some(workspace.backend_kind))?.changes(
+            workspace,
+            args.no_gitignore,
+            need_line_counts,
+        )?
     };
 
-    let changes = if args.no_gitignore {
+    let changes = if args.no_gitignore || !args.cumulative {
         changes
     } else {
         ChangeFilter::build(&workspace.base).filter_changes(changes)
     };
+
+    let manifest_status = State::load()?
+        .workspaces
+        .get(&workspace.name)
+        .map_or(workspace.manifest_status, |workspace| {
+            workspace.manifest_status
+        });
+    match manifest_status {
+        ManifestStatus::Building => {
+            eprintln!("warning: deletions pending manifest build");
+        }
+        ManifestStatus::Degraded => {
+            eprintln!("warning: deletion tracking degraded; the fork manifest is unavailable");
+        }
+        ManifestStatus::Absent | ManifestStatus::Ready => {}
+    }
 
     if changes.is_empty() {
         if args.json {
