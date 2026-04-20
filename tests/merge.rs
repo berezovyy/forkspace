@@ -173,6 +173,24 @@ fn test_detect_package_manager_variants() {
 }
 
 #[test]
+fn test_package_manager_field_takes_precedence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().join("base");
+    fs::create_dir_all(&base).unwrap();
+    let ws = common::make_test_workspace(tmp.path(), "test-ws", &base, None);
+    fs::write(
+        ws.upper_path().unwrap().join("package.json"),
+        r#"{"packageManager":"pnpm@9.1.0"}"#,
+    )
+    .unwrap();
+    fs::write(ws.upper_path().unwrap().join("package-lock.json"), "{}").unwrap();
+    assert!(matches!(
+        merge::detect_package_manager(&ws),
+        Some(merge::PackageManager::Pnpm)
+    ));
+}
+
+#[test]
 fn test_merge_patch_output() {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().join("base");

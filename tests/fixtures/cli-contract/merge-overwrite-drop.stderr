@@ -1,0 +1,5 @@
+error: the argument '--overwrite-base' cannot be used with '--drop'
+
+Usage: forkspace merge --overwrite-base <NAME>
+
+For more information, try '--help'.

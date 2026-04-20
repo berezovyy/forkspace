@@ -125,10 +125,16 @@ impl WorkspaceBackend for LinuxBackend {
             return Err(error);
         }
         apply_forkspaceclean(&merged);
+        let fork_time_ns = crate::util::now_unix_ns();
+        if let Err(error) = crate::manifest::build(&req.name, &req.base, fork_time_ns) {
+            let _ = unmount_overlay(&merged);
+            let _ = fs::remove_dir_all(&root);
+            return Err(error);
+        }
 
         Ok(ViewInfo {
             view_path: merged.clone(),
-            fork_time_ns: crate::util::now_unix_ns(),
+            fork_time_ns,
             backend_state: BackendState::Linux(LinuxBackendState {
                 upper,
                 work,
@@ -137,7 +143,7 @@ impl WorkspaceBackend for LinuxBackend {
                 tmpfs_size: req.tmpfs_size.clone(),
                 unknown_fields: Map::new(),
             }),
-            manifest_status: ManifestStatus::Absent,
+            manifest_status: ManifestStatus::Ready,
         })
     }
 

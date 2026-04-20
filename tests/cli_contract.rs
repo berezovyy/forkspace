@@ -154,6 +154,13 @@ fn every_exit_code_has_a_contract_case() {
         5
     );
     assert_eq!(
+        ForkspaceError::MergeConflict {
+            paths: vec!["file".into()]
+        }
+        .exit_code(),
+        5
+    );
+    assert_eq!(
         ForkspaceError::CapabilityUnsupported {
             diagnosis: "x".into(),
             remedy: "y".into(),

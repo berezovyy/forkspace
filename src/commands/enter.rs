@@ -127,18 +127,17 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
         if changes.is_empty() {
             println!("clean — no changes to merge");
         } else {
-            let total_add: usize = changes.iter().filter_map(|c| c.additions).sum();
-            let total_del: usize = changes.iter().filter_map(|c| c.deletions).sum();
-            println!(
-                "{} files changed (+{} -{})",
-                changes.len(),
-                total_add,
-                total_del
-            );
-            eprint!("[m]erge  [d]rop  [k]eep workspace? ");
-
-            let choice = read_single_char().unwrap_or('k');
-            eprintln!();
+            let preview = crate::merge_plan::build(workspace, true)?;
+            println!("{}", crate::merge_plan::render(&preview));
+            let interactive = unsafe { libc::isatty(libc::STDIN_FILENO) } == 1;
+            let choice = if interactive {
+                eprint!("[m]erge  [d]rop  [k]eep workspace? ");
+                let choice = read_single_char().unwrap_or('k');
+                eprintln!();
+                choice
+            } else {
+                'k'
+            };
 
             match choice {
                 'm' => {

@@ -116,6 +116,9 @@ _forkspace() {
                         '--patch[Generate unified patch]' \
                         '--drop[Drop workspace after merge]' \
                         '--no-install[Skip dependency installation]' \
+                        '--dry-run[Show the merge plan without applying]' \
+                        '--resume[Resume an interrupted merge]' \
+                        '--overwrite-base[Overwrite conflicting base changes]' \
                         '--help[Show help]'
                     ;;
             esac

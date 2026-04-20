@@ -227,6 +227,22 @@ pub struct MergeArgs {
 
     #[arg(long, help = "Skip automatic dependency installation after merge")]
     pub no_install: bool,
+
+    #[arg(long, help = "Show the merge plan without applying it")]
+    pub dry_run: bool,
+
+    #[arg(long, help = "Resume an interrupted merge")]
+    pub resume: bool,
+
+    #[arg(
+        long,
+        conflicts_with = "drop",
+        help = "Overwrite conflicting changes in the base"
+    )]
+    pub overwrite_base: bool,
+
+    #[arg(long, hide = true, conflicts_with = "drop")]
+    pub force: bool,
 }
 
 #[derive(Args)]

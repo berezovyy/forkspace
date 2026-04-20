@@ -5,8 +5,6 @@ use std::process::Command;
 use crate::backend::select_backend;
 use crate::diff::{self, ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
-use crate::filter::ChangeFilter;
-use crate::util::{ensure_parent_dir, IoContext};
 use crate::workspace::Workspace;
 
 pub struct MergeResult {
@@ -35,86 +33,82 @@ impl PackageManager {
 }
 
 pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
-    let all_changes =
-        select_backend(Some(workspace.backend_kind))?.changes(workspace, true, true)?;
-
-    if all_changes.is_empty() {
+    let plan = crate::merge_plan::build(workspace, false)?;
+    let added = plan
+        .changes
+        .iter()
+        .filter(|change| matches!(change.kind, ChangeKind::Added))
+        .count();
+    let modified = plan
+        .changes
+        .iter()
+        .filter(|change| matches!(change.kind, ChangeKind::Modified))
+        .count();
+    let deleted = plan
+        .changes
+        .iter()
+        .filter(|change| matches!(change.kind, ChangeKind::Deleted))
+        .count();
+    if plan.changes.is_empty() {
         return Ok(MergeResult {
-            added: 0,
-            modified: 0,
-            deleted: 0,
-            skipped: 0,
+            added,
+            modified,
+            deleted,
+            skipped: plan.skipped,
         });
     }
-
-    let filter = ChangeFilter::build(&workspace.base);
-    let total = all_changes.len();
-    let changes = filter.filter_changes(all_changes);
-    let skipped_by_filter = total - changes.len();
-
-    let mut added = 0usize;
-    let mut modified = 0usize;
-    let mut deleted = 0usize;
-    let skipped = skipped_by_filter;
-
-    for change in &changes {
-        match change.kind {
-            ChangeKind::Added | ChangeKind::Modified => {
-                let src = workspace.upper_path()?.join(&change.path);
-                let dst = workspace.base.join(&change.path);
-
-                ensure_parent_dir(&dst)?;
-
-                fs::copy(&src, &dst)
-                    .io_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
-
-                if matches!(change.kind, ChangeKind::Added) {
-                    added += 1;
-                } else {
-                    modified += 1;
-                }
-            }
-            ChangeKind::Deleted => {
-                let target = workspace.base.join(&change.path);
-                if target.exists() {
-                    if target.is_dir() {
-                        fs::remove_dir_all(&target)
-                            .io_context(|| format!("remove directory {}", target.display()))?;
-                    } else {
-                        fs::remove_file(&target)
-                            .io_context(|| format!("remove {}", target.display()))?;
-                    }
-                }
-                deleted += 1;
-            }
-        }
+    if workspace.manifest_status == crate::manifest::ManifestStatus::Absent {
+        crate::merge_plan::execute_without_journal(&plan)?;
+    } else {
+        let journal = crate::merge_plan::execute(&plan)?;
+        crate::merge_plan::finish(&journal)?;
     }
 
     Ok(MergeResult {
         added,
         modified,
         deleted,
-        skipped,
+        skipped: plan.skipped,
     })
 }
 
 pub fn detect_package_manager(workspace: &Workspace) -> Option<PackageManager> {
-    let upper = workspace.upper_path().ok()?;
+    let view = if workspace.manifest_status == crate::manifest::ManifestStatus::Absent {
+        workspace.upper_path().ok()?.to_path_buf()
+    } else {
+        select_backend(Some(workspace.backend_kind))
+            .ok()?
+            .view_path(workspace)
+    };
 
-    if !upper.join("package.json").exists() {
+    let package_json = view.join("package.json");
+    if !package_json.exists() {
         return None;
     }
 
-    if upper.join("bun.lockb").exists() || upper.join("bun.lock").exists() {
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&fs::read(&package_json).ok()?) {
+        if let Some(manager) = value["packageManager"].as_str() {
+            let name = manager.split('@').next().unwrap_or(manager);
+            return match name {
+                "bun" => Some(PackageManager::Bun),
+                "pnpm" => Some(PackageManager::Pnpm),
+                "npm" => Some(PackageManager::Npm),
+                "yarn" => Some(PackageManager::Yarn),
+                _ => None,
+            };
+        }
+    }
+
+    if view.join("bun.lockb").exists() || view.join("bun.lock").exists() {
         return Some(PackageManager::Bun);
     }
-    if upper.join("pnpm-lock.yaml").exists() {
+    if view.join("pnpm-lock.yaml").exists() {
         return Some(PackageManager::Pnpm);
     }
-    if upper.join("package-lock.json").exists() {
+    if view.join("package-lock.json").exists() {
         return Some(PackageManager::Npm);
     }
-    if upper.join("yarn.lock").exists() {
+    if view.join("yarn.lock").exists() {
         return Some(PackageManager::Yarn);
     }
 
@@ -152,6 +146,13 @@ pub fn generate_patch(workspace: &Workspace, changes: &[FileChange]) -> Result<S
         }
     }
     Ok(patch)
+}
+
+pub fn workspace_head_changed(workspace: &Workspace) -> Result<bool> {
+    Ok(select_backend(Some(workspace.backend_kind))?
+        .changes(workspace, true, false)?
+        .iter()
+        .any(|change| change.path == Path::new(".git/HEAD")))
 }
 
 fn run_git(base: &Path, args: &[&str]) -> Result {

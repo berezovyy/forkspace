@@ -7,6 +7,7 @@ pub mod error;
 pub mod filter;
 pub mod manifest;
 pub mod merge;
+pub mod merge_plan;
 pub mod overlay;
 pub(crate) mod proxy;
 pub mod state;

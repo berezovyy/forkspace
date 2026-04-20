@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use owo_colors::OwoColorize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 use walkdir::WalkDir;
 
@@ -16,7 +16,7 @@ use crate::state::State;
 use crate::util::WalkDirExt;
 use crate::workspace::Workspace;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChangeKind {
     Added,
@@ -24,7 +24,7 @@ pub enum ChangeKind {
     Deleted,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileChange {
     pub path: PathBuf,
     pub kind: ChangeKind,
@@ -32,12 +32,13 @@ pub struct FileChange {
     pub additions: Option<usize>,
     pub deletions: Option<usize>,
     pub is_binary: bool,
-    #[serde(skip)]
+    #[serde(skip, default)]
     pub old_content: OldContent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OldContent {
+    #[default]
     Available,
     BaseAdvanced,
     AncestorUnknown,

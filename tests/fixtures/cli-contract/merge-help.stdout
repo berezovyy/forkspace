@@ -11,4 +11,7 @@ Options:
       --patch              Generate a unified patch instead of merging
       --drop               Drop the workspace after a successful merge
       --no-install         Skip automatic dependency installation after merge
+      --dry-run            Show the merge plan without applying it
+      --resume             Resume an interrupted merge
+      --overwrite-base     Overwrite conflicting changes in the base
   -h, --help               Print help

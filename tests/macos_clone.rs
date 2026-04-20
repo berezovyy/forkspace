@@ -753,6 +753,126 @@ mod macos {
 
     #[test]
     #[serial]
+    fn merge_round_trip_and_conflict_contract() {
+        let (home, base) = setup();
+        for index in 0..5 {
+            fs::write(base.path().join(format!("edit-{index}")), b"old\n").unwrap();
+        }
+        fs::write(base.path().join("deleted"), b"old\n").unwrap();
+        fs::write(base.path().join("mode"), b"same\n").unwrap();
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["config", "user.email", "forkspace@example.invalid"],
+            vec!["config", "user.name", "Forkspace Tests"],
+            vec!["add", "-A"],
+            vec!["commit", "--quiet", "-m", "base"],
+        ] {
+            assert!(Command::new("git")
+                .args(args)
+                .current_dir(base.path())
+                .status()
+                .unwrap()
+                .success());
+        }
+        let workspace = fork(base.path(), "round-trip");
+        wait_for_manifest("round-trip");
+        thread::sleep(Duration::from_millis(2));
+        for index in 0..5 {
+            fs::write(
+                workspace.view_path.join(format!("edit-{index}")),
+                format!("new-{index}\n"),
+            )
+            .unwrap();
+        }
+        fs::write(workspace.view_path.join("added-a"), b"a\n").unwrap();
+        fs::write(workspace.view_path.join("added-b"), b"b\n").unwrap();
+        fs::remove_file(workspace.view_path.join("deleted")).unwrap();
+        let mut permissions = fs::metadata(workspace.view_path.join("mode"))
+            .unwrap()
+            .permissions();
+        use std::os::unix::fs::PermissionsExt as _;
+        permissions.set_mode(0o755);
+        fs::set_permissions(workspace.view_path.join("mode"), permissions).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["merge", "round-trip", "--commit", "--drop", "--no-install"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!State::load().unwrap().workspaces.contains_key("round-trip"));
+        assert!(!base.path().join("deleted").exists());
+        assert!(base.path().join("added-a").exists());
+        let commits = Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(base.path())
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&commits.stdout).trim(), "2");
+
+        let workspace = fork(base.path(), "conflict-merge");
+        wait_for_manifest("conflict-merge");
+        fs::write(base.path().join("edit-0"), b"base moved\n").unwrap();
+        fs::write(workspace.view_path.join("edit-0"), b"workspace moved\n").unwrap();
+        let refused = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["merge", "conflict-merge", "--no-install"])
+            .output()
+            .unwrap();
+        assert_eq!(refused.status.code(), Some(5));
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("edit-0"));
+        let forced = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args([
+                "merge",
+                "conflict-merge",
+                "--overwrite-base",
+                "--no-install",
+            ])
+            .output()
+            .unwrap();
+        assert!(forced.status.success());
+        assert_eq!(
+            fs::read(base.path().join("edit-0")).unwrap(),
+            b"workspace moved\n"
+        );
+        assert!(State::load()
+            .unwrap()
+            .workspaces
+            .contains_key("conflict-merge"));
+    }
+
+    #[test]
+    #[serial]
+    fn merge_on_exit_with_non_tty_stdin_keeps_workspace() {
+        let (home, base) = setup();
+        fork(base.path(), "unattended");
+        wait_for_manifest("unattended");
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args([
+                "enter",
+                "unattended",
+                "--merge-on-exit",
+                "--",
+                "sh",
+                "-c",
+                "printf changed > README.md",
+            ])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(fs::read(base.path().join("README.md")).unwrap(), b"base\n");
+        assert!(State::load().unwrap().workspaces.contains_key("unattended"));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("keeping workspace"));
+    }
+
+    #[test]
+    #[serial]
     fn pending_partial_clone_is_reconciled_and_never_listed() {
         let (home, _base) = setup();
         let partial = home.path().join("workspaces/partial");
