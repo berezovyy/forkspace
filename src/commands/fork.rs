@@ -6,6 +6,8 @@ use crate::state::{PendingCreate, State};
 use crate::util::IoContext;
 use crate::workspace::Workspace;
 
+const MAX_FORK_DEPTH: usize = 32;
+
 pub fn create_workspace(
     base: PathBuf,
     name: &str,
@@ -28,6 +30,11 @@ pub fn create_workspace(
             return Err(ForkspaceError::WorkspaceExists(name.to_string()));
         }
         if let Some(ws) = state.workspaces.get(base.to_str().unwrap_or("")) {
+            if state.depth_of(&ws.name) + 1 >= MAX_FORK_DEPTH {
+                return Err(ForkspaceError::InvalidArgument(format!(
+                    "workspace stack depth is limited to {MAX_FORK_DEPTH}; merge or fork from an earlier ancestor"
+                )));
+            }
             let backend = select_backend(Some(ws.backend_kind))?;
             (backend.view_path(ws), Some(ws.name.clone()), backend)
         } else {

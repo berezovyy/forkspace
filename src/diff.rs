@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 use walkdir::WalkDir;
 
+use crate::backend::select_backend;
 use crate::error::{ForkspaceError, Result};
 use crate::filter::{ChangeClass, ChangeFilter};
 use crate::manifest::{self, ManifestKind, ManifestRow, ManifestStatus};
@@ -729,86 +730,31 @@ fn collect_cumulative_changes_inner(
     }
 
     let original_base = &chain[0].base;
-
-    let uppers: Vec<PathBuf> = chain
-        .iter()
-        .map(|ws| ws.upper_path().map(Path::to_path_buf))
-        .collect::<Result<_>>()?;
-
-    let mut file_map: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
-    let mut deleted: BTreeSet<PathBuf> = BTreeSet::new();
-
-    for upper in &uppers {
-        if !upper.exists() {
-            continue;
+    let mut touched = BTreeSet::new();
+    for layer in &chain {
+        for change in select_backend(Some(layer.backend_kind))?.changes(layer, true, false)? {
+            touched.insert(change.path);
         }
-
-        for entry in WalkDir::new(upper).min_depth(1) {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            let rel = match entry.path().strip_prefix(upper) {
-                Ok(r) => r.to_path_buf(),
-                Err(_) => continue,
-            };
-
-            let file_name = match entry.file_name().to_str() {
-                Some(n) => n,
-                None => continue,
-            };
-
-            if entry.metadata().is_ok_and(|metadata| metadata.len() == 0) {
-                if let Some(whiteout) = valid_whiteout(&rel, file_name, original_base) {
-                    match whiteout {
-                        Whiteout::Opaque => {
-                            let opaque_dir = rel.parent().unwrap_or(Path::new(""));
-                            let to_remove: Vec<PathBuf> = file_map
-                                .keys()
-                                .filter(|p| p.starts_with(opaque_dir))
-                                .cloned()
-                                .collect();
-                            for p in to_remove {
-                                file_map.remove(&p);
-                            }
-                            continue;
-                        }
-                        Whiteout::Deletion(original_name) => {
-                            let deleted_path = whiteout_target_path(&rel, &original_name);
-                            file_map.remove(&deleted_path);
-                            if original_base.join(&deleted_path).exists() {
-                                deleted.insert(deleted_path);
-                            }
-                            continue;
-                        }
-                    }
+    }
+    let final_view = select_backend(Some(workspace.backend_kind))?.view_path(workspace);
+    let mut changes = Vec::new();
+    for path in touched {
+        let base_path = original_base.join(&path);
+        let final_path = final_view.join(&path);
+        match (
+            fs::symlink_metadata(&base_path),
+            fs::symlink_metadata(&final_path),
+        ) {
+            (Ok(_), Err(_)) => changes.push(FileChange::deletion(path)),
+            (Err(_), Err(_)) => {}
+            (_, Ok(metadata)) if metadata.is_dir() => {}
+            (_, Ok(_)) => {
+                if let Some(change) = classify_file(path, &final_path, &base_path, need_line_counts)
+                {
+                    changes.push(change);
                 }
             }
-
-            if entry.file_type().is_dir() {
-                continue;
-            }
-
-            let abs_path = entry.path().to_path_buf();
-            deleted.remove(&rel);
-            file_map.insert(rel, abs_path);
         }
-    }
-
-    let mut changes = Vec::new();
-
-    for (rel_path, upper_path) in &file_map {
-        let base_path = original_base.join(rel_path);
-        if let Some(change) =
-            classify_file(rel_path.clone(), upper_path, &base_path, need_line_counts)
-        {
-            changes.push(change);
-        }
-    }
-
-    for del_path in &deleted {
-        changes.push(FileChange::deletion(del_path.clone()));
     }
 
     changes.sort_by(|a, b| a.path.cmp(&b.path));

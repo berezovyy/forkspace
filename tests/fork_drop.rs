@@ -277,3 +277,36 @@ fn test_fork_rejects_unsafe_workspace_names() {
     let error = common::fork_helper(base.path().to_path_buf(), &long_name, None, None).unwrap_err();
     assert!(matches!(error, ForkspaceError::InvalidArgument(_)));
 }
+
+#[test]
+#[serial]
+fn test_fork_stack_depth_is_bounded() {
+    let _home = common::setup_test_env();
+    let mut state = State::default();
+    for index in 0..32 {
+        let parent = (index > 0).then(|| format!("depth-{}", index - 1));
+        state
+            .add_workspace(forkspace::workspace::Workspace::new(
+                &format!("depth-{index}"),
+                PathBuf::from("/tmp/base"),
+                parent,
+            ))
+            .unwrap();
+    }
+    state.save().unwrap();
+
+    let error = forkspace::commands::fork::create_workspace(
+        PathBuf::from("depth-31"),
+        "too-deep",
+        None,
+        None,
+        false,
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        forkspace::error::ForkspaceError::InvalidArgument(_)
+    ));
+    assert!(error.to_string().contains("stack depth"));
+}

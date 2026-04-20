@@ -46,6 +46,10 @@ impl BackendKind {
             Self::MacClone => "macOS",
         }
     }
+
+    pub fn stacking_is_snapshot(self) -> bool {
+        matches!(self, Self::MacClone)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

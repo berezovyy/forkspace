@@ -873,6 +873,75 @@ mod macos {
 
     #[test]
     #[serial]
+    fn stacked_clone_is_snapshot_cumulative_and_merges_to_parent() {
+        let (home, base) = setup();
+        fs::write(base.path().join("a"), b"base-a\n").unwrap();
+        fs::write(base.path().join("c"), b"base-c\n").unwrap();
+        let step1 = fork(base.path(), "step-1");
+        wait_for_manifest("step-1");
+        fs::write(step1.view_path.join("a"), b"parent-a\n").unwrap();
+        let step2 = fork(Path::new("step-1"), "step-2");
+        wait_for_manifest("step-2");
+        assert_eq!(fs::read(step2.view_path.join("a")).unwrap(), b"parent-a\n");
+        fs::write(step2.view_path.join("b"), b"child-b\n").unwrap();
+        fs::write(step1.view_path.join("c"), b"late-parent-c\n").unwrap();
+        assert_eq!(fs::read(step2.view_path.join("c")).unwrap(), b"base-c\n");
+
+        let cumulative = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["diff", "step-2", "--cumulative", "--json"])
+            .output()
+            .unwrap();
+        assert!(cumulative.status.success());
+        let json: serde_json::Value = serde_json::from_slice(&cumulative.stdout).unwrap();
+        let paths: Vec<_> = json["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|change| change["path"].as_str().unwrap())
+            .collect();
+        assert!(paths.contains(&"a"));
+        assert!(paths.contains(&"b"));
+        assert!(!paths.contains(&"c"));
+
+        let merged = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["merge", "step-2", "--no-install"])
+            .output()
+            .unwrap();
+        assert!(merged.status.success());
+        assert_eq!(fs::read(step1.view_path.join("b")).unwrap(), b"child-b\n");
+        assert!(!base.path().join("b").exists());
+
+        let conflict = fork(Path::new("step-1"), "step-conflict");
+        wait_for_manifest("step-conflict");
+        fs::write(step1.view_path.join("a"), b"parent-later\n").unwrap();
+        fs::write(conflict.view_path.join("a"), b"child-later\n").unwrap();
+        let refused = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["merge", "step-conflict", "--no-install"])
+            .output()
+            .unwrap();
+        assert_eq!(refused.status.code(), Some(5));
+        assert_eq!(
+            fs::read(step1.view_path.join("a")).unwrap(),
+            b"parent-later\n"
+        );
+
+        commands::drop::exec(DropArgs {
+            name: Some("step-1".into()),
+            force: true,
+            all: false,
+            glob: false,
+        })
+        .unwrap();
+        assert!(!manifest::manifest_path("step-1").exists());
+        assert!(!manifest::manifest_path("step-2").exists());
+        assert!(!manifest::manifest_path("step-conflict").exists());
+    }
+
+    #[test]
+    #[serial]
     fn pending_partial_clone_is_reconciled_and_never_listed() {
         let (home, _base) = setup();
         let partial = home.path().join("workspaces/partial");

@@ -162,6 +162,12 @@ fn manifest_metadata_uses_nanosecond_precision() {
 }
 
 #[test]
+fn stacking_semantics_are_a_backend_property() {
+    assert!(!BackendKind::Linux.stacking_is_snapshot());
+    assert!(BackendKind::MacClone.stacking_is_snapshot());
+}
+
+#[test]
 #[serial]
 fn cross_platform_mutation_script_has_one_normalized_json_truth() {
     #[cfg(target_os = "linux")]

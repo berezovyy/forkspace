@@ -21,7 +21,7 @@ const CAPABILITIES: Capabilities = Capabilities {
     tmpfs_backing: false,
     network_namespace: false,
     instant_fork: false,
-    sealed_parent: false,
+    sealed_parent: true,
 };
 
 pub struct CloneBackend;
