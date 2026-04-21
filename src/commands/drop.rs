@@ -1,15 +1,13 @@
 use crate::backend::{select_backend, DestroyMode};
 use crate::error::{ForkspaceError, Result};
 use crate::state::State;
-use crate::util::{glob_matches, is_pid_alive, kill_process};
+use crate::util::{glob_matches, kill_process};
 
 pub(crate) fn remove_workspace(state: &mut State, name: &str) -> Result {
     let ws = state.require_workspace(name)?.clone();
 
     if let Some(ref proc) = ws.process {
-        if is_pid_alive(proc.pid) {
-            kill_process(proc.pid);
-        }
+        kill_process(proc.pid, proc.identity.as_deref());
     }
 
     let backend = select_backend(Some(ws.backend_kind))?;

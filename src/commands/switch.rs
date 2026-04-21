@@ -1,7 +1,6 @@
 use crate::cli::SwitchArgs;
 use crate::error::{ForkspaceError, Result};
 use crate::state::State;
-use crate::util::is_pid_alive;
 
 pub fn exec(args: SwitchArgs) -> Result {
     State::with_state(|state| {
@@ -12,7 +11,7 @@ pub fn exec(args: SwitchArgs) -> Result {
             .as_ref()
             .ok_or_else(|| ForkspaceError::NoProcessRunning(args.name.clone()))?;
 
-        if !is_pid_alive(proc.pid) {
+        if !crate::process_watch::is_alive(proc.pid, proc.identity.as_deref()) {
             return Err(ForkspaceError::NoProcessRunning(args.name.clone()));
         }
 

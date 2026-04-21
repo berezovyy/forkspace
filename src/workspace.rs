@@ -11,6 +11,8 @@ use crate::util::{forkspace_home, now_rfc3339, now_unix_ns};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunningProcess {
     pub pid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
     pub command: String,
     pub port: u16,
     #[serde(flatten)]

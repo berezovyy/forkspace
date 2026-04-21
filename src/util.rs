@@ -66,7 +66,7 @@ pub(crate) fn is_pid_alive(pid: u32) -> bool {
     if pid == 0 || pid == 1 || pid > i32::MAX as u32 {
         return false;
     }
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    crate::process_watch::is_alive(pid, None)
 }
 
 pub(crate) fn glob_matches(pattern: &str, text: &str) -> bool {
@@ -101,16 +101,9 @@ pub(crate) fn glob_matches(pattern: &str, text: &str) -> bool {
     do_match(&pat_chars, &txt_chars)
 }
 
-pub(crate) fn kill_process(pid: u32) {
+pub(crate) fn kill_process(pid: u32, identity: Option<&str>) {
     if pid == 0 || pid == 1 || pid > i32::MAX as u32 {
         return;
     }
-    // Negate to signal the entire process group (kills sh -c wrapper children too)
-    unsafe {
-        libc::kill(-(pid as i32), libc::SIGTERM);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    unsafe {
-        libc::kill(-(pid as i32), libc::SIGKILL);
-    }
+    let _ = crate::process_watch::terminate_group(pid, identity);
 }

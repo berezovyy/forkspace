@@ -9,6 +9,7 @@ pub mod manifest;
 pub mod merge;
 pub mod merge_plan;
 pub mod overlay;
+pub mod process_watch;
 pub(crate) mod proxy;
 pub mod state;
 pub mod util;

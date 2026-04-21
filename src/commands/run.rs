@@ -6,11 +6,12 @@ use crate::backend::select_backend;
 use crate::cli::RunArgs;
 use crate::error::{ForkspaceError, Result};
 use crate::state::{ProxyConfig, State};
-use crate::util::{forkspace_home, is_pid_alive, kill_process};
+use crate::util::{forkspace_home, kill_process};
 use crate::workspace::RunningProcess;
 
 const PORT_RANGE_START: u16 = 5501;
 const PORT_RANGE_END: u16 = 5600;
+const PROXY_LISTEN_PORT: u16 = 4000;
 
 fn spawn_detached(cmd: &mut Command) -> std::io::Result<std::process::Child> {
     unsafe {
@@ -60,10 +61,16 @@ fn allocate_port(state: &State) -> Result<u16> {
 fn ensure_proxy(state: &mut State, listen_port: u16) -> Result {
     if let Some(ref proxy) = state.proxy {
         if let Some(pid) = proxy.proxy_pid {
-            if is_pid_alive(pid) {
+            if crate::process_watch::is_alive(pid, proxy.proxy_identity.as_deref()) {
                 return Ok(());
             }
         }
+    }
+
+    if !is_port_available(listen_port) {
+        return Err(ForkspaceError::ProxyFailed(format!(
+            "port {listen_port} is unavailable; stop the process using it and retry"
+        )));
     }
 
     let exe = std::env::current_exe()
@@ -84,9 +91,11 @@ fn ensure_proxy(state: &mut State, listen_port: u16) -> Result {
         ForkspaceError::ProxyFailed,
     )?;
 
+    let proxy_identity = crate::process_watch::new_identity();
     let child = spawn_detached(
         Command::new(exe)
             .args(["proxy-daemon", "--port", &listen_port.to_string()])
+            .env("FORKSPACE_PROCESS_IDENTITY", &proxy_identity)
             .stdout(stdout)
             .stderr(stderr),
     )
@@ -97,6 +106,7 @@ fn ensure_proxy(state: &mut State, listen_port: u16) -> Result {
         active_workspace: None,
         target_port: None,
         proxy_pid: Some(child.id()),
+        proxy_identity: Some(proxy_identity),
         unknown_fields: serde_json::Map::new(),
     });
 
@@ -120,18 +130,30 @@ pub fn exec(args: RunArgs) -> Result {
         let ws = state.require_workspace(&args.name)?;
 
         if let Some(ref proc) = ws.process {
-            if is_pid_alive(proc.pid) {
+            if crate::process_watch::is_alive(proc.pid, proc.identity.as_deref()) {
                 return Err(ForkspaceError::ProcessAlreadyRunning(args.name.clone()));
             }
         }
 
-        let app_port = args.port;
-        let proxy_listen_port = allocate_port(state)?;
+        let requested_in_use = state
+            .workspaces
+            .values()
+            .filter_map(|workspace| workspace.process.as_ref())
+            .any(|process| process.port == args.port);
+        let app_port = if !requested_in_use && is_port_available(args.port) {
+            args.port
+        } else {
+            allocate_port(state)?
+        };
+        let proxy_listen_port = PROXY_LISTEN_PORT;
         let cmd = args.command.join(" ");
         let workspace = state.require_workspace(&args.name)?;
         let merged = select_backend(Some(workspace.backend_kind))?.view_path(workspace);
 
-        let log_dir = forkspace_home().join(&args.name);
+        let log_dir = forkspace_home().join("logs").join(&args.name);
+        std::fs::create_dir_all(&log_dir).map_err(|error| {
+            ForkspaceError::ProcessFailed(format!("create log directory: {error}"))
+        })?;
         let (stdout, stderr) = open_log_pair(
             &log_dir,
             "stdout.log",
@@ -139,28 +161,36 @@ pub fn exec(args: RunArgs) -> Result {
             ForkspaceError::ProcessFailed,
         )?;
 
+        let identity = crate::process_watch::new_identity();
         let child = spawn_detached(
             Command::new("sh")
                 .args(["-c", &cmd])
                 .current_dir(&merged)
                 .env("PORT", app_port.to_string())
                 .env("FORKSPACE_WORKSPACE", &args.name)
+                .env("FORKSPACE_PROCESS_IDENTITY", &identity)
                 .stdout(stdout)
                 .stderr(stderr),
         )
         .map_err(|e| ForkspaceError::ProcessFailed(format!("spawn: {}", e)))?;
 
         let pid = child.id();
+        let identity = Some(identity);
 
         let ws = state.require_workspace_mut(&args.name)?;
         ws.process = Some(RunningProcess {
             pid,
+            identity: identity.clone(),
             command: cmd.clone(),
             port: app_port,
             unknown_fields: serde_json::Map::new(),
         });
 
-        ensure_proxy(state, proxy_listen_port)?;
+        if let Err(error) = ensure_proxy(state, proxy_listen_port) {
+            kill_process(pid, identity.as_deref());
+            state.require_workspace_mut(&args.name)?.process = None;
+            return Err(error);
+        }
 
         if let Some(ref mut proxy) = state.proxy {
             proxy.active_workspace = Some(args.name.clone());
@@ -187,9 +217,7 @@ fn stop(name: &str) -> Result {
             .take()
             .ok_or_else(|| ForkspaceError::NoProcessRunning(name.to_string()))?;
 
-        if is_pid_alive(proc.pid) {
-            kill_process(proc.pid);
-        }
+        kill_process(proc.pid, proc.identity.as_deref());
 
         println!("stopped '{}' (PID {})", proc.command, proc.pid);
         Ok(())

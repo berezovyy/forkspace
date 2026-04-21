@@ -5,7 +5,6 @@ use owo_colors::OwoColorize;
 use crate::backend::{select_backend, ChangeCount};
 use crate::error::Result;
 use crate::state::State;
-use crate::util::is_pid_alive;
 
 fn shorten_path(path: &Path) -> String {
     if let Ok(cwd) = std::env::current_dir() {
@@ -59,7 +58,7 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
                 };
 
             let proc_info = match &ws.process {
-                Some(p) if is_pid_alive(p.pid) => {
+                Some(p) if crate::process_watch::is_alive(p.pid, p.identity.as_deref()) => {
                     format!(":{} ({})", p.port, p.command)
                 }
                 Some(_) => "stopped".to_string(),

@@ -41,6 +41,8 @@ pub struct ProxyConfig {
     pub target_port: Option<u16>,
     #[serde(default)]
     pub proxy_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_identity: Option<String>,
     #[serde(flatten)]
     pub unknown_fields: Map<String, Value>,
 }

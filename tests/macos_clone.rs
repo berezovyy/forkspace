@@ -942,6 +942,103 @@ mod macos {
 
     #[test]
     #[serial]
+    fn run_switch_proxy_hot_reload_and_drop_supervision() {
+        if !command_exists("python3") {
+            eprintln!(
+                "FORKSPACE_TEST_SKIP {{\"capability\":\"python3\",\"reason\":\"dev-server fixture unavailable\"}}"
+            );
+            return;
+        }
+        let (home, base) = setup();
+        let server = r#"import http.server, os
+class H(http.server.BaseHTTPRequestHandler):
+  def do_GET(self):
+    data=open('served.txt','rb').read()
+    self.send_response(200); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
+  def log_message(self,*args): pass
+http.server.ThreadingHTTPServer(('127.0.0.1',int(os.environ['PORT'])),H).serve_forever()
+"#;
+        fs::write(base.path().join("server.py"), server).unwrap();
+        fs::write(base.path().join("served.txt"), b"base").unwrap();
+        let a = fork(base.path(), "dev-a");
+        let b = fork(base.path(), "dev-b");
+        wait_for_manifest("dev-a");
+        wait_for_manifest("dev-b");
+        fs::write(a.view_path.join("served.txt"), b"alpha").unwrap();
+        fs::write(b.view_path.join("served.txt"), b"beta").unwrap();
+
+        for name in ["dev-a", "dev-b"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+                .env("FORKSPACE_HOME", home.path())
+                .args(["run", name, "--port", "6200", "--", "python3", "server.py"])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        fn body() -> Option<Vec<u8>> {
+            use std::io::{Read, Write};
+            let mut stream = std::net::TcpStream::connect(("127.0.0.1", 4000)).ok()?;
+            stream
+                .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+                .ok()?;
+            let mut bytes = Vec::new();
+            stream.read_to_end(&mut bytes).ok()?;
+            bytes
+                .split(|byte| *byte == b'\n')
+                .next_back()
+                .map(<[u8]>::to_vec)
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while body().as_deref() != Some(b"beta") {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(20));
+        }
+        Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["switch", "dev-a"])
+            .output()
+            .unwrap();
+        assert_eq!(body().as_deref(), Some(&b"alpha"[..]));
+        fs::write(a.view_path.join("served.txt"), b"alpha-reloaded").unwrap();
+        assert_eq!(body().as_deref(), Some(&b"alpha-reloaded"[..]));
+
+        let state = State::load().unwrap();
+        let proxy = state.proxy.as_ref().unwrap();
+        unsafe { libc::kill(proxy.proxy_pid.unwrap() as i32, libc::SIGSTOP) };
+        unsafe { libc::kill(proxy.proxy_pid.unwrap() as i32, libc::SIGCONT) };
+        assert_eq!(body().as_deref(), Some(&b"alpha-reloaded"[..]));
+
+        let b_process = state.workspaces["dev-b"].process.clone().unwrap();
+        commands::drop::exec(DropArgs {
+            name: Some("dev-b".into()),
+            force: false,
+            all: false,
+            glob: false,
+        })
+        .unwrap();
+        assert!(!forkspace::process_watch::is_alive(
+            b_process.pid,
+            b_process.identity.as_deref()
+        ));
+        let stopped = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["run", "dev-a", "--stop"])
+            .output()
+            .unwrap();
+        assert!(stopped.status.success());
+        assert!(forkspace::process_watch::terminate_group(
+            proxy.proxy_pid.unwrap(),
+            proxy.proxy_identity.as_deref(),
+        ));
+    }
+
+    #[test]
+    #[serial]
     fn pending_partial_clone_is_reconciled_and_never_listed() {
         let (home, _base) = setup();
         let partial = home.path().join("workspaces/partial");
