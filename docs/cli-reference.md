@@ -8,3 +8,9 @@ Commands described in future phase files are not available until their phase lan
 retired `nuke` command and the unimplemented `path`, `up`, `down`, `snap`, `log`, `blame`,
 `gc`, `serve`, `sleep`, `wake`, `tree`, `collapse`, and `race` commands are not part of the
 CLI. Likewise, `fork -n`, `--memory`, `--cpu`, and `--ttl` are not implemented flags.
+### `forkspace pull [name]`
+
+Bring base changes into a workspace with a three-way reconcile and then update its ancestry.
+The name defaults to `$FORKSPACE_WORKSPACE`. Use `--dry-run` (optionally `--json`) to inspect the
+plan, `--theirs` to resolve conflicts with the base version, `--resume` after interruption,
+and `--no-install` to skip dependency installation.

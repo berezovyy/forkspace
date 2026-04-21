@@ -5,6 +5,7 @@ pub(crate) mod enter;
 pub mod fork;
 pub mod ls;
 pub(crate) mod merge;
+pub(crate) mod pull;
 pub(crate) mod run;
 pub(crate) mod switch;
 
@@ -22,6 +23,7 @@ pub fn dispatch(cli: Cli) -> Result {
         Commands::Completions(args) => completions::exec(args.shell),
         Commands::Diff(args) => diff::exec(args),
         Commands::Merge(args) => merge::exec(args),
+        Commands::Pull(args) => pull::exec(args),
         Commands::ProxyDaemon(args) => crate::proxy::run_proxy(args.port),
     }
 }

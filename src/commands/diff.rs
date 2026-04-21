@@ -10,6 +10,7 @@ use crate::manifest::ManifestStatus;
 use crate::state::State;
 
 pub fn exec(args: DiffArgs) -> Result {
+    crate::pull::guard(&args.name)?;
     let state = State::load()?;
     let workspace = state.require_workspace(&args.name)?;
 

@@ -56,6 +56,7 @@ fn matches_row(path: &Path, row: &ManifestRow) -> bool {
     kind == row.kind
         && metadata.len() == row.size
         && timestamp_ns(&metadata) == row.mtime_ns
+        && (row.mode == 0 || metadata.mode() & 0o7777 == row.mode)
         && (kind != ManifestKind::Symlink
             || fs::read_link(path)
                 .ok()
@@ -283,16 +284,41 @@ fn remove_existing(path: &Path) -> Result {
     }
 }
 
-fn apply(source_root: &Path, target_root: &Path, change: &FileChange, index: usize) -> Result {
+pub(crate) fn apply_change(
+    source_root: &Path,
+    target_root: &Path,
+    change: &FileChange,
+    index: usize,
+    operation: &str,
+) -> Result {
     let source = source_root.join(&change.path);
     let target = target_root.join(&change.path);
     if matches!(change.kind, ChangeKind::Deleted) {
         return remove_existing(&target);
     }
     ensure_parent_dir(&target)?;
-    let temporary = target.with_extension(format!("forkspace-merge-{index}.tmp"));
+    let temporary = target.with_extension(format!("forkspace-{operation}-{index}.tmp"));
     let metadata =
         fs::symlink_metadata(&source).io_context(|| format!("inspect {}", source.display()))?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        if fs::symlink_metadata(&target)
+            .is_ok_and(|value| !value.is_dir() || value.file_type().is_symlink())
+        {
+            remove_existing(&target)?;
+        }
+        fs::create_dir_all(&target).io_context(|| format!("create {}", target.display()))?;
+        fs::set_permissions(&target, metadata.permissions())
+            .io_context(|| format!("set permissions on {}", target.display()))?;
+        let modified = metadata
+            .modified()
+            .io_context(|| format!("read time from {}", source.display()))?;
+        fs::OpenOptions::new()
+            .read(true)
+            .open(&target)
+            .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(modified)))
+            .io_context(|| format!("set time on {}", target.display()))?;
+        return Ok(());
+    }
     let _ = remove_existing(&temporary);
     if metadata.file_type().is_symlink() {
         std::os::unix::fs::symlink(
@@ -305,6 +331,14 @@ fn apply(source_root: &Path, target_root: &Path, change: &FileChange, index: usi
     } else {
         fs::copy(&source, &temporary)
             .io_context(|| format!("copy {} -> {}", source.display(), temporary.display()))?;
+        let modified = metadata
+            .modified()
+            .io_context(|| format!("read time from {}", source.display()))?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&temporary)
+            .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(modified)))
+            .io_context(|| format!("set time on {}", temporary.display()))?;
     }
     if fs::symlink_metadata(&target)
         .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
@@ -332,7 +366,7 @@ pub fn execute(plan: &MergePlan) -> Result<PathBuf> {
 
 pub fn execute_without_journal(plan: &MergePlan) -> Result {
     for (index, change) in plan.changes.iter().enumerate() {
-        apply(&plan.source, &plan.target, change, index)?;
+        apply_change(&plan.source, &plan.target, change, index, "merge")?;
     }
     Ok(())
 }
@@ -344,11 +378,12 @@ fn resume_path(path: &Path) -> Result {
                 ForkspaceError::StateCorrupted(format!("invalid merge journal: {error}"))
             })?;
     while journal.next < journal.changes.len() {
-        apply(
+        apply_change(
             &journal.source,
             &journal.target,
             &journal.changes[journal.next],
             journal.next,
+            "merge",
         )?;
         journal.next += 1;
         save_journal(path, &journal)?;

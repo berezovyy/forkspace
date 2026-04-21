@@ -26,6 +26,12 @@ pub enum ForkspaceError {
     #[error("merge conflict: base changed since fork for {paths:?}; review the paths or rerun with --overwrite-base")]
     MergeConflict { paths: Vec<String> },
 
+    #[error("pull conflict: base and workspace both changed {paths:?}; review the paths or rerun with --theirs")]
+    PullConflict { paths: Vec<String> },
+
+    #[error("workspace '{0}' has an interrupted pull; run `forkspace pull {0} --resume` before diff or merge")]
+    StaleAncestor(String),
+
     #[error("mount failed: {0}")]
     MountFailed(String),
 
@@ -80,7 +86,7 @@ impl ForkspaceError {
         match self {
             Self::WorkspaceNotFound(_) => 3,
             Self::WorkspaceExists(_) => 4,
-            Self::HasChildren { .. } | Self::MergeConflict { .. } => 5,
+            Self::HasChildren { .. } | Self::MergeConflict { .. } | Self::PullConflict { .. } => 5,
             Self::CapabilityUnsupported { .. } => 6,
             Self::BackendUnavailable { .. } | Self::MountFailed(_) => 7,
             _ => 1,

@@ -11,6 +11,7 @@ pub mod merge_plan;
 pub mod overlay;
 pub mod process_watch;
 pub(crate) mod proxy;
+pub mod pull;
 pub mod state;
 pub mod util;
 pub mod workspace;

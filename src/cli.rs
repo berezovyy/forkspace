@@ -41,6 +41,9 @@ pub enum Commands {
     /// Apply workspace changes back to the base directory
     Merge(MergeArgs),
 
+    /// Bring base changes into a workspace
+    Pull(PullArgs),
+
     /// Generate shell completions
     #[command(hide = true)]
     Completions(CompletionsArgs),
@@ -243,6 +246,27 @@ pub struct MergeArgs {
 
     #[arg(long, hide = true, conflicts_with = "drop")]
     pub force: bool,
+}
+
+#[derive(Args)]
+pub struct PullArgs {
+    #[arg(help = "Workspace name (defaults to $FORKSPACE_WORKSPACE)")]
+    pub name: Option<String>,
+
+    #[arg(long, help = "Show the pull plan without applying it")]
+    pub dry_run: bool,
+
+    #[arg(long, help = "Resolve conflicts by taking the base version")]
+    pub theirs: bool,
+
+    #[arg(long, help = "Resume an interrupted pull")]
+    pub resume: bool,
+
+    #[arg(long, help = "Skip automatic dependency installation")]
+    pub no_install: bool,
+
+    #[arg(long, help = "Output the pull plan as JSON")]
+    pub json: bool,
 }
 
 #[derive(Args)]

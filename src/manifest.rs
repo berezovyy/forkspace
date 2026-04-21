@@ -41,6 +41,8 @@ pub struct ManifestRow {
     pub kind: ManifestKind,
     pub size: u64,
     pub mtime_ns: i128,
+    #[serde(default, skip_serializing_if = "is_zero_mode")]
+    pub mode: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -49,6 +51,10 @@ pub struct ManifestRow {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn is_zero_mode(value: &u32) -> bool {
+    *value == 0
 }
 
 pub fn manifest_path(name: &str) -> PathBuf {
@@ -149,6 +155,7 @@ fn row(root: &Path, entry: &walkdir::DirEntry, fork_time_ns: u128) -> Result<Man
         kind,
         size: metadata.len(),
         mtime_ns: timestamp_ns(metadata.mtime(), metadata.mtime_nsec()),
+        mode: metadata.mode() & 0o7777,
         target,
         dirty: ctime_ns > i128::try_from(fork_time_ns).unwrap_or(i128::MAX),
     })

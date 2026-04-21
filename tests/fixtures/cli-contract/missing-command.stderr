@@ -11,6 +11,7 @@ Commands:
   ls      List all active workspaces
   diff    Show what changed in a workspace
   merge   Apply workspace changes back to the base directory
+  pull    Bring base changes into a workspace
   help    Print this message or the help of the given subcommand(s)
 
 Options:

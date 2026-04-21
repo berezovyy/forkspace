@@ -102,6 +102,9 @@ pub trait WorkspaceBackend {
         need_line_counts: bool,
     ) -> Result<Vec<FileChange>>;
     fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount>;
+    fn base_changes(&self, ws: &Workspace) -> Result<Vec<FileChange>> {
+        crate::pull::base_changes(ws)
+    }
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)>;
 }
 

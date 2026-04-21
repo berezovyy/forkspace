@@ -8,6 +8,7 @@ use crate::state::State;
 
 pub fn exec(args: MergeArgs) -> Result {
     State::with_state(|state| {
+        crate::pull::guard(&args.name)?;
         let workspace = state.require_workspace(&args.name)?.clone();
 
         if args.patch {

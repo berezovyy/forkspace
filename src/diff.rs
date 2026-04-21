@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use owo_colors::OwoColorize;
@@ -335,7 +336,8 @@ fn base_matches_manifest(base: &Path, row: &ManifestRow) -> bool {
     };
     if metadata_kind(&metadata) != row.kind
         || metadata.len() != row.size
-        || metadata_timestamp_ns(&metadata) != row.mtime_ns
+        || (row.kind != ManifestKind::Symlink && metadata_timestamp_ns(&metadata) != row.mtime_ns)
+        || (row.mode != 0 && metadata.mode() & 0o7777 != row.mode)
     {
         return false;
     }
@@ -478,7 +480,9 @@ pub fn collect_clone_changes(
                     || metadata_ctime_ns(&metadata) > fork_time_ns
                     || metadata_kind(&metadata) != row.kind
                     || metadata.len() != row.size
-                    || metadata_timestamp_ns(&metadata) != row.mtime_ns
+                    || (row.kind != ManifestKind::Symlink
+                        && metadata_timestamp_ns(&metadata) != row.mtime_ns)
+                    || (row.mode != 0 && metadata.mode() & 0o7777 != row.mode)
                     || (row.kind == ManifestKind::Symlink
                         && fs::read_link(entry.path()).ok().is_none_or(|target| {
                             Some(manifest::encode_path(&target)) != row.target

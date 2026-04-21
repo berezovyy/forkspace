@@ -149,6 +149,8 @@ impl From<LegacyWorkspace> for Workspace {
                 unknown_fields: Map::new(),
             }),
             manifest_status: ManifestStatus::Absent,
+            manifest_generation: 0,
+            last_pull: None,
             unknown_fields: value.unknown_fields,
         }
     }

@@ -36,6 +36,10 @@ pub struct Workspace {
     pub backend_state: BackendState,
     #[serde(default, skip_serializing_if = "manifest_absent")]
     pub manifest_status: ManifestStatus,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub manifest_generation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_pull: Option<String>,
     #[serde(flatten)]
     pub unknown_fields: Map<String, Value>,
 }
@@ -64,6 +68,8 @@ impl Workspace {
                 unknown_fields: Map::new(),
             }),
             manifest_status: ManifestStatus::Absent,
+            manifest_generation: 0,
+            last_pull: None,
             unknown_fields: Map::new(),
         }
     }
@@ -89,6 +95,8 @@ impl Workspace {
             backend_kind,
             backend_state: view.backend_state,
             manifest_status: view.manifest_status,
+            manifest_generation: 1,
+            last_pull: None,
             unknown_fields: Map::new(),
         }
     }
@@ -125,4 +133,8 @@ impl Workspace {
 
 fn manifest_absent(status: &ManifestStatus) -> bool {
     *status == ManifestStatus::Absent
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }

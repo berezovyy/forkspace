@@ -36,6 +36,7 @@ _forkspace() {
         'ls:List all active workspaces'
         'diff:Show what changed in a workspace'
         'merge:Apply workspace changes back to the base directory'
+        'pull:Bring base changes into a workspace'
     )
 
     _arguments -C \
@@ -119,6 +120,16 @@ _forkspace() {
                         '--dry-run[Show the merge plan without applying]' \
                         '--resume[Resume an interrupted merge]' \
                         '--overwrite-base[Overwrite conflicting base changes]' \
+                        '--help[Show help]'
+                    ;;
+                pull)
+                    _arguments \
+                        '1:workspace:_forkspace_workspaces' \
+                        '--dry-run[Show the pull plan without applying]' \
+                        '--theirs[Resolve conflicts with the base version]' \
+                        '--resume[Resume an interrupted pull]' \
+                        '--no-install[Skip dependency installation]' \
+                        '--json[Output the pull plan as JSON]' \
                         '--help[Show help]'
                     ;;
             esac
