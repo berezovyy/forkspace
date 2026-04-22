@@ -44,6 +44,9 @@ pub enum Commands {
     /// Bring base changes into a workspace
     Pull(PullArgs),
 
+    /// Preserve a workspace's Git branch in the base repository
+    Land(LandArgs),
+
     /// Generate shell completions
     #[command(hide = true)]
     Completions(CompletionsArgs),
@@ -78,6 +81,9 @@ pub struct ForkArgs {
 
     #[arg(long, help = "Size limit for the tmpfs backing store (e.g. 512M, 2G)")]
     pub size: Option<String>,
+
+    #[arg(long, help = "Create and record a Git branch in the workspace")]
+    pub branch: Option<String>,
 }
 
 #[derive(Args)]
@@ -267,6 +273,25 @@ pub struct PullArgs {
 
     #[arg(long, help = "Output the pull plan as JSON")]
     pub json: bool,
+}
+
+#[derive(Args)]
+pub struct LandArgs {
+    #[arg(help = "Workspace whose commits should be landed")]
+    pub name: String,
+
+    #[arg(long, help = "Replace a divergent base branch")]
+    pub force: bool,
+
+    #[arg(long, help = "Drop the workspace after a successful land")]
+    pub drop: bool,
+
+    #[arg(
+        long = "as",
+        value_name = "BRANCH",
+        help = "Land under a different branch name"
+    )]
+    pub as_branch: Option<String>,
 }
 
 #[derive(Args)]

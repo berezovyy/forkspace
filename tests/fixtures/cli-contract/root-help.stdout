@@ -14,6 +14,7 @@ Commands:
   diff    Show what changed in a workspace
   merge   Apply workspace changes back to the base directory
   pull    Bring base changes into a workspace
+  land    Preserve a workspace's Git branch in the base repository
   help    Print this message or the help of the given subcommand(s)
 
 Options:

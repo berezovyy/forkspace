@@ -26,6 +26,8 @@ pub struct Workspace {
     pub parent: Option<String>,
     pub created: String,
     pub session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     #[serde(default)]
     pub ephemeral: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,6 +56,7 @@ impl Workspace {
             parent,
             created: now_rfc3339(),
             session: None,
+            branch: None,
             ephemeral: false,
             process: None,
             view_path: merged.clone(),
@@ -88,6 +91,7 @@ impl Workspace {
             parent,
             created: now_rfc3339(),
             session,
+            branch: None,
             ephemeral: false,
             process: None,
             view_path: view.view_path,

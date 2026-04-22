@@ -14,3 +14,14 @@ Bring base changes into a workspace with a three-way reconcile and then update i
 The name defaults to `$FORKSPACE_WORKSPACE`. Use `--dry-run` (optionally `--json`) to inspect the
 plan, `--theirs` to resolve conflicts with the base version, `--resume` after interruption,
 and `--no-install` to skip dependency installation.
+
+### `forkspace fork --branch <branch>`
+
+Preflight a normal Git checkout, fork it, and create an independent topic branch in the
+workspace. Invalid or existing branches fail before the filesystem fork.
+
+### `forkspace land <name>`
+
+Fetch a workspace's committed branch into the root base repository without network access or
+history rewriting. `--as <branch>` chooses a different target, `--force` replaces divergent
+target history, and `--drop` removes the workspace only after the ref update succeeds.

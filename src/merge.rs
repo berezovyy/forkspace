@@ -155,32 +155,15 @@ pub fn workspace_head_changed(workspace: &Workspace) -> Result<bool> {
         .any(|change| change.path == Path::new(".git/HEAD")))
 }
 
-fn run_git(base: &Path, args: &[&str]) -> Result {
-    let cmd_str = format!("git {}", args.join(" "));
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(base)
-        .status()
-        .map_err(|e| ForkspaceError::GitFailed(format!("failed to run '{cmd_str}': {e}")))?;
-
-    if !status.success() {
-        return Err(ForkspaceError::GitFailed(format!(
-            "'{cmd_str}' exited with status {status}"
-        )));
-    }
-
-    Ok(())
-}
-
 pub fn git_commit(base: &Path, message: &str) -> Result {
-    if !base.join(".git").exists() {
+    if !crate::git::is_repo(base) {
         return Err(ForkspaceError::GitFailed(
             "base directory is not a git repository".to_string(),
         ));
     }
 
-    run_git(base, &["add", "-A"])?;
-    run_git(base, &["commit", "-m", message])?;
+    crate::git::run_git(base, &["add", "-A"])?;
+    crate::git::run_git(base, &["commit", "-m", message])?;
 
     Ok(())
 }

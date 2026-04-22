@@ -116,6 +116,8 @@ struct LegacyWorkspace {
     created: String,
     session: Option<String>,
     #[serde(default)]
+    branch: Option<String>,
+    #[serde(default)]
     tmpfs: bool,
     #[serde(default)]
     tmpfs_size: Option<String>,
@@ -135,6 +137,7 @@ impl From<LegacyWorkspace> for Workspace {
             parent: value.parent,
             created: value.created,
             session: value.session,
+            branch: value.branch,
             ephemeral: value.ephemeral,
             process: value.process,
             view_path: value.merged.clone(),

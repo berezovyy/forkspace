@@ -37,6 +37,7 @@ _forkspace() {
         'diff:Show what changed in a workspace'
         'merge:Apply workspace changes back to the base directory'
         'pull:Bring base changes into a workspace'
+        'land:Preserve workspace commits in the base repository'
     )
 
     _arguments -C \
@@ -58,6 +59,7 @@ _forkspace() {
                         '--session=[Session identifier]:session:' \
                         '--tmpfs[Back with tmpfs]' \
                         '--size=[tmpfs size limit]:size:' \
+                        '--branch=[Create a Git branch]:branch:' \
                         '--help[Show help]'
                     ;;
                 drop)
@@ -130,6 +132,14 @@ _forkspace() {
                         '--resume[Resume an interrupted pull]' \
                         '--no-install[Skip dependency installation]' \
                         '--json[Output the pull plan as JSON]' \
+                        '--help[Show help]'
+                    ;;
+                land)
+                    _arguments \
+                        '1:workspace:_forkspace_workspaces' \
+                        '--force[Replace a divergent branch]' \
+                        '--drop[Drop after a successful land]' \
+                        '--as=[Land under another branch]:branch:' \
                         '--help[Show help]'
                     ;;
             esac

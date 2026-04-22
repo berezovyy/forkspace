@@ -40,7 +40,10 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
 
     workspaces.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let rows: Vec<(String, String, String, String)> = workspaces
+    let show_branch = workspaces
+        .iter()
+        .any(|workspace| workspace.branch.is_some());
+    let rows: Vec<(String, String, String, String, String)> = workspaces
         .iter()
         .map(|ws| -> Result<_> {
             let origin = if let Some(ref parent) = ws.parent {
@@ -65,30 +68,59 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
                 None => "-".to_string(),
             };
 
-            Ok((ws.name.clone(), origin, changed, proc_info))
+            Ok((
+                ws.name.clone(),
+                origin,
+                ws.branch.clone().unwrap_or_else(|| "-".to_string()),
+                changed,
+                proc_info,
+            ))
         })
         .collect::<Result<_>>()?;
 
     let w_name = rows.iter().map(|r| r.0.len()).max().unwrap_or(0).max(4);
     let w_base = rows.iter().map(|r| r.1.len()).max().unwrap_or(0).max(4);
-    let w_changed = rows.iter().map(|r| r.2.len()).max().unwrap_or(0).max(7);
+    let w_branch = rows.iter().map(|r| r.2.len()).max().unwrap_or(0).max(6);
+    let w_changed = rows.iter().map(|r| r.3.len()).max().unwrap_or(0).max(7);
 
-    println!(
-        "{:<w_name$}  {:<w_base$}  {:<w_changed$}  {}",
-        "NAME".bold(),
-        "BASE".bold(),
-        "CHANGED".bold(),
-        "PROCESS".bold(),
-    );
-
-    for (name, base, changed, proc_info) in &rows {
+    if show_branch {
+        println!(
+            "{:<w_name$}  {:<w_base$}  {:<w_branch$}  {:<w_changed$}  {}",
+            "NAME".bold(),
+            "BASE".bold(),
+            "BRANCH".bold(),
+            "CHANGED".bold(),
+            "PROCESS".bold(),
+        );
+    } else {
         println!(
             "{:<w_name$}  {:<w_base$}  {:<w_changed$}  {}",
-            name.bold().bright_white(),
-            base,
-            changed,
-            proc_info,
+            "NAME".bold(),
+            "BASE".bold(),
+            "CHANGED".bold(),
+            "PROCESS".bold(),
         );
+    }
+
+    for (name, base, branch, changed, proc_info) in &rows {
+        if show_branch {
+            println!(
+                "{:<w_name$}  {:<w_base$}  {:<w_branch$}  {:<w_changed$}  {}",
+                name.bold().bright_white(),
+                base,
+                branch,
+                changed,
+                proc_info,
+            );
+        } else {
+            println!(
+                "{:<w_name$}  {:<w_base$}  {:<w_changed$}  {}",
+                name.bold().bright_white(),
+                base,
+                changed,
+                proc_info,
+            );
+        }
     }
 
     Ok(())

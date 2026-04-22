@@ -118,6 +118,41 @@ fn validate_workspace_name(name: &str) -> Result {
 }
 
 pub fn exec(args: crate::cli::ForkArgs) -> Result {
+    let branch_base = if args.branch.is_some() {
+        let state = State::load()?;
+        Some(
+            state
+                .workspaces
+                .get(args.base.to_str().unwrap_or(""))
+                .map_or_else(
+                    || args.base.clone(),
+                    |workspace| workspace.view_path.clone(),
+                ),
+        )
+    } else {
+        None
+    };
+    if let (Some(branch), Some(base)) = (args.branch.as_deref(), branch_base.as_deref()) {
+        if !crate::git::is_repo(base) {
+            return Err(ForkspaceError::CapabilityUnsupported {
+                diagnosis: format!("{} is not a Git repository", base.display()),
+                remedy: "omit --branch, or run `git init` first".to_string(),
+            });
+        }
+        if crate::git::git_dir_is_file(base) {
+            return Err(ForkspaceError::CapabilityUnsupported {
+                diagnosis: "--branch cannot fork a Git worktree or submodule checkout".to_string(),
+                remedy: "fork the main checkout instead".to_string(),
+            });
+        }
+        crate::git::validate_branch(base, branch)?;
+        let reference = format!("refs/heads/{branch}");
+        if crate::git::ref_exists(base, &reference) {
+            return Err(ForkspaceError::BranchExists(format!(
+                "'{branch}' already exists; choose another branch name"
+            )));
+        }
+    }
     let name = match args.name {
         Some(n) => n,
         None => args
@@ -131,7 +166,20 @@ pub fn exec(args: crate::cli::ForkArgs) -> Result {
                 )
             })?,
     };
-    let ws = create_workspace(args.base, &name, None, args.session, args.tmpfs, args.size)?;
+    let mut ws = create_workspace(args.base, &name, None, args.session, args.tmpfs, args.size)?;
+    if let Some(branch) = args.branch {
+        if crate::git::run_git(&ws.view_path, &["switch", "-c", &branch]).is_err() {
+            State::with_state(|state| crate::commands::drop::remove_workspace(state, &ws.name))?;
+            return Err(ForkspaceError::BranchExists(format!(
+                "'{branch}' could not be created; no workspace was kept"
+            )));
+        }
+        ws.branch = Some(branch);
+        State::with_state(|state| {
+            state.require_workspace_mut(&ws.name)?.branch = ws.branch.clone();
+            Ok(())
+        })?;
+    }
     println!(
         "created workspace '{}' from {}",
         ws.name,

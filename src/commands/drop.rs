@@ -6,6 +6,29 @@ use crate::util::{glob_matches, kill_process};
 pub(crate) fn remove_workspace(state: &mut State, name: &str) -> Result {
     let ws = state.require_workspace(name)?.clone();
 
+    if let Some(branch) = &ws.branch {
+        let root_base = state
+            .parent_chain(name)
+            .first()
+            .map(|root| root.base.clone())
+            .unwrap_or_else(|| ws.base.clone());
+        let reference = format!("refs/heads/{branch}");
+        let unlanded = crate::git::rev_parse(&ws.view_path, &reference)
+            .ok()
+            .is_some_and(|tip| {
+                crate::git::rev_parse(&root_base, &reference)
+                    .ok()
+                    .is_none_or(|base_tip| {
+                        !crate::git::is_ancestor(&root_base, &tip, &base_tip).unwrap_or(false)
+                    })
+            });
+        if unlanded {
+            eprintln!(
+                "warning: workspace '{name}' has unlanded work on '{branch}' — run `forkspace land {name}` first, or accept history loss"
+            );
+        }
+    }
+
     if let Some(ref proc) = ws.process {
         kill_process(proc.pid, proc.identity.as_deref());
     }

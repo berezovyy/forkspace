@@ -8,6 +8,22 @@ pub enum ForkspaceError {
     #[error("workspace '{0}' already exists (use 'forkspace enter {0}' to enter it)")]
     WorkspaceExists(String),
 
+    #[error("branch conflict: {0}")]
+    BranchExists(String),
+
+    #[error("workspace '{0}' has uncommitted tracked changes; commit them, or use `forkspace merge` for file-level transfer")]
+    WorkspaceDirty(String),
+
+    #[error("branch '{branch}' is checked out in the base; switch the base off it (`git switch -`) and re-run")]
+    BranchCheckedOut { branch: String },
+
+    #[error("recorded {kind} path for workspace '{workspace}' is missing: {path}")]
+    RecordedPathMissing {
+        workspace: String,
+        kind: String,
+        path: String,
+    },
+
     #[error("state operation failed: {0}")]
     StateFailed(String),
 
@@ -86,9 +102,15 @@ impl ForkspaceError {
         match self {
             Self::WorkspaceNotFound(_) => 3,
             Self::WorkspaceExists(_) => 4,
-            Self::HasChildren { .. } | Self::MergeConflict { .. } | Self::PullConflict { .. } => 5,
+            Self::BranchExists(_) => 4,
+            Self::HasChildren { .. }
+            | Self::MergeConflict { .. }
+            | Self::PullConflict { .. }
+            | Self::WorkspaceDirty(_)
+            | Self::BranchCheckedOut { .. } => 5,
             Self::CapabilityUnsupported { .. } => 6,
             Self::BackendUnavailable { .. } | Self::MountFailed(_) => 7,
+            Self::RecordedPathMissing { .. } => 3,
             _ => 1,
         }
     }

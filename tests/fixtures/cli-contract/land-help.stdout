@@ -1,0 +1,12 @@
+Preserve a workspace's Git branch in the base repository
+
+Usage: forkspace land [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  Workspace whose commits should be landed
+
+Options:
+      --force        Replace a divergent base branch
+      --drop         Drop the workspace after a successful land
+      --as <BRANCH>  Land under a different branch name
+  -h, --help         Print help

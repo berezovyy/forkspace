@@ -10,6 +10,7 @@
   {"name":"diff-help","args":["diff","--help"]},
   {"name":"merge-help","args":["merge","--help"]},
   {"name":"pull-help","args":["pull","--help"]},
+  {"name":"land-help","args":["land","--help"]},
   {"name":"completions-help","args":["completions","--help"]},
   {"name":"proxy-help","args":["proxy-daemon","--help"]},
   {"name":"missing-command","args":[]},

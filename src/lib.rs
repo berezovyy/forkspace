@@ -5,6 +5,7 @@ pub mod commands;
 pub mod diff;
 pub mod error;
 pub mod filter;
+pub mod git;
 pub mod manifest;
 pub mod merge;
 pub mod merge_plan;
