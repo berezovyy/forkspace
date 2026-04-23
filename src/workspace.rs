@@ -51,6 +51,15 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    pub fn compare_key(&self) -> (PathBuf, Option<String>) {
+        (
+            self.base
+                .canonicalize()
+                .unwrap_or_else(|_| self.base.clone()),
+            self.parent.clone(),
+        )
+    }
+
     pub fn new(name: &str, base: PathBuf, parent: Option<String>) -> Self {
         let root = forkspace_home().join(name);
         let merged = root.join("merged");

@@ -17,6 +17,13 @@ pub enum ForkspaceError {
     #[error("branch '{branch}' is checked out in the base; switch the base off it (`git switch -`) and re-run")]
     BranchCheckedOut { branch: String },
 
+    #[error("workspace '{workspace}' has comparison base {base}, expected {expected}; cross-base columns would be misleading")]
+    BaseMismatch {
+        workspace: String,
+        base: String,
+        expected: String,
+    },
+
     #[error("recorded {kind} path for workspace '{workspace}' is missing: {path}")]
     RecordedPathMissing {
         workspace: String,
@@ -107,7 +114,8 @@ impl ForkspaceError {
             | Self::MergeConflict { .. }
             | Self::PullConflict { .. }
             | Self::WorkspaceDirty(_)
-            | Self::BranchCheckedOut { .. } => 5,
+            | Self::BranchCheckedOut { .. }
+            | Self::BaseMismatch { .. } => 5,
             Self::CapabilityUnsupported { .. } => 6,
             Self::BackendUnavailable { .. } | Self::MountFailed(_) => 7,
             Self::RecordedPathMissing { .. } => 3,

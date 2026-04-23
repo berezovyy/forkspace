@@ -14,4 +14,5 @@ Options:
       --dry-run            Show the merge plan without applying it
       --resume             Resume an interrupted merge
       --overwrite-base     Overwrite conflicting changes in the base
+      --quiet              Suppress the pre-apply plan summary
   -h, --help               Print help

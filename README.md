@@ -164,6 +164,7 @@ forkspace enter --ephemeral -- make test
 | `merge`  | Apply changes to base (`--commit`, `--patch`, `--drop`)                |
 | `pull`   | Bring base changes into a workspace and re-baseline it                |
 | `land`   | Preserve a workspace's committed topic-branch history in the base     |
+| `compare`| Compare parallel attempts on source, dependency, test, and path facts |
 | `drop`   | Remove a workspace (`--force`, `--all`, `--glob`)                      |
 | `ls`     | List workspaces                                                        |
 | `run`    | Start a dev server with automatic proxy setup                          |

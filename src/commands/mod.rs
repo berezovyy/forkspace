@@ -1,3 +1,4 @@
+pub(crate) mod compare;
 pub(crate) mod completions;
 pub mod diff;
 pub mod drop;
@@ -23,6 +24,7 @@ pub fn dispatch(cli: Cli) -> Result {
         Commands::Ls(args) => ls::exec(args),
         Commands::Completions(args) => completions::exec(args.shell),
         Commands::Diff(args) => diff::exec(args),
+        Commands::Compare(args) => compare::exec(args),
         Commands::Merge(args) => merge::exec(args),
         Commands::Pull(args) => pull::exec(args),
         Commands::Land(args) => land::exec(args),

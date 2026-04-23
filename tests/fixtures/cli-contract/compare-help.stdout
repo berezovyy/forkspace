@@ -1,0 +1,11 @@
+Compare parallel workspace attempts side by side
+
+Usage: forkspace compare [OPTIONS] [NAMES] [NAMES]...
+
+Arguments:
+  [NAMES] [NAMES]...  Two or more workspace names
+
+Options:
+      --json   Output stable JSON
+      --files  Show the per-path matrix
+  -h, --help   Print help

@@ -85,6 +85,7 @@ pub struct DiffOutput {
     pub workspace: String,
     pub base: PathBuf,
     pub changes: Vec<FileChange>,
+    pub signals: crate::signals::Signals,
 }
 
 pub enum DiffFormat {

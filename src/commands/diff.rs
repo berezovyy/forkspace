@@ -34,6 +34,7 @@ pub fn exec(args: DiffArgs) -> Result {
     } else {
         ChangeFilter::build(&workspace.base).filter_changes(changes)
     };
+    let signals = crate::signals::collect(workspace, &changes);
 
     let manifest_status = State::load()?
         .workspaces
@@ -57,6 +58,7 @@ pub fn exec(args: DiffArgs) -> Result {
                 workspace: args.name.clone(),
                 base: workspace.base.clone(),
                 changes: Vec::new(),
+                signals,
             };
             println!(
                 "{}",
@@ -74,6 +76,7 @@ pub fn exec(args: DiffArgs) -> Result {
             workspace: args.name.clone(),
             base: workspace.base.clone(),
             changes,
+            signals,
         };
         println!(
             "{}",
@@ -93,6 +96,11 @@ pub fn exec(args: DiffArgs) -> Result {
             DiffFormat::Default
         };
         println!("{}", format_diff(&changes, &fmt));
+        if args.stat {
+            if let Some(line) = crate::signals::render(&signals) {
+                println!("{line}");
+            }
+        }
     }
 
     Ok(())

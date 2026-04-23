@@ -139,6 +139,7 @@ fn test_diff_json_output() {
         workspace: "test-ws".to_string(),
         base: base.clone(),
         changes,
+        signals: forkspace::signals::Signals::default(),
     };
     let json_str = serde_json::to_string_pretty(&output).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();

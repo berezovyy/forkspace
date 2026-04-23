@@ -38,6 +38,9 @@ pub enum Commands {
     /// Show what changed in a workspace
     Diff(DiffArgs),
 
+    /// Compare parallel workspace attempts side by side
+    Compare(CompareArgs),
+
     /// Apply workspace changes back to the base directory
     Merge(MergeArgs),
 
@@ -231,6 +234,18 @@ pub struct DiffArgs {
 }
 
 #[derive(Args)]
+pub struct CompareArgs {
+    #[arg(num_args = 2.., help = "Two or more workspace names")]
+    pub names: Vec<String>,
+
+    #[arg(long, conflicts_with = "files", help = "Output stable JSON")]
+    pub json: bool,
+
+    #[arg(long, conflicts_with = "json", help = "Show the per-path matrix")]
+    pub files: bool,
+}
+
+#[derive(Args)]
 pub struct MergeArgs {
     #[arg(help = "Name of the workspace to merge")]
     pub name: String,
@@ -265,6 +280,9 @@ pub struct MergeArgs {
 
     #[arg(long, hide = true, conflicts_with = "drop")]
     pub force: bool,
+
+    #[arg(long, help = "Suppress the pre-apply plan summary")]
+    pub quiet: bool,
 }
 
 #[derive(Args)]

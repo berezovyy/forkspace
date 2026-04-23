@@ -1,0 +1,87 @@
+{
+  "base": "<FORKSPACE_HOME>/compare-base",
+  "workspaces": [
+    {
+      "workspace": "a",
+      "pending": false,
+      "added": 1,
+      "modified": 2,
+      "deleted": 0,
+      "dependencies": {
+        "deps_added": 0,
+        "deps_removed": 0,
+        "dep_names_added": [],
+        "dep_names_removed": [],
+        "dependency_source": null,
+        "new_files": 1,
+        "edited_files": 2,
+        "tests_touched": 0,
+        "tests_deleted": 0
+      },
+      "tests": 0
+    },
+    {
+      "workspace": "b",
+      "pending": false,
+      "added": 0,
+      "modified": 2,
+      "deleted": 0,
+      "dependencies": {
+        "deps_added": 0,
+        "deps_removed": 0,
+        "dep_names_added": [],
+        "dep_names_removed": [],
+        "dependency_source": null,
+        "new_files": 0,
+        "edited_files": 2,
+        "tests_touched": 0,
+        "tests_deleted": 0
+      },
+      "tests": 0
+    },
+    {
+      "workspace": "c",
+      "pending": false,
+      "added": 0,
+      "modified": 1,
+      "deleted": 1,
+      "dependencies": {
+        "deps_added": 0,
+        "deps_removed": 0,
+        "dep_names_added": [],
+        "dep_names_removed": [],
+        "dependency_source": null,
+        "new_files": 0,
+        "edited_files": 1,
+        "tests_touched": 0,
+        "tests_deleted": 0
+      },
+      "tests": 0
+    }
+  ],
+  "contested": [
+    "all"
+  ],
+  "unique": [
+    [
+      "a",
+      [
+        "only-a"
+      ]
+    ],
+    [
+      "b",
+      []
+    ],
+    [
+      "c",
+      [
+        "delete"
+      ]
+    ]
+  ],
+  "partial": [
+    "partial"
+  ],
+  "degraded": []
+}

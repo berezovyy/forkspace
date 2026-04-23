@@ -30,8 +30,9 @@ pub fn exec(args: MergeArgs) -> Result {
             (None, Some(merge_plan::resume(&workspace)?))
         } else {
             let plan = merge_plan::build(&workspace, overwrite || args.dry_run)?;
+            let review = review_plan(&workspace, &plan);
             if args.dry_run {
-                println!("{}", merge_plan::render(&plan));
+                println!("{review}");
                 return Ok(());
             }
             if overwrite && !plan.conflicts.is_empty() {
@@ -49,6 +50,10 @@ pub fn exec(args: MergeArgs) -> Result {
                     "warning: workspace git HEAD changed; use `forkspace land {}` to preserve commit history",
                     workspace.name
                 );
+            }
+            if !args.quiet {
+                println!("{review}");
+                println!("applying…");
             }
             let journal = if plan.changes.is_empty() {
                 None
@@ -108,4 +113,14 @@ pub fn exec(args: MergeArgs) -> Result {
         }
         Ok(())
     })
+}
+
+fn review_plan(workspace: &crate::workspace::Workspace, plan: &merge_plan::MergePlan) -> String {
+    let mut rendered = merge_plan::render(plan);
+    let signals = crate::signals::collect(workspace, &plan.changes);
+    if let Some(line) = crate::signals::render(&signals) {
+        rendered.push('\n');
+        rendered.push_str(&line);
+    }
+    rendered
 }

@@ -17,6 +17,61 @@ struct Case {
 }
 
 fn setup_case(case: &Case, home: &Path) {
+    if case.setup.as_deref() == Some("compare-three") {
+        let base = home.join("compare-base");
+        fs::create_dir_all(&base).unwrap();
+        for name in ["all", "partial", "delete"] {
+            fs::write(base.join(name), "old\n").unwrap();
+        }
+        let mut workspaces = serde_json::Map::new();
+        for name in ["a", "b", "c"] {
+            let root = home.join(name);
+            for directory in [root.join("upper"), root.join("work"), root.join("merged")] {
+                fs::create_dir_all(directory).unwrap();
+            }
+            fs::write(root.join("upper/all"), name).unwrap();
+            if name != "c" {
+                fs::write(root.join("upper/partial"), name).unwrap();
+            }
+            if name == "a" {
+                fs::write(root.join("upper/only-a"), "a").unwrap();
+            }
+            if name == "c" {
+                fs::write(root.join("upper/.wh.delete"), "").unwrap();
+            }
+            workspaces.insert(
+                name.to_string(),
+                serde_json::json!({
+                    "name": name,
+                    "base": base,
+                    "parent": null,
+                    "created": "2025-01-01T00:00:00Z",
+                    "session": null,
+                    "view_path": root.join("merged"),
+                    "fork_time_ns": 1,
+                    "backend_kind": "linux",
+                    "backend_state": {
+                        "kind": "linux",
+                        "upper": root.join("upper"),
+                        "work": root.join("work"),
+                        "merged": root.join("merged"),
+                        "tmpfs": false
+                    }
+                }),
+            );
+        }
+        fs::write(
+            home.join("state.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": 2,
+                "workspaces": workspaces,
+                "proxy": null
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        return;
+    }
     if case.setup.as_deref() == Some("copy-small") {
         fs::create_dir_all(home.join("base")).unwrap();
         fs::write(home.join("base/file"), "x\n").unwrap();

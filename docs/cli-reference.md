@@ -29,3 +29,13 @@ through from overlay to reflink to copy while macOS diagnoses non-APFS placement
 Fetch a workspace's committed branch into the root base repository without network access or
 history rewriting. `--as <branch>` chooses a different target, `--force` replaces divergent
 target history, and `--drop` removes the workspace only after the ref update succeeds.
+
+### `forkspace compare <name> <name>...`
+
+Summarize two or more same-origin attempts in argument order. The default view shows source,
+dependency, and test counts plus contested/unique/partial path buckets. `--files` emits the
+per-path A/M/D matrix and `--json` emits the same facts for tooling. It deliberately provides
+no winner or quality score.
+
+`forkspace diff --stat` includes non-empty review signals. `forkspace merge` prints its reviewed plan
+before applying by default; `--quiet` suppresses that pre-apply record for scripts.
