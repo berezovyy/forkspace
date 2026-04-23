@@ -38,5 +38,7 @@
   {"name":"diff-json-class","args":["diff","golden","--json"],"setup":"diff-class"},
   {"name":"merge-not-found","args":["merge","absent"]},
   {"name":"merge-overwrite-drop","args":["merge","absent","--overwrite-base","--drop"]},
-  {"name":"invalid-completion-shell","args":["completions","cmd.exe"]}
+  {"name":"invalid-completion-shell","args":["completions","cmd.exe"]},
+  {"name":"copy-fork","args":["fork","<FORKSPACE_HOME>/base","--name","copy-golden","--copy"],"setup":"copy-small"},
+  {"name":"ls-json-empty","args":["ls","--json"]}
 ]

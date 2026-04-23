@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::backend::{pending_create_path, select_backend, CreateReq};
+use crate::backend::{pending_create_path, select_backend, select_backend_for_create, CreateReq};
 use crate::error::{ForkspaceError, Result};
 use crate::state::{PendingCreate, State};
 use crate::util::IoContext;
@@ -15,6 +15,19 @@ pub fn create_workspace(
     session: Option<String>,
     tmpfs: bool,
     size: Option<String>,
+) -> Result<Workspace> {
+    create_workspace_with_copy(base, name, parent, session, tmpfs, size, false)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_workspace_with_copy(
+    base: PathBuf,
+    name: &str,
+    parent: Option<String>,
+    session: Option<String>,
+    tmpfs: bool,
+    size: Option<String>,
+    force_copy: bool,
 ) -> Result<Workspace> {
     validate_workspace_name(name)?;
     let (resolved_base, resolved_parent, backend) = {
@@ -35,10 +48,19 @@ pub fn create_workspace(
                     "workspace stack depth is limited to {MAX_FORK_DEPTH}; merge or fork from an earlier ancestor"
                 )));
             }
-            let backend = select_backend(Some(ws.backend_kind))?;
-            (backend.view_path(ws), Some(ws.name.clone()), backend)
+            let origin = select_backend(Some(ws.backend_kind))?.view_path(ws);
+            let backend = if force_copy {
+                select_backend_for_create(&origin, true)?
+            } else {
+                select_backend(Some(ws.backend_kind))?
+            };
+            (origin, Some(ws.name.clone()), backend)
         } else {
-            (base.clone(), parent, select_backend(None)?)
+            (
+                base.clone(),
+                parent,
+                select_backend_for_create(&base, force_copy)?,
+            )
         }
     };
 
@@ -166,7 +188,15 @@ pub fn exec(args: crate::cli::ForkArgs) -> Result {
                 )
             })?,
     };
-    let mut ws = create_workspace(args.base, &name, None, args.session, args.tmpfs, args.size)?;
+    let mut ws = create_workspace_with_copy(
+        args.base,
+        &name,
+        None,
+        args.session,
+        args.tmpfs,
+        args.size,
+        args.copy,
+    )?;
     if let Some(branch) = args.branch {
         if crate::git::run_git(&ws.view_path, &["switch", "-c", &branch]).is_err() {
             State::with_state(|state| crate::commands::drop::remove_workspace(state, &ws.name))?;
@@ -179,6 +209,13 @@ pub fn exec(args: crate::cli::ForkArgs) -> Result {
             state.require_workspace_mut(&ws.name)?.branch = ws.branch.clone();
             Ok(())
         })?;
+    }
+    if let Some(reason) = &ws.probe_reason {
+        if ws.degraded {
+            eprintln!("warning: {reason}");
+        } else if ws.backend_kind == crate::backend::BackendKind::LinuxReflink {
+            eprintln!("note: {reason}");
+        }
     }
     println!(
         "created workspace '{}' from {}",

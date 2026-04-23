@@ -144,6 +144,8 @@ impl WorkspaceBackend for LinuxBackend {
                 unknown_fields: Map::new(),
             }),
             manifest_status: ManifestStatus::Ready,
+            degraded: false,
+            probe_reason: None,
         })
     }
 

@@ -11,6 +11,7 @@ Options:
       --from <FROM>        Base directory when creating a new workspace on entry
       --ephemeral          Destroy the workspace automatically on exit
       --tmpfs              Back the workspace with tmpfs (RAM-only, vanishes on reboot)
+      --copy               Consent to a full directory copy backend when creating
       --merge-on-exit      Merge changes back to the base directory when exiting the shell
       --session <SESSION>  Session identifier to set in the spawned shell
   -h, --help               Print help

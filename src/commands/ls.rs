@@ -32,18 +32,40 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
     }
 
     let mut workspaces: Vec<_> = state.workspaces.values().collect();
+    workspaces.sort_by(|a, b| a.name.cmp(&b.name));
+
+    if args.json {
+        let values: Vec<_> = workspaces
+            .iter()
+            .map(|workspace| {
+                serde_json::json!({
+                    "name": workspace.name,
+                    "base": workspace.base,
+                    "parent": workspace.parent,
+                    "branch": workspace.branch,
+                    "backend": workspace.backend_kind.as_str(),
+                    "degraded": workspace.degraded,
+                    "probe_reason": workspace.probe_reason,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&values)
+                .map_err(|error| crate::error::ForkspaceError::Serialization(error.to_string()))?
+        );
+        return Ok(());
+    }
 
     if workspaces.is_empty() {
         println!("no workspaces");
         return Ok(());
     }
 
-    workspaces.sort_by(|a, b| a.name.cmp(&b.name));
-
     let show_branch = workspaces
         .iter()
         .any(|workspace| workspace.branch.is_some());
-    let rows: Vec<(String, String, String, String, String)> = workspaces
+    let rows: Vec<(String, String, String, String, String, String)> = workspaces
         .iter()
         .map(|ws| -> Result<_> {
             let origin = if let Some(ref parent) = ws.parent {
@@ -72,6 +94,7 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
                 ws.name.clone(),
                 origin,
                 ws.branch.clone().unwrap_or_else(|| "-".to_string()),
+                ws.backend_kind.as_str().to_string(),
                 changed,
                 proc_info,
             ))
@@ -81,42 +104,47 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
     let w_name = rows.iter().map(|r| r.0.len()).max().unwrap_or(0).max(4);
     let w_base = rows.iter().map(|r| r.1.len()).max().unwrap_or(0).max(4);
     let w_branch = rows.iter().map(|r| r.2.len()).max().unwrap_or(0).max(6);
-    let w_changed = rows.iter().map(|r| r.3.len()).max().unwrap_or(0).max(7);
+    let w_backend = rows.iter().map(|r| r.3.len()).max().unwrap_or(0).max(7);
+    let w_changed = rows.iter().map(|r| r.4.len()).max().unwrap_or(0).max(7);
 
     if show_branch {
         println!(
-            "{:<w_name$}  {:<w_base$}  {:<w_branch$}  {:<w_changed$}  {}",
+            "{:<w_name$}  {:<w_base$}  {:<w_branch$}  {:<w_backend$}  {:<w_changed$}  {}",
             "NAME".bold(),
             "BASE".bold(),
             "BRANCH".bold(),
+            "BACKEND".bold(),
             "CHANGED".bold(),
             "PROCESS".bold(),
         );
     } else {
         println!(
-            "{:<w_name$}  {:<w_base$}  {:<w_changed$}  {}",
+            "{:<w_name$}  {:<w_base$}  {:<w_backend$}  {:<w_changed$}  {}",
             "NAME".bold(),
             "BASE".bold(),
+            "BACKEND".bold(),
             "CHANGED".bold(),
             "PROCESS".bold(),
         );
     }
 
-    for (name, base, branch, changed, proc_info) in &rows {
+    for (name, base, branch, backend, changed, proc_info) in &rows {
         if show_branch {
             println!(
-                "{:<w_name$}  {:<w_base$}  {:<w_branch$}  {:<w_changed$}  {}",
+                "{:<w_name$}  {:<w_base$}  {:<w_branch$}  {:<w_backend$}  {:<w_changed$}  {}",
                 name.bold().bright_white(),
                 base,
                 branch,
+                backend,
                 changed,
                 proc_info,
             );
         } else {
             println!(
-                "{:<w_name$}  {:<w_base$}  {:<w_changed$}  {}",
+                "{:<w_name$}  {:<w_base$}  {:<w_backend$}  {:<w_changed$}  {}",
                 name.bold().bright_white(),
                 base,
+                backend,
                 changed,
                 proc_info,
             );

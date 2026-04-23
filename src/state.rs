@@ -154,6 +154,8 @@ impl From<LegacyWorkspace> for Workspace {
             manifest_status: ManifestStatus::Absent,
             manifest_generation: 0,
             last_pull: None,
+            degraded: false,
+            probe_reason: None,
             unknown_fields: value.unknown_fields,
         }
     }

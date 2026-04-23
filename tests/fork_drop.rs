@@ -216,6 +216,7 @@ fn test_ls_empty() {
     let _dir = common::setup_test_env();
     forkspace::commands::ls::exec(forkspace::cli::LsArgs {
         names: false,
+        json: false,
         no_gitignore: false,
     })
     .unwrap();
@@ -230,6 +231,7 @@ fn test_ls_shows_workspaces() {
     let ws = common::fork_helper(base.path().to_path_buf(), "ls-test-ws", None, None).unwrap();
     forkspace::commands::ls::exec(forkspace::cli::LsArgs {
         names: false,
+        json: false,
         no_gitignore: false,
     })
     .unwrap();

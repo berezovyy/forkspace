@@ -133,13 +133,13 @@ impl WorkspaceBackend for CloneBackend {
         {
             return Err(ForkspaceError::CapabilityUnsupported {
                 diagnosis: "base and workspace root are on different volumes".to_string(),
-                remedy: "set FORKSPACE_HOME to an APFS directory on the base volume".to_string(),
+                remedy: "set FORKSPACE_HOME to an APFS directory on the base volume, or pass --copy to accept a full copy".to_string(),
             });
         }
         if !Self::apfs(&base)? {
             return Err(ForkspaceError::CapabilityUnsupported {
                 diagnosis: "base is not on an APFS volume".to_string(),
-                remedy: "move the project and FORKSPACE_HOME to the same APFS volume".to_string(),
+                remedy: "move the project and FORKSPACE_HOME to the same APFS volume, or pass --copy to accept a full copy".to_string(),
             });
         }
         Ok(())
@@ -192,6 +192,8 @@ impl WorkspaceBackend for CloneBackend {
                 unknown_fields: serde_json::Map::new(),
             },
             manifest_status,
+            degraded: false,
+            probe_reason: None,
         })
     }
 

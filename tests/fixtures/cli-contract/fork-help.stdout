@@ -11,4 +11,5 @@ Options:
       --tmpfs              Back the workspace with tmpfs (RAM-only, vanishes on reboot)
       --size <SIZE>        Size limit for the tmpfs backing store (e.g. 512M, 2G)
       --branch <BRANCH>    Create and record a Git branch in the workspace
+      --copy               Consent to a full directory copy backend
   -h, --help               Print help

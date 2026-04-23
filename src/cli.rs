@@ -84,6 +84,9 @@ pub struct ForkArgs {
 
     #[arg(long, help = "Create and record a Git branch in the workspace")]
     pub branch: Option<String>,
+
+    #[arg(long, help = "Consent to a full directory copy backend")]
+    pub copy: bool,
 }
 
 #[derive(Args)]
@@ -131,6 +134,9 @@ pub struct EnterArgs {
     )]
     pub tmpfs: bool,
 
+    #[arg(long, help = "Consent to a full directory copy backend when creating")]
+    pub copy: bool,
+
     #[arg(
         long,
         help = "Merge changes back to the base directory when exiting the shell"
@@ -176,6 +182,13 @@ pub struct SwitchArgs {
 pub struct LsArgs {
     #[arg(long, help = "Output only workspace names, one per line")]
     pub names: bool,
+
+    #[arg(
+        long,
+        conflicts_with = "names",
+        help = "Output workspace metadata as JSON"
+    )]
+    pub json: bool,
 
     #[arg(
         long,

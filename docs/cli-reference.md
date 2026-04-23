@@ -20,6 +20,10 @@ and `--no-install` to skip dependency installation.
 Preflight a normal Git checkout, fork it, and create an independent topic branch in the
 workspace. Invalid or existing branches fail before the filesystem fork.
 
+`--copy` consents to the portable full-directory-copy backend. It can be forced on every
+platform and is slower and disk-consuming by design; without it, Linux automatically falls
+through from overlay to reflink to copy while macOS diagnoses non-APFS placement.
+
 ### `forkspace land <name>`
 
 Fetch a workspace's committed branch into the root base repository without network access or

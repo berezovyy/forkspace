@@ -17,6 +17,11 @@ struct Case {
 }
 
 fn setup_case(case: &Case, home: &Path) {
+    if case.setup.as_deref() == Some("copy-small") {
+        fs::create_dir_all(home.join("base")).unwrap();
+        fs::write(home.join("base/file"), "x\n").unwrap();
+        return;
+    }
     if case.setup.as_deref() != Some("diff-class") {
         return;
     }
@@ -82,8 +87,13 @@ fn golden_cli_contract() {
         }
         setup_case(&case, home.path());
 
+        let args: Vec<_> = case
+            .args
+            .iter()
+            .map(|arg| arg.replace("<FORKSPACE_HOME>", &home.path().display().to_string()))
+            .collect();
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .args(&case.args)
+            .args(&args)
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .env("FORKSPACE_HOME", home.path())
             .env("TZ", "UTC")
@@ -106,8 +116,24 @@ fn golden_cli_contract() {
             "stdout changed for {}",
             case.name
         );
+        let stderr = if case.setup.as_deref() == Some("copy-small") {
+            let value = String::from_utf8(output.stderr).unwrap();
+            let value =
+                if let (Some(start), Some(end)) = (value.find(" bytes in "), value.find(" ms);")) {
+                    format!(
+                        "{} bytes in <TIME> ms);{}",
+                        &value[..start],
+                        &value[end + 5..]
+                    )
+                } else {
+                    value
+                };
+            value.into_bytes()
+        } else {
+            output.stderr
+        };
         assert_eq!(
-            output.stderr,
+            stderr,
             fs::read(prefix.with_extension("stderr")).unwrap(),
             "stderr changed for {}",
             case.name

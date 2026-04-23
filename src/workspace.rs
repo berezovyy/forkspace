@@ -42,6 +42,10 @@ pub struct Workspace {
     pub manifest_generation: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_pull: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub degraded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_reason: Option<String>,
     #[serde(flatten)]
     pub unknown_fields: Map<String, Value>,
 }
@@ -73,6 +77,8 @@ impl Workspace {
             manifest_status: ManifestStatus::Absent,
             manifest_generation: 0,
             last_pull: None,
+            degraded: false,
+            probe_reason: None,
             unknown_fields: Map::new(),
         }
     }
@@ -101,6 +107,8 @@ impl Workspace {
             manifest_status: view.manifest_status,
             manifest_generation: 1,
             last_pull: None,
+            degraded: view.degraded,
+            probe_reason: view.probe_reason,
             unknown_fields: Map::new(),
         }
     }
@@ -108,11 +116,13 @@ impl Workspace {
     pub fn linux_state(&self) -> Result<&LinuxBackendState> {
         match &self.backend_state {
             BackendState::Linux(state) => Ok(state),
-            BackendState::MacClone { .. } => Err(ForkspaceError::BackendUnavailable {
-                diagnosis: "linux backend state is unavailable for this macOS workspace"
-                    .to_string(),
-                remedy: "open this workspace with forkspace on macOS".to_string(),
-            }),
+            BackendState::MacClone { .. } | BackendState::CowDir { .. } => {
+                Err(ForkspaceError::BackendUnavailable {
+                    diagnosis: "linux backend state is unavailable for this macOS workspace"
+                        .to_string(),
+                    remedy: "open this workspace with forkspace on macOS".to_string(),
+                })
+            }
         }
     }
 
@@ -141,4 +151,8 @@ fn manifest_absent(status: &ManifestStatus) -> bool {
 
 fn is_zero(value: &u64) -> bool {
     *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }

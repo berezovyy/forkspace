@@ -14,7 +14,7 @@ Fork time depends on the project and storage backend; release benchmarks are not
 <p align="center">
   <a href="https://crates.io/crates/forkspace"><img src="https://img.shields.io/crates/v/forkspace?style=flat-square&color=58a6ff" alt="crates.io" /></a>
   <a href="https://github.com/berezovyy/forkspace/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-a371f7?style=flat-square" alt="license" /></a>
-  <a href="#requirements"><img src="https://img.shields.io/badge/Linux-only-FCC624?style=flat-square&logo=linux&logoColor=black" alt="linux" /></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/Linux%20%7C%20macOS-supported-238636?style=flat-square" alt="Linux and macOS" /></a>
   <a href="#install"><img src="https://img.shields.io/badge/no_root-required-238636?style=flat-square" alt="no root" /></a>
   <a href="#how-it-works"><img src="https://img.shields.io/badge/fork_time-unbenchmarked-58a6ff?style=flat-square" alt="fork time unbenchmarked" /></a>
 </p>
@@ -205,9 +205,10 @@ Forking avoids copying project contents on the Linux overlay backend. Merging mo
 
 ## Requirements
 
-- Linux (OverlayFS is a Linux kernel feature)
-- `fuse-overlayfs` and `fuse3` installed
-- No root/sudo needed
+- Linux or macOS; no root/sudo required
+- Fastest on Linux with `fuse-overlayfs`, or on macOS with APFS clones
+- Linux falls back to per-file reflinks and then a portable full copy
+- `--copy` explicitly exercises the universal fallback on either platform
 
 ## License
 

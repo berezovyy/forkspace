@@ -56,6 +56,8 @@ impl WorkspaceBackend for FakeBackend {
                 unknown_fields: serde_json::Map::new(),
             },
             manifest_status: ManifestStatus::Ready,
+            degraded: false,
+            probe_reason: None,
         })
     }
 

@@ -60,6 +60,7 @@ _forkspace() {
                         '--tmpfs[Back with tmpfs]' \
                         '--size=[tmpfs size limit]:size:' \
                         '--branch=[Create a Git branch]:branch:' \
+                        '--copy[Consent to a full directory copy]' \
                         '--help[Show help]'
                     ;;
                 drop)
@@ -77,6 +78,7 @@ _forkspace() {
                         '--from=[Base directory]:directory:_directories' \
                         '--ephemeral[Destroy on exit]' \
                         '--tmpfs[Back with tmpfs]' \
+                        '--copy[Consent to a full directory copy]' \
                         '--merge-on-exit[Merge changes on exit]' \
                         '--session=[Session identifier]:session:' \
                         '--help[Show help]'
@@ -96,6 +98,7 @@ _forkspace() {
                 ls)
                     _arguments \
                         '--names[Output only workspace names]' \
+                        '--json[Output workspace metadata as JSON]' \
                         '--no-gitignore[Include ignored files]' \
                         '--help[Show help]'
                     ;;

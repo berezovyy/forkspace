@@ -4,5 +4,6 @@ Usage: forkspace ls [OPTIONS]
 
 Options:
       --names         Output only workspace names, one per line
+      --json          Output workspace metadata as JSON
       --no-gitignore  Show all files including gitignored paths (build artifacts, node_modules, etc.)
   -h, --help          Print help

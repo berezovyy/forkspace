@@ -58,7 +58,8 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
 
-        let ws = fork::create_workspace(base, &name, None, None, args.tmpfs, None)?;
+        let ws =
+            fork::create_workspace_with_copy(base, &name, None, None, args.tmpfs, None, args.copy)?;
 
         if args.ephemeral {
             State::with_state(|state| {

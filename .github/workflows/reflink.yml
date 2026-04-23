@@ -1,0 +1,31 @@
+name: backend parity
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  copy:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test backend_probe --test diff_parity --test merge_parity
+
+  linux-reflink:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Create Btrfs loop volume
+        run: |
+          sudo apt-get update && sudo apt-get install -y btrfs-progs
+          truncate -s 2G /tmp/forkspace-btrfs.img
+          mkfs.btrfs -f /tmp/forkspace-btrfs.img
+          sudo mkdir -p /mnt/forkspace-btrfs
+          sudo mount -o loop /tmp/forkspace-btrfs.img /mnt/forkspace-btrfs
+          sudo chown "$USER" /mnt/forkspace-btrfs
+      - run: FORKSPACE_HOME=/mnt/forkspace-btrfs/home cargo test --test backend_probe --test diff_parity --test merge_parity
