@@ -14,6 +14,7 @@ pub mod overlay;
 pub mod process_watch;
 pub(crate) mod proxy;
 pub mod pull;
+pub mod reconcile;
 pub mod signals;
 pub mod state;
 pub mod util;

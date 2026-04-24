@@ -251,6 +251,7 @@ impl State {
             source,
         })?;
         let mut changed = false;
+        changed |= crate::reconcile::sweep_terminal_journals()?;
         let mut retained = Vec::new();
         for pending in self.pending_creates.drain(..) {
             if crate::util::is_pid_alive(pending.pid) {
@@ -282,7 +283,10 @@ impl State {
 
         let manifest_root = forkspace_home().join("manifests");
         if let Ok(entries) = fs::read_dir(&manifest_root) {
-            for path in entries.filter_map(|entry| entry.ok().map(|value| value.path())) {
+            for path in entries
+                .take(128)
+                .filter_map(|entry| entry.ok().map(|value| value.path()))
+            {
                 if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
                     continue;
                 }
@@ -301,7 +305,10 @@ impl State {
         }
 
         if let Ok(entries) = fs::read_dir(&trash_root) {
-            for path in entries.filter_map(|entry| entry.ok().map(|value| value.path())) {
+            for path in entries
+                .take(128)
+                .filter_map(|entry| entry.ok().map(|value| value.path()))
+            {
                 if !self.trash.iter().any(|record| record.path == path) {
                     self.trash.push(TrashRecord {
                         path,

@@ -163,6 +163,9 @@ impl WorkspaceBackend for CloneBackend {
         let fork_time_ns = now_unix_ns();
         if unsafe { libc::clonefile(source.as_ptr(), target.as_ptr(), 0) } != 0 {
             let source = std::io::Error::last_os_error();
+            if source.raw_os_error() == Some(libc::EEXIST) {
+                return Err(ForkspaceError::WorkspaceExists(req.name.clone()));
+            }
             let _ = fs::remove_dir_all(&destination);
             return Err(ForkspaceError::Io {
                 context: format!(

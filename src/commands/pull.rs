@@ -15,6 +15,7 @@ pub fn exec(args: PullArgs) -> Result {
         })?;
 
     State::with_state(|state| {
+        crate::reconcile::guard_merge(&name)?;
         let workspace = state.require_workspace(&name)?.clone();
         let (path, count) = if args.resume {
             let path = pull::resume_apply(&workspace)?;

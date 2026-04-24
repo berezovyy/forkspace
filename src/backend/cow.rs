@@ -212,6 +212,9 @@ impl WorkspaceBackend for CowDirBackend {
             });
         }
         let destination = Self::destination(&req.name);
+        if destination.exists() {
+            return Err(ForkspaceError::WorkspaceExists(req.name.clone()));
+        }
         let started = Instant::now();
         let (reflinked, copied, bytes) = match self.materialize(&req.base, &destination) {
             Ok(stats) => stats,

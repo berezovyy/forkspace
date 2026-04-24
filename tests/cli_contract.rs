@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use forkspace::error::ForkspaceError;
 use serde::Deserialize;
 
@@ -257,4 +257,36 @@ fn every_exit_code_has_a_contract_case() {
         .exit_code(),
         7
     );
+}
+
+#[test]
+fn handwritten_zsh_completions_match_visible_cli_commands() {
+    let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+        .args(["completions", "zsh"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let command_block = text
+        .split_once("commands=(")
+        .unwrap()
+        .1
+        .split_once("\n    )")
+        .unwrap()
+        .0;
+    let completed: std::collections::BTreeSet<_> = command_block
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let value = line.strip_prefix('\'')?.strip_suffix('\'')?;
+            let (command, _) = value.split_once(':')?;
+            (!command.starts_with('-')).then(|| command.to_string())
+        })
+        .collect();
+    let visible: std::collections::BTreeSet<_> = forkspace::cli::Cli::command()
+        .get_subcommands()
+        .filter(|command| !command.is_hide_set())
+        .map(|command| command.get_name().to_string())
+        .collect();
+    assert_eq!(completed, visible);
 }

@@ -71,6 +71,13 @@ fn safe_path(path: &Path) -> bool {
 }
 
 pub fn build(workspace: &Workspace, overwrite_base: bool) -> Result<MergePlan> {
+    if !workspace.base.is_dir() {
+        return Err(ForkspaceError::InvalidArgument(format!(
+            "base directory for '{}' is missing at {}; restore it before merging",
+            workspace.name,
+            workspace.base.display()
+        )));
+    }
     if matches!(
         workspace.manifest_status,
         ManifestStatus::Building | ManifestStatus::Degraded

@@ -55,6 +55,13 @@ pub enum ForkspaceError {
     #[error("workspace '{0}' has an interrupted pull; run `forkspace pull {0} --resume` before diff or merge")]
     StaleAncestor(String),
 
+    #[error("workspace '{workspace}' has an interrupted {operation}; {remedy}")]
+    InterruptedOperation {
+        workspace: String,
+        operation: String,
+        remedy: String,
+    },
+
     #[error("mount failed: {0}")]
     MountFailed(String),
 

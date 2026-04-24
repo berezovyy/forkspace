@@ -43,6 +43,8 @@ pub fn create_workspace_with_copy(
             return Err(ForkspaceError::WorkspaceExists(name.to_string()));
         }
         if let Some(ws) = state.workspaces.get(base.to_str().unwrap_or("")) {
+            crate::reconcile::guard_merge(&ws.name)?;
+            crate::pull::guard(&ws.name)?;
             if state.depth_of(&ws.name) + 1 >= MAX_FORK_DEPTH {
                 return Err(ForkspaceError::InvalidArgument(format!(
                     "workspace stack depth is limited to {MAX_FORK_DEPTH}; merge or fork from an earlier ancestor"

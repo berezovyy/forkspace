@@ -4,6 +4,8 @@ use crate::state::State;
 use crate::util::{glob_matches, kill_process};
 
 pub(crate) fn remove_workspace(state: &mut State, name: &str) -> Result {
+    crate::reconcile::guard_merge(name)?;
+    crate::pull::guard(name)?;
     let ws = state.require_workspace(name)?.clone();
 
     if let Some(branch) = &ws.branch {

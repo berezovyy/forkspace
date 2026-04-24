@@ -11,6 +11,7 @@ use crate::state::State;
 
 pub fn exec(args: DiffArgs) -> Result {
     crate::pull::guard(&args.name)?;
+    crate::reconcile::guard_merge(&args.name)?;
     let state = State::load()?;
     let workspace = state.require_workspace(&args.name)?;
 

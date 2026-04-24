@@ -46,6 +46,7 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
                     "backend": workspace.backend_kind.as_str(),
                     "degraded": workspace.degraded,
                     "probe_reason": workspace.probe_reason,
+                    "base_missing": crate::reconcile::base_missing(&workspace.base),
                 })
             })
             .collect();
@@ -68,11 +69,14 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
     let rows: Vec<(String, String, String, String, String, String)> = workspaces
         .iter()
         .map(|ws| -> Result<_> {
-            let origin = if let Some(ref parent) = ws.parent {
+            let mut origin = if let Some(ref parent) = ws.parent {
                 parent.clone()
             } else {
                 shorten_path(&ws.base)
             };
+            if crate::reconcile::base_missing(&ws.base) {
+                origin.push_str(" (missing)");
+            }
 
             let changed =
                 match select_backend(Some(ws.backend_kind))?.change_count(ws, args.no_gitignore)? {
