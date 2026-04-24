@@ -3,12 +3,12 @@
 </p>
 
 <p align="center">
-  <strong>Instant, zero-copy, disposable workspaces powered by OverlayFS.</strong>
+  <strong>Disposable, isolated workspaces with the fastest backend your filesystem supports.</strong>
 </p>
 
 <p align="center">
-  No Docker. No root. Nothing is actually copied. Only what you change gets stored. <br/>
-Fork time depends on the project and storage backend; release benchmarks are not published yet.
+  No Docker. No root. Overlay, APFS clone, reflink, and portable-copy backends. <br/>
+Measured backend-specific numbers are published in <a href="docs/benchmarks.md">benchmarks</a>.
 </p>
 
 <p align="center">
@@ -16,21 +16,23 @@ Fork time depends on the project and storage backend; release benchmarks are not
   <a href="https://github.com/berezovyy/forkspace/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-a371f7?style=flat-square" alt="license" /></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/Linux%20%7C%20macOS-supported-238636?style=flat-square" alt="Linux and macOS" /></a>
   <a href="#install"><img src="https://img.shields.io/badge/no_root-required-238636?style=flat-square" alt="no root" /></a>
-  <a href="#how-it-works"><img src="https://img.shields.io/badge/fork_time-unbenchmarked-58a6ff?style=flat-square" alt="fork time unbenchmarked" /></a>
+  <a href="docs/benchmarks.md"><img src="https://img.shields.io/badge/benchmarks-measured-58a6ff?style=flat-square" alt="measured benchmarks" /></a>
 </p>
 
 <br/>
 
 ## Why forkspace?
 
-`cp -r` is slow. Docker is overkill. Git worktrees can carry over files via `.worktreeinclude` or a `post_setup_worktree` hook — but for build caches (`.next/`, `target/`, `dist/`) you're stuck picking: copy them (slow, gigabytes) or symlink them (fast, but both worktrees write to the same cache and race). Forkspace's overlay gives you both: the original is inherited read-only, writes diverge into a per-workspace upper layer. Instant *and* isolated, with zero config.
+`cp -r` is slow. Docker is overkill. Git worktrees omit local dependencies and build caches.
+Forkspace preserves the complete project view and chooses overlayfs, APFS clones, reflinks, or an
+honest full-copy floor automatically. Project writes are isolated; host-global caches remain shared.
 
 |                         |  `cp -r`  |  Docker   | Git Worktree |   **forkspace**   |
 | :---------------------- | :-------: | :-------: | :----------: | :-----------: |
-| **Speed**               |   Slow    |   Slow    |     Fast     | **Unbenchmarked** |
+| **Speed**               |   Slow    |   Slow    |     Fast     | **Backend-dependent** |
 | `.env` / `node_modules` |    Yes    |    No     |      No      |    **Yes**    |
-| **Isolation**           |   Full    |   Full    |   Partial    |   **Full**    |
-| **Disk usage**          | Full copy | Full copy |   Partial    | **Zero-copy** |
+| **Isolation**           |   Full    |   Full    |   Partial    | **Project-local** |
+| **Disk usage**          | Full copy | Full copy |   Partial    | **CoW or disclosed copy** |
 | **Root required**       |    No     |   Often   |      No      |    **No**     |
 | **Cleanup**             |  Manual   |  Manual   |    Manual    | `forkspace drop`  |
 
@@ -39,7 +41,7 @@ Fork time depends on the project and storage backend; release benchmarks are not
 ## Quick start
 
 ```bash
-forkspace fork . --name experiment     # instant - nothing is copied
+forkspace fork . --name experiment     # backend selected automatically
 forkspace enter experiment             # opens a shell inside the workspace
 
 # make changes, break things, go wild
@@ -67,10 +69,10 @@ project/                 forkspace fork . --name experiment
 ## Install
 
 ```bash
-cargo install --path .
+cargo install forkspace
 ```
 
-<details><summary><strong>Prerequisites</strong> - fuse-overlayfs &amp; fuse3</summary>
+<details><summary><strong>Optional Linux fast path</strong> - fuse-overlayfs &amp; fuse3</summary>
 
 ```bash
 # Ubuntu/Debian
@@ -95,7 +97,7 @@ sudo pacman -S fuse-overlayfs fuse3
 forkspace fork . --name approach-a
 forkspace fork . --name approach-b
 
-# two isolated workspaces, same base, zero copying
+# two isolated workspaces, same base
 # open each in a separate terminal, editor, or agent
 
 forkspace diff approach-a --stat
@@ -174,7 +176,7 @@ forkspace enter --ephemeral -- make test
 
 ## How it works
 
-Forkspace uses [fuse-overlayfs](https://github.com/containers/fuse-overlayfs) to create a union mount:
+On Linux with [fuse-overlayfs](https://github.com/containers/fuse-overlayfs), forkspace creates a union mount:
 
 ```
 merged/    ← you work here (reads from both layers)
@@ -186,6 +188,10 @@ merged/    ← you work here (reads from both layers)
 When you read a file, it comes from the original. When you write, the file is copied to upper first (copy-on-write), then modified there. The original never changes. Deletes are tracked as whiteout markers. The upper directory _is_ the diff - no diffing algorithm needed.
 
 Forking avoids copying project contents on the Linux overlay backend. Merging moves files from upper back to the base. Dropping unmounts and deletes the upper.
+
+APFS clone, Linux reflink, and portable-copy workspaces are ordinary snapshot directories.
+They share the same fork manifest, ctime scan, conflict planner, and command output. See the
+[platform matrix](docs/platform-parity.md) and [limitations](docs/macos-limitations.md).
 
 <br/>
 

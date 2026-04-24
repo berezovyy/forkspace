@@ -8,6 +8,10 @@ Commands described in future phase files are not available until their phase lan
 retired `nuke` command and the unimplemented `path`, `up`, `down`, `snap`, `log`, `blame`,
 `gc`, `serve`, `sleep`, `wake`, `tree`, `collapse`, and `race` commands are not part of the
 CLI. Likewise, `fork -n`, `--memory`, `--cpu`, and `--ttl` are not implemented flags.
+
+Commands entered through `forkspace enter` receive `FORKSPACE_WORKSPACE`, `FORKSPACE_BASE`, and
+`FORKSPACE_VIEW`. `FORKSPACE_VIEW` is always the application-facing directory regardless of the
+recorded backend; Linux overlay workspaces additionally expose `FORKSPACE_UPPER`.
 ### `forkspace pull [name]`
 
 Bring base changes into a workspace with a three-way reconcile and then update its ancestry.

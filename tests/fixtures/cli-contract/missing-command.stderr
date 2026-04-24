@@ -1,4 +1,4 @@
-fork() for your project directory — instant, zero-copy workspaces
+fork() for your project directory — disposable, isolated workspaces
 
 Usage: forkspace <COMMAND>
 

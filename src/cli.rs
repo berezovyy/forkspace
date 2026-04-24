@@ -5,10 +5,10 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     version,
-    about = "fork() for your project directory — instant, zero-copy workspaces",
-    long_about = "Forkspace creates lightweight, copy-on-write workspaces using overlayfs.\n\n\
-        Each workspace shares the original directory as a read-only base while capturing \
-        all changes in a separate layer. Workspaces are disposable and switch in milliseconds."
+    about = "fork() for your project directory — disposable, isolated workspaces",
+    long_about = "Forkspace creates disposable project workspaces using the fastest backend the host supports.\n\n\
+        Linux overlayfs, APFS clones, Linux reflinks, and a portable copy floor share one \
+        command and state contract. Backend selection is automatic and sticky per workspace."
 )]
 pub struct Cli {
     #[command(subcommand)]

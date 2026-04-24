@@ -1,0 +1,17 @@
+name: docs
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  examples:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build
+      - run: sh scripts/test-docs.sh

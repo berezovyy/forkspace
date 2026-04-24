@@ -2,7 +2,7 @@
 name = "forkspace"
 version = "0.1.0"
 edition = "2021"
-description = "fork() for your project directory — instant, zero-copy workspaces using overlayfs"
+description = "Disposable project workspaces with capability-selected CoW and copy backends"
 license = "MIT"
 repository = "https://github.com/berezovyy/forkspace"
 readme = "README.md"

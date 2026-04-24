@@ -1,6 +1,6 @@
-Forkspace creates lightweight, copy-on-write workspaces using overlayfs.
+Forkspace creates disposable project workspaces using the fastest backend the host supports.
 
-Each workspace shares the original directory as a read-only base while capturing all changes in a separate layer. Workspaces are disposable and switch in milliseconds.
+Linux overlayfs, APFS clones, Linux reflinks, and a portable copy floor share one command and state contract. Backend selection is automatic and sticky per workspace.
 
 Usage: forkspace <COMMAND>
 
