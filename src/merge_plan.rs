@@ -27,22 +27,51 @@ pub struct MergePlan {
     pub skipped: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OperationKind {
+    Merge,
+    Pull,
+}
+
+impl OperationKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Merge => "merge",
+            Self::Pull => "pull",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OperationPhase {
+    #[default]
+    Planned,
+    Applying,
+    Applied,
+    Rebaselining,
+    Done,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
-struct Journal {
-    op: String,
-    workspace: String,
-    source: PathBuf,
-    target: PathBuf,
-    changes: Vec<FileChange>,
-    next: usize,
-    fork_time_ns: u128,
+pub struct OperationJournal {
+    pub op: OperationKind,
+    pub workspace: String,
+    pub source: PathBuf,
+    pub target: PathBuf,
+    pub changes: Vec<FileChange>,
+    pub next: usize,
+    #[serde(default)]
+    pub phase: OperationPhase,
+    pub fork_time_ns: u128,
 }
 
 fn timestamp_ns(metadata: &fs::Metadata) -> i128 {
     i128::from(metadata.mtime()) * 1_000_000_000 + i128::from(metadata.mtime_nsec())
 }
 
-fn matches_row(path: &Path, row: &ManifestRow) -> bool {
+pub fn matches_ancestor(path: &Path, row: &ManifestRow) -> bool {
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return false;
     };
@@ -158,7 +187,7 @@ pub fn build_from_changes(
         let current = workspace.base.join(&change.path);
         match rows.get(&change.path) {
             Some(row) if row.dirty => ancestor_unknown.push(change.path.clone()),
-            Some(row) if !matches_row(&current, row) => conflicts.push(change.path.clone()),
+            Some(row) if !matches_ancestor(&current, row) => conflicts.push(change.path.clone()),
             None if matches!(change.kind, ChangeKind::Added)
                 && fs::symlink_metadata(&current).is_ok() =>
             {
@@ -258,13 +287,14 @@ pub fn render(plan: &MergePlan) -> String {
     lines.join("\n")
 }
 
-fn journal_path(workspace: &str, fork_time_ns: u128) -> PathBuf {
-    forkspace_home()
-        .join("journal")
-        .join(format!("merge-{workspace}-{fork_time_ns}.json"))
+pub fn journal_path(operation: OperationKind, workspace: &str, fork_time_ns: u128) -> PathBuf {
+    forkspace_home().join("journal").join(format!(
+        "{}-{workspace}-{fork_time_ns}.json",
+        operation.as_str()
+    ))
 }
 
-fn save_journal(path: &Path, journal: &Journal) -> Result {
+pub fn save_journal(path: &Path, journal: &OperationJournal) -> Result {
     let directory = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(directory).io_context(|| format!("create {}", directory.display()))?;
     let temporary = path.with_extension("json.tmp");
@@ -355,20 +385,72 @@ pub(crate) fn apply_change(
     fs::rename(&temporary, &target).io_context(|| format!("install {}", target.display()))
 }
 
-pub fn execute(plan: &MergePlan) -> Result<PathBuf> {
-    let path = journal_path(&plan.workspace, plan.fork_time_ns);
-    let journal = Journal {
-        op: "merge".to_string(),
-        workspace: plan.workspace.clone(),
-        source: plan.source.clone(),
-        target: plan.target.clone(),
-        changes: plan.changes.clone(),
+pub fn load_journal(path: &Path) -> Result<OperationJournal> {
+    serde_json::from_slice(&fs::read(path).io_context(|| format!("read {}", path.display()))?)
+        .map_err(|error| {
+            ForkspaceError::StateCorrupted(format!("invalid operation journal: {error}"))
+        })
+}
+
+pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
+    let mut journal = load_journal(path)?;
+    journal.phase = OperationPhase::Applying;
+    save_journal(path, &journal)?;
+    while journal.next < journal.changes.len() {
+        apply_change(
+            &journal.source,
+            &journal.target,
+            &journal.changes[journal.next],
+            journal.next,
+            journal.op.as_str(),
+        )?;
+        journal.next += 1;
+        save_journal(path, &journal)?;
+    }
+    journal.phase = OperationPhase::Applied;
+    save_journal(path, &journal)?;
+    Ok(journal)
+}
+
+pub fn start_operation(
+    operation: OperationKind,
+    workspace: &str,
+    source: PathBuf,
+    target: PathBuf,
+    changes: Vec<FileChange>,
+    fork_time_ns: u128,
+) -> Result<PathBuf> {
+    let path = journal_path(operation, workspace, fork_time_ns);
+    let journal = OperationJournal {
+        op: operation,
+        workspace: workspace.to_string(),
+        source,
+        target,
+        changes,
         next: 0,
-        fork_time_ns: plan.fork_time_ns,
+        phase: OperationPhase::Planned,
+        fork_time_ns,
     };
     save_journal(&path, &journal)?;
-    resume_path(&path)?;
+    apply_remaining(&path)?;
     Ok(path)
+}
+
+pub fn set_operation_phase(path: &Path, phase: OperationPhase) -> Result {
+    let mut journal = load_journal(path)?;
+    journal.phase = phase;
+    save_journal(path, &journal)
+}
+
+pub fn execute(plan: &MergePlan) -> Result<PathBuf> {
+    start_operation(
+        OperationKind::Merge,
+        &plan.workspace,
+        plan.source.clone(),
+        plan.target.clone(),
+        plan.changes.clone(),
+        plan.fork_time_ns,
+    )
 }
 
 pub fn execute_without_journal(plan: &MergePlan) -> Result {
@@ -379,27 +461,23 @@ pub fn execute_without_journal(plan: &MergePlan) -> Result {
 }
 
 fn resume_path(path: &Path) -> Result {
-    let mut journal: Journal =
-        serde_json::from_slice(&fs::read(path).io_context(|| format!("read {}", path.display()))?)
-            .map_err(|error| {
-                ForkspaceError::StateCorrupted(format!("invalid merge journal: {error}"))
-            })?;
-    while journal.next < journal.changes.len() {
-        apply_change(
-            &journal.source,
-            &journal.target,
-            &journal.changes[journal.next],
-            journal.next,
-            "merge",
-        )?;
-        journal.next += 1;
-        save_journal(path, &journal)?;
+    let journal = load_journal(path)?;
+    if journal.op != OperationKind::Merge {
+        return Err(ForkspaceError::StateCorrupted(format!(
+            "{} is not a merge journal",
+            path.display()
+        )));
     }
+    apply_remaining(path)?;
     Ok(())
 }
 
 pub fn resume(workspace: &Workspace) -> Result<PathBuf> {
-    let path = journal_path(&workspace.name, workspace.fork_time_ns);
+    let path = journal_path(
+        OperationKind::Merge,
+        &workspace.name,
+        workspace.fork_time_ns,
+    );
     if !path.exists() {
         return Err(ForkspaceError::InvalidArgument(format!(
             "no interrupted merge journal for '{}'",

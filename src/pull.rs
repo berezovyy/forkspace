@@ -4,14 +4,14 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use walkdir::WalkDir;
 
 use crate::diff::{ChangeKind, FileChange, OldContent};
 use crate::error::{ForkspaceError, Result};
 use crate::filter::{ChangeClass, ChangeFilter};
-use crate::manifest::{self, ManifestKind, ManifestRow, ManifestStatus};
-use crate::merge_plan;
+use crate::manifest::{self, ManifestKind, ManifestStatus};
+use crate::merge_plan::{self, OperationKind, OperationPhase};
 use crate::util::{forkspace_home, now_rfc3339, now_unix_ns, IoContext, WalkDirExt};
 use crate::workspace::Workspace;
 
@@ -25,32 +25,6 @@ pub struct PullPlan {
     pub convergent: Vec<PathBuf>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-enum PullPhase {
-    Planned,
-    Applying,
-    Applied,
-    Rebaselining,
-    Done,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct PullJournal {
-    op: String,
-    workspace: String,
-    source: PathBuf,
-    target: PathBuf,
-    changes: Vec<FileChange>,
-    next: usize,
-    phase: PullPhase,
-    fork_time_ns: u128,
-}
-
-fn timestamp_ns(metadata: &fs::Metadata) -> i128 {
-    i128::from(metadata.mtime()) * 1_000_000_000 + i128::from(metadata.mtime_nsec())
-}
-
 fn kind(metadata: &fs::Metadata) -> ManifestKind {
     if metadata.file_type().is_symlink() {
         ManifestKind::Symlink
@@ -59,21 +33,6 @@ fn kind(metadata: &fs::Metadata) -> ManifestKind {
     } else {
         ManifestKind::File
     }
-}
-
-fn matches_row(path: &Path, row: &ManifestRow) -> bool {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return false;
-    };
-    kind(&metadata) == row.kind
-        && (row.kind == ManifestKind::Dir || metadata.len() == row.size)
-        && (matches!(row.kind, ManifestKind::Dir | ManifestKind::Symlink)
-            || timestamp_ns(&metadata) == row.mtime_ns)
-        && (row.mode == 0 || metadata.mode() & 0o7777 == row.mode)
-        && (row.kind != ManifestKind::Symlink
-            || fs::read_link(path)
-                .ok()
-                .is_some_and(|target| Some(manifest::encode_path(&target)) == row.target))
 }
 
 fn equivalent(left: &Path, right: &Path) -> bool {
@@ -163,7 +122,7 @@ pub fn base_changes(workspace: &Workspace) -> Result<Vec<FileChange>> {
             continue;
         }
         match rows.get(&relative) {
-            Some(row) if !row.dirty && matches_row(entry.path(), row) => {}
+            Some(row) if !row.dirty && merge_plan::matches_ancestor(entry.path(), row) => {}
             Some(_) => changes.push(file_change(relative, ChangeKind::Modified)),
             None => changes.push(file_change(relative, ChangeKind::Added)),
         }
@@ -273,68 +232,15 @@ pub fn render(plan: &PullPlan) -> String {
     lines.join("\n")
 }
 
-fn journal_path(workspace: &Workspace) -> PathBuf {
-    forkspace_home().join("journal").join(format!(
-        "pull-{}-{}.json",
-        workspace.name, workspace.fork_time_ns
-    ))
-}
-
-fn save(path: &Path, journal: &PullJournal) -> Result {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).io_context(|| format!("create {}", parent.display()))?;
-    let temporary = path.with_extension("json.tmp");
-    fs::write(
-        &temporary,
-        serde_json::to_vec_pretty(journal)
-            .map_err(|error| ForkspaceError::Serialization(error.to_string()))?,
-    )
-    .io_context(|| format!("write {}", temporary.display()))?;
-    fs::File::open(&temporary)
-        .and_then(|file| file.sync_all())
-        .io_context(|| format!("sync {}", temporary.display()))?;
-    fs::rename(&temporary, path).io_context(|| format!("install {}", path.display()))?;
-    Ok(())
-}
-
-fn load(path: &Path) -> Result<PullJournal> {
-    serde_json::from_slice(&fs::read(path).io_context(|| format!("read {}", path.display()))?)
-        .map_err(|error| ForkspaceError::StateCorrupted(format!("invalid pull journal: {error}")))
-}
-
-fn apply_remaining(path: &Path, journal: &mut PullJournal) -> Result {
-    journal.phase = PullPhase::Applying;
-    save(path, journal)?;
-    while journal.next < journal.changes.len() {
-        merge_plan::apply_change(
-            &journal.source,
-            &journal.target,
-            &journal.changes[journal.next],
-            journal.next,
-            "pull",
-        )?;
-        journal.next += 1;
-        save(path, journal)?;
-    }
-    journal.phase = PullPhase::Applied;
-    save(path, journal)
-}
-
 pub fn start(workspace: &Workspace, plan: &PullPlan) -> Result<PathBuf> {
-    let path = journal_path(workspace);
-    let mut journal = PullJournal {
-        op: "pull".to_string(),
-        workspace: workspace.name.clone(),
-        source: plan.source.clone(),
-        target: plan.target.clone(),
-        changes: plan.changes.clone(),
-        next: 0,
-        phase: PullPhase::Planned,
-        fork_time_ns: workspace.fork_time_ns,
-    };
-    save(&path, &journal)?;
-    apply_remaining(&path, &mut journal)?;
-    Ok(path)
+    merge_plan::start_operation(
+        OperationKind::Pull,
+        &workspace.name,
+        plan.source.clone(),
+        plan.target.clone(),
+        plan.changes.clone(),
+        workspace.fork_time_ns,
+    )
 }
 
 pub fn resume_apply(workspace: &Workspace) -> Result<PathBuf> {
@@ -344,17 +250,24 @@ pub fn resume_apply(workspace: &Workspace) -> Result<PathBuf> {
             workspace.name
         ))
     })?;
-    let mut journal = load(&path)?;
-    if matches!(journal.phase, PullPhase::Planned | PullPhase::Applying) {
-        apply_remaining(&path, &mut journal)?;
+    let journal = merge_plan::load_journal(&path)?;
+    if journal.op != OperationKind::Pull {
+        return Err(ForkspaceError::StateCorrupted(format!(
+            "{} is not a pull journal",
+            path.display()
+        )));
+    }
+    if matches!(
+        journal.phase,
+        OperationPhase::Planned | OperationPhase::Applying
+    ) {
+        merge_plan::apply_remaining(&path)?;
     }
     Ok(path)
 }
 
 pub fn finish(workspace: &mut Workspace, path: &Path) -> Result {
-    let mut journal = load(path)?;
-    journal.phase = PullPhase::Rebaselining;
-    save(path, &journal)?;
+    merge_plan::set_operation_phase(path, OperationPhase::Rebaselining)?;
     let fork_time_ns = now_unix_ns();
     // The new ancestor is the current origin, not the possibly still-edited workspace.
     // This preserves ours-only edits in subsequent diff and merge results.
@@ -363,14 +276,12 @@ pub fn finish(workspace: &mut Workspace, path: &Path) -> Result {
     workspace.manifest_generation = workspace.manifest_generation.saturating_add(1);
     workspace.last_pull = Some(now_rfc3339());
     workspace.manifest_status = ManifestStatus::Ready;
-    save(path, &journal)
+    Ok(())
 }
 
 pub fn complete(path: &Path) -> Result {
-    let mut journal = load(path)?;
-    journal.phase = PullPhase::Done;
-    save(path, &journal)?;
-    fs::remove_file(path).io_context(|| format!("remove {}", path.display()))
+    merge_plan::set_operation_phase(path, OperationPhase::Done)?;
+    merge_plan::finish(path)
 }
 
 pub fn find_open_journal(workspace: &str) -> Result<Option<PathBuf>> {
@@ -388,8 +299,11 @@ pub fn find_open_journal(workspace: &str) -> Result<Option<PathBuf>> {
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".json"))
         {
-            let journal = load(&path)?;
-            if journal.phase != PullPhase::Done {
+            let journal = merge_plan::load_journal(&path)?;
+            if journal.op != OperationKind::Pull {
+                continue;
+            }
+            if journal.phase != OperationPhase::Done {
                 return Ok(Some(path));
             }
             let _ = fs::remove_file(&path);

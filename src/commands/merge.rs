@@ -83,6 +83,7 @@ pub fn exec(args: MergeArgs) -> Result {
             )?;
         }
         if let Some(journal) = &journal {
+            merge_plan::set_operation_phase(journal, merge_plan::OperationPhase::Done)?;
             merge_plan::finish(journal)?;
         }
 
