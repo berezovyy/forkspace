@@ -3,6 +3,7 @@ mod common;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::process::Command;
 
 use forkspace::backend::{BackendKind, BackendState};
 use forkspace::diff::collect_clone_changes;
@@ -193,4 +194,155 @@ fn building_refuses_and_dirty_rows_are_ancestor_unknown_not_conflicts() {
         plan.ancestor_unknown,
         vec![std::path::PathBuf::from("raced")]
     );
+}
+
+#[test]
+#[serial]
+fn selected_directory_backend_round_trips_through_the_public_cli() {
+    let home = common::setup_test_env();
+    let inherited_backend = std::env::var_os("FORKSPACE_BACKEND");
+    if inherited_backend.is_none() {
+        unsafe { std::env::set_var("FORKSPACE_BACKEND", "copy") };
+    }
+    let base = tempfile::tempdir().unwrap();
+    fs::write(base.path().join("edit"), b"old\n").unwrap();
+    fs::write(base.path().join("delete"), b"old\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+        .env("FORKSPACE_HOME", home.path())
+        .args([
+            "fork",
+            base.path().to_str().unwrap(),
+            "--name",
+            "primitive-parity",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let workspace = forkspace::state::State::load()
+        .unwrap()
+        .workspaces
+        .get("primitive-parity")
+        .unwrap()
+        .clone();
+    assert!(matches!(
+        workspace.backend_kind,
+        BackendKind::MacClone | BackendKind::LinuxReflink | BackendKind::PlainCopy
+    ));
+    fs::write(workspace.view_path.join("edit"), b"new\n").unwrap();
+    fs::write(workspace.view_path.join("add"), b"new\n").unwrap();
+    fs::remove_file(workspace.view_path.join("delete")).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+        .env("FORKSPACE_HOME", home.path())
+        .args(["merge", "primitive-parity", "--no-install"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read(base.path().join("edit")).unwrap(), b"new\n");
+    assert_eq!(fs::read(base.path().join("add")).unwrap(), b"new\n");
+    assert!(!base.path().join("delete").exists());
+    if inherited_backend.is_none() {
+        unsafe { std::env::remove_var("FORKSPACE_BACKEND") };
+    }
+}
+
+#[test]
+#[serial]
+fn installer_failure_keeps_the_applied_journal_resumable_and_never_drops() {
+    let home = common::setup_test_env();
+    let base = tempfile::tempdir().unwrap();
+    fs::write(base.path().join("source"), b"old\n").unwrap();
+    fs::write(
+        base.path().join("package.json"),
+        br#"{"name":"merge-fixture","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    fs::write(
+        base.path().join("package-lock.json"),
+        br#"{"lockfileVersion":3,"packages":{"":{}}}"#,
+    )
+    .unwrap();
+    let forked = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+        .env("FORKSPACE_HOME", home.path())
+        .args([
+            "fork",
+            base.path().to_str().unwrap(),
+            "--name",
+            "install-failure",
+            "--copy",
+        ])
+        .output()
+        .unwrap();
+    assert!(forked.status.success());
+    let view = forkspace::state::State::load()
+        .unwrap()
+        .require_workspace("install-failure")
+        .unwrap()
+        .view_path
+        .clone();
+    fs::write(view.join("source"), b"new\n").unwrap();
+    fs::write(
+        view.join("package-lock.json"),
+        br#"{"lockfileVersion":3,"packages":{"":{},"node_modules/zod":{}}}"#,
+    )
+    .unwrap();
+
+    let tools = tempfile::tempdir().unwrap();
+    let npm = tools.path().join("npm");
+    fs::write(&npm, "#!/bin/sh\nexit 23\n").unwrap();
+    fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let failed = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+        .env("FORKSPACE_HOME", home.path())
+        .env("PATH", &path)
+        .args(["merge", "install-failure", "--drop"])
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("package manager failed"));
+    assert_eq!(fs::read(base.path().join("source")).unwrap(), b"new\n");
+    assert!(forkspace::state::State::load()
+        .unwrap()
+        .workspaces
+        .contains_key("install-failure"));
+    assert!(fs::read_dir(home.path().join("journal"))
+        .unwrap()
+        .any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("merge-install-failure-")));
+
+    fs::write(&npm, "#!/bin/sh\nexit 0\n").unwrap();
+    let resumed = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+        .env("FORKSPACE_HOME", home.path())
+        .env("PATH", path)
+        .args(["merge", "install-failure", "--resume", "--drop"])
+        .output()
+        .unwrap();
+    assert!(
+        resumed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    assert!(!forkspace::state::State::load()
+        .unwrap()
+        .workspaces
+        .contains_key("install-failure"));
+    assert!(fs::read_dir(home.path().join("journal"))
+        .map(|mut entries| entries.next().is_none())
+        .unwrap_or(true));
 }

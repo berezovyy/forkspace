@@ -103,6 +103,7 @@ fn fake_backend_passes_workspace_contract() {
         base: root.path().to_path_buf(),
         tmpfs: false,
         tmpfs_size: None,
+        copy: false,
     };
 
     backend.preflight(root.path()).unwrap();
@@ -161,6 +162,15 @@ fn recorded_other_platform_backend_is_unavailable() {
     let message = error.to_string();
     assert!(message.contains("mac-clone"));
     assert!(message.contains("macOS"));
+}
+
+#[test]
+#[serial]
+fn recorded_backend_is_sticky_even_when_the_debug_override_changes() {
+    unsafe { std::env::set_var("FORKSPACE_BACKEND", "linux") };
+    let selected = select_backend(Some(BackendKind::PlainCopy)).unwrap();
+    assert_eq!(selected.kind(), BackendKind::PlainCopy);
+    unsafe { std::env::remove_var("FORKSPACE_BACKEND") };
 }
 
 #[test]

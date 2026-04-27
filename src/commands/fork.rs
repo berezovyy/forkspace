@@ -79,12 +79,14 @@ pub fn create_workspace_with_copy(
         base: resolved_base.clone(),
         tmpfs,
         tmpfs_size: size,
+        copy: force_copy,
     };
     let intent = PendingCreate {
         name: name.to_string(),
         path: pending_create_path(backend.kind(), name),
         backend_kind: backend.kind(),
         pid: std::process::id(),
+        identity: crate::process_watch::identity(std::process::id()),
         unknown_fields: serde_json::Map::new(),
     };
     State::with_state(|state| {
@@ -218,6 +220,12 @@ pub fn exec(args: crate::cli::ForkArgs) -> Result {
         } else if ws.backend_kind == crate::backend::BackendKind::LinuxReflink {
             eprintln!("note: {reason}");
         }
+    }
+    if std::env::var_os("FORKSPACE_BACKEND").is_some() {
+        eprintln!(
+            "note: FORKSPACE_BACKEND override selected '{}'",
+            ws.backend_kind.as_str()
+        );
     }
     println!(
         "created workspace '{}' from {}",

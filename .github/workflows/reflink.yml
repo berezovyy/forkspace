@@ -13,19 +13,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test backend_probe --test diff_parity --test merge_parity
+      - run: FORKSPACE_BACKEND=copy cargo test --test backend_probe --test diff_parity --test merge_parity -- --test-threads=1
 
   linux-reflink:
+    strategy:
+      matrix:
+        filesystem: [btrfs, xfs]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Create Btrfs loop volume
+      - name: Install filesystem tools
+        run: sudo apt-get update && sudo apt-get install -y btrfs-progs xfsprogs
+      - name: Create reflink loop volume
         run: |
-          sudo apt-get update && sudo apt-get install -y btrfs-progs
-          truncate -s 2G /tmp/forkspace-btrfs.img
-          mkfs.btrfs -f /tmp/forkspace-btrfs.img
-          sudo mkdir -p /mnt/forkspace-btrfs
-          sudo mount -o loop /tmp/forkspace-btrfs.img /mnt/forkspace-btrfs
-          sudo chown "$USER" /mnt/forkspace-btrfs
-      - run: FORKSPACE_HOME=/mnt/forkspace-btrfs/home cargo test --test backend_probe --test diff_parity --test merge_parity
+          truncate -s 2G /tmp/forkspace-reflink.img
+          if [ "${{ matrix.filesystem }}" = btrfs ]; then
+            mkfs.btrfs -f /tmp/forkspace-reflink.img
+          else
+            mkfs.xfs -f -m reflink=1 /tmp/forkspace-reflink.img
+          fi
+          sudo mkdir -p /mnt/forkspace-reflink
+          sudo mount -o loop /tmp/forkspace-reflink.img /mnt/forkspace-reflink
+          sudo chown "$USER" /mnt/forkspace-reflink
+          mkdir -p /mnt/forkspace-reflink/tmp
+      - name: Run reflink probe and parity suites on the mounted volume
+        run: |
+          mkdir -p /mnt/forkspace-reflink/mixed-base/sub
+          sudo mount -t tmpfs -o size=16m tmpfs /mnt/forkspace-reflink/mixed-base/sub
+          trap 'sudo umount /mnt/forkspace-reflink/mixed-base/sub' EXIT
+          TMPDIR=/mnt/forkspace-reflink/tmp \
+          FORKSPACE_TEST_REFLINK_ROOT=/mnt/forkspace-reflink \
+          FORKSPACE_TEST_MIXED_BASE=/mnt/forkspace-reflink/mixed-base \
+          FORKSPACE_BACKEND=linux-reflink \
+          cargo test --test backend_probe --test diff_parity --test merge_parity -- --test-threads=1

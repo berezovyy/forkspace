@@ -165,20 +165,73 @@ fn manifest_metadata_uses_nanosecond_precision() {
 fn stacking_semantics_are_a_backend_property() {
     assert!(!BackendKind::Linux.stacking_is_snapshot());
     assert!(BackendKind::MacClone.stacking_is_snapshot());
+    assert!(BackendKind::LinuxReflink.stacking_is_snapshot());
+    assert!(BackendKind::PlainCopy.stacking_is_snapshot());
+}
+
+#[test]
+#[serial]
+fn copy_stack_is_a_snapshot_and_merges_exactly_one_level_at_a_time() {
+    let home = common::setup_test_env();
+    let base = tempfile::tempdir().unwrap();
+    fs::write(base.path().join("file"), b"root\n").unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(run(&[
+        "fork",
+        base.path().to_str().unwrap(),
+        "--name",
+        "parent",
+        "--copy"
+    ])
+    .status
+    .success());
+    let parent_view = forkspace::state::State::load().unwrap().workspaces["parent"]
+        .view_path
+        .clone();
+    fs::write(parent_view.join("file"), b"before-child\n").unwrap();
+    assert!(run(&["fork", "parent", "--name", "child", "--copy"])
+        .status
+        .success());
+    let child_view = forkspace::state::State::load().unwrap().workspaces["child"]
+        .view_path
+        .clone();
+    fs::write(parent_view.join("file"), b"after-child\n").unwrap();
+    assert_eq!(
+        fs::read(child_view.join("file")).unwrap(),
+        b"before-child\n"
+    );
+    fs::write(child_view.join("child-only"), b"child\n").unwrap();
+
+    assert!(run(&["merge", "child", "--no-install", "--quiet"])
+        .status
+        .success());
+    assert_eq!(
+        fs::read(parent_view.join("child-only")).unwrap(),
+        b"child\n"
+    );
+    assert!(!base.path().join("child-only").exists());
+    assert!(run(&["merge", "parent", "--no-install", "--quiet"])
+        .status
+        .success());
+    assert_eq!(
+        fs::read(base.path().join("file")).unwrap(),
+        b"after-child\n"
+    );
+    assert_eq!(
+        fs::read(base.path().join("child-only")).unwrap(),
+        b"child\n"
+    );
 }
 
 #[test]
 #[serial]
 fn cross_platform_mutation_script_has_one_normalized_json_truth() {
-    #[cfg(target_os = "linux")]
-    if let Err(reason) = forkspace::overlay::probe_fuse_overlayfs() {
-        eprintln!(
-            "FORKSPACE_TEST_SKIP {{\"capability\":\"fuse-overlayfs\",\"reason\":{}}}",
-            serde_json::to_string(&reason).unwrap()
-        );
-        return;
-    }
-
     let home = common::setup_test_env();
     let base = tempfile::tempdir().unwrap();
     for name in [

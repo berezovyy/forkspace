@@ -1,1 +1,1 @@
-unsupported capability: base and workspace root are on different volumes; set FORKSPACE_HOME to an APFS directory on the base volume
+unsupported capability: base and workspace root are on different volumes; move the project and FORKSPACE_HOME to the same APFS volume, or pass --copy to accept a full copy

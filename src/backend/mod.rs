@@ -2,6 +2,7 @@
 mod clone;
 mod cow;
 mod linux;
+pub mod prim;
 pub mod probe;
 
 use std::path::{Path, PathBuf};
@@ -17,7 +18,7 @@ use crate::workspace::Workspace;
 
 #[cfg(target_os = "macos")]
 pub use clone::CloneBackend;
-pub use cow::CowDirBackend;
+pub use cow::{CowDirBackend, Degradation, ForkPrimitive, ForkStats, ForkTimePolicy, ProbeResult};
 pub use linux::{LinuxBackend, LinuxBackendState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +89,7 @@ pub struct CreateReq {
     pub base: PathBuf,
     pub tmpfs: bool,
     pub tmpfs_size: Option<String>,
+    pub copy: bool,
 }
 
 pub struct ViewInfo {
@@ -142,30 +144,42 @@ fn unavailable(kind: BackendKind) -> ForkspaceError {
 }
 
 pub fn select_backend(recorded: Option<BackendKind>) -> Result<Box<dyn WorkspaceBackend>> {
-    let requested = match std::env::var("FORKSPACE_BACKEND") {
-        Ok(value) => {
-            BackendKind::parse(&value).ok_or_else(|| ForkspaceError::BackendUnavailable {
-                diagnosis: format!("unknown backend '{value}'"),
-                remedy: "use 'linux' or 'mac-clone' for debug overrides".to_string(),
-            })?
-        }
-        Err(_) => recorded.unwrap_or({
-            if cfg!(target_os = "macos") {
-                BackendKind::MacClone
-            } else {
-                BackendKind::Linux
+    let requested = match recorded {
+        Some(kind) => kind,
+        None => match std::env::var("FORKSPACE_BACKEND") {
+            Ok(value) => {
+                BackendKind::parse(&value).ok_or_else(|| ForkspaceError::BackendUnavailable {
+                    diagnosis: format!("unknown backend '{value}'"),
+                    remedy:
+                        "use 'linux', 'mac-clone', 'linux-reflink', or 'copy' for debug overrides"
+                            .to_string(),
+                })?
             }
-        }),
+            Err(_) => {
+                if cfg!(target_os = "macos") {
+                    BackendKind::MacClone
+                } else {
+                    BackendKind::Linux
+                }
+            }
+        },
     };
 
     match requested {
         BackendKind::Linux if cfg!(target_os = "linux") => Ok(Box::new(LinuxBackend::new())),
         #[cfg(target_os = "macos")]
-        BackendKind::MacClone => Ok(Box::new(CloneBackend::new())),
+        BackendKind::MacClone => Ok(Box::new(CloneBackend::new(prim::ClonefilePrim))),
         BackendKind::LinuxReflink if cfg!(target_os = "linux") => {
-            Ok(Box::new(CowDirBackend::new(BackendKind::LinuxReflink)))
+            #[cfg(target_os = "linux")]
+            {
+                Ok(Box::new(CowDirBackend::new(prim::ReflinkPrim)))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                unreachable!()
+            }
         }
-        BackendKind::PlainCopy => Ok(Box::new(CowDirBackend::new(BackendKind::PlainCopy))),
+        BackendKind::PlainCopy => Ok(Box::new(CowDirBackend::new(prim::CopyPrim))),
         kind => Err(unavailable(kind)),
     }
 }
@@ -175,30 +189,34 @@ pub fn select_backend_for_create(
     force_copy: bool,
 ) -> Result<Box<dyn WorkspaceBackend>> {
     if force_copy {
-        return Ok(Box::new(CowDirBackend::new(BackendKind::PlainCopy)));
+        return Ok(Box::new(CowDirBackend::new(prim::CopyPrim)));
     }
     if std::env::var_os("FORKSPACE_BACKEND").is_some() {
         return select_backend(None);
     }
     #[cfg(target_os = "linux")]
     {
-        if crate::overlay::probe_fuse_overlayfs().is_ok() {
-            return Ok(Box::new(LinuxBackend::new()));
+        let report = probe::linux_report(base, &crate::util::forkspace_home().join("workspaces"));
+        match report.winner() {
+            Some(BackendKind::Linux) => Ok(Box::new(LinuxBackend::new())),
+            Some(BackendKind::LinuxReflink) => Ok(Box::new(CowDirBackend::new(prim::ReflinkPrim))),
+            Some(BackendKind::PlainCopy) => Ok(Box::new(CowDirBackend::new(prim::CopyPrim))),
+            _ => Err(ForkspaceError::BackendUnavailable {
+                diagnosis: "no workspace materialization primitive passed its capability probe"
+                    .to_string(),
+                remedy: "ensure FORKSPACE_HOME is writable and retry".to_string(),
+            }),
         }
-        if probe::reflink_supported(base, &crate::util::forkspace_home().join("workspaces")) {
-            return Ok(Box::new(CowDirBackend::new(BackendKind::LinuxReflink)));
-        }
-        Ok(Box::new(CowDirBackend::new(BackendKind::PlainCopy)))
     }
     #[cfg(target_os = "macos")]
     {
         let _ = base;
-        Ok(Box::new(CloneBackend::new()))
+        Ok(Box::new(CloneBackend::new(prim::ClonefilePrim)))
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = base;
-        Ok(Box::new(CowDirBackend::new(BackendKind::PlainCopy)))
+        Ok(Box::new(CowDirBackend::new(prim::CopyPrim)))
     }
 }
 
