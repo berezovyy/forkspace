@@ -79,6 +79,20 @@ pub fn exec(args: LandArgs) -> Result {
             });
         }
 
+        let base_tip = git::rev_parse(&base, "HEAD")?;
+        let external =
+            git::external_object_changes(&workspace.view_path, &base_tip, &source_branch)?;
+        if !external.is_empty() {
+            return Err(ForkspaceError::CapabilityUnsupported {
+                diagnosis: format!(
+                    "land would publish external objects: {}",
+                    external.join(", ")
+                ),
+                remedy: "publish Git LFS objects and submodule commits first, or use `forkspace merge` for file-level transfer"
+                    .to_string(),
+            });
+        }
+
         git::prune_staging_refs(&base);
         let staging = format!("refs/forkspace/land/{}", workspace.name);
         git::fetch_refspec(&base, &workspace.view_path, &source_branch, &staging)?;
@@ -86,7 +100,6 @@ pub fn exec(args: LandArgs) -> Result {
             let tip = git::rev_parse(&base, &staging)?;
             let target = format!("refs/heads/{target_branch}");
             if !git::ref_exists(&base, &target) {
-                let base_tip = git::rev_parse(&base, "HEAD")?;
                 let count = git::commit_count(&base, &format!("{base_tip}..{tip}"))?;
                 git::update_ref(&base, &target, &tip)?;
                 return Ok(format!("created '{target_branch}' ({count} commits)"));

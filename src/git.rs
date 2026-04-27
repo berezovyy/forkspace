@@ -146,6 +146,41 @@ pub fn log_oneline(directory: &Path, range: &str) -> Result<String> {
     capture_git(directory, &["log", "--oneline", range])
 }
 
+pub fn external_object_changes(
+    directory: &Path,
+    base_tip: &str,
+    source_branch: &str,
+) -> Result<Vec<String>> {
+    let range = format!("{base_tip}..{source_branch}");
+    let raw = capture_git(directory, &["diff", "--raw", "--no-renames", &range])?;
+    let mut external = Vec::new();
+    for line in raw.lines() {
+        let Some((header, path)) = line.split_once('\t') else {
+            continue;
+        };
+        let fields: Vec<_> = header.split_whitespace().collect();
+        if fields.len() < 5 || fields[4].starts_with('D') {
+            continue;
+        }
+        if fields[1] == "160000" {
+            external.push(format!("submodule {path}"));
+            continue;
+        }
+        let object = format!("{source_branch}:{path}");
+        let output = capture_output(directory, &["show", &object]).map_err(|error| {
+            ForkspaceError::GitFailed(format!("failed to inspect landed object {path}: {error}"))
+        })?;
+        if output.status.success()
+            && output
+                .stdout
+                .starts_with(b"version https://git-lfs.github.com/spec/v1\n")
+        {
+            external.push(format!("Git LFS pointer {path}"));
+        }
+    }
+    Ok(external)
+}
+
 pub fn default_branch(directory: &Path) -> String {
     if let Ok(value) = capture_git(
         directory,
