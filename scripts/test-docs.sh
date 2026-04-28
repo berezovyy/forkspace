@@ -74,8 +74,13 @@ for relative, test in evidence:
     if re.search(rf"\bfn\s+{re.escape(test)}\s*\(", source) is None:
         raise SystemExit(f"missing matrix evidence {relative}::{test}")
 
-readme = (repo / "README.md").read_text().splitlines()
-competitive = [line for line in readme if line.startswith("| **")][:6]
+readme = (repo / "README.md").read_text()
+competitive_section = readme.split("## Why forkspace?", 1)[1].split("## Quick start", 1)[0]
+competitive = [
+    line
+    for line in competitive_section.splitlines()
+    if line.startswith("|") and ":---" not in line and "`cp -r`" not in line
+]
 if len(competitive) != 6 or any("](" not in line for line in competitive):
     raise SystemExit("every competitive-table row must link its evidence")
 PY
