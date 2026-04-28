@@ -1,0 +1,7 @@
+merge plan for 'review': 4 files
+  modify edited
+  delete gone.test.ts
+  add new-file
+  modify package-lock.json
+ancestor unknown: new-file
+signals: +1 dependency (left-pad) · 1 new / 1 edited · 1 test file deleted

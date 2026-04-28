@@ -251,9 +251,17 @@ pub fn render(signals: &Signals) -> Option<String> {
         ));
     }
     if signals.tests_deleted > 0 {
-        segments.push(format!("{} test files deleted", signals.tests_deleted));
+        segments.push(format!(
+            "{} test file{} deleted",
+            signals.tests_deleted,
+            if signals.tests_deleted == 1 { "" } else { "s" }
+        ));
     } else if signals.tests_touched > 0 {
-        segments.push(format!("{} test files touched", signals.tests_touched));
+        segments.push(format!(
+            "{} test file{} touched",
+            signals.tests_touched,
+            if signals.tests_touched == 1 { "" } else { "s" }
+        ));
     }
     (!segments.is_empty()).then(|| format!("signals: {}", segments.join(" · ")))
 }

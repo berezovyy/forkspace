@@ -20,7 +20,6 @@ pub struct CompareRow {
     pub deleted: usize,
     pub dependencies: Signals,
     pub tests: usize,
-    #[serde(skip)]
     pub changes: BTreeMap<PathBuf, ChangeKind>,
 }
 

@@ -1,0 +1,5 @@
+PATH  a  b  c
+all  M  M  M
+delete  -  -  D
+only-a  A  -  -
+partial  M  M  -

@@ -1,0 +1,10 @@
+BASE  <FORKSPACE_HOME>/compare-base   3 workspaces, same base
+
+WORKSPACE  SOURCE          DEPS  TESTS
+a          1+ 2~ 0-   +0    0
+b          0+ 2~ 0-   +0    0
+c          0+ 1~ 1-   +0    0
+contested (all 3): all
+unique to a: only-a
+unique to c: delete
+1 paths touched by some but not all — use --files

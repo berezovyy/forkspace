@@ -1,0 +1,1 @@
+workspace 'c' has comparison base <BASE-2>, expected <BASE-1>; cross-base columns would be misleading

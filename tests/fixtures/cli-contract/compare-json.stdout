@@ -18,7 +18,12 @@
         "tests_touched": 0,
         "tests_deleted": 0
       },
-      "tests": 0
+      "tests": 0,
+      "changes": {
+        "all": "modified",
+        "only-a": "added",
+        "partial": "modified"
+      }
     },
     {
       "workspace": "b",
@@ -37,7 +42,11 @@
         "tests_touched": 0,
         "tests_deleted": 0
       },
-      "tests": 0
+      "tests": 0,
+      "changes": {
+        "all": "modified",
+        "partial": "modified"
+      }
     },
     {
       "workspace": "c",
@@ -56,7 +65,11 @@
         "tests_touched": 0,
         "tests_deleted": 0
       },
-      "tests": 0
+      "tests": 0,
+      "changes": {
+        "all": "modified",
+        "delete": "deleted"
+      }
     }
   ],
   "contested": [
