@@ -6,9 +6,31 @@ use crate::util::{forkspace_home, IoContext};
 
 const SWEEP_LIMIT: usize = 128;
 
+pub fn start_trash_removals() {
+    let root = forkspace_home().join("trash");
+    let Ok(entries) = fs::read_dir(&root) else {
+        return;
+    };
+    for path in entries
+        .take(SWEEP_LIMIT)
+        .filter_map(|entry| entry.ok().map(|value| value.path()))
+    {
+        let _ = std::process::Command::new("rm")
+            .args(["-rf", "--"])
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+}
+
 fn journal_terminal(value: &serde_json::Value) -> bool {
     match value.get("op").and_then(|value| value.as_str()) {
         Some("merge") => {
+            if let Some(phase) = value.get("phase").and_then(|value| value.as_str()) {
+                return phase == "done";
+            }
             let next = value.get("next").and_then(|value| value.as_u64());
             let total = value
                 .get("changes")

@@ -53,6 +53,8 @@ pub(crate) struct PendingCreate {
     pub path: std::path::PathBuf,
     pub backend_kind: BackendKind,
     pub pid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
     #[serde(flatten)]
     pub unknown_fields: Map<String, Value>,
 }
@@ -254,7 +256,7 @@ impl State {
         changed |= crate::reconcile::sweep_terminal_journals()?;
         let mut retained = Vec::new();
         for pending in self.pending_creates.drain(..) {
-            if crate::util::is_pid_alive(pending.pid) {
+            if crate::process_watch::is_alive(pending.pid, pending.identity.as_deref()) {
                 retained.push(pending);
                 continue;
             }
@@ -281,16 +283,50 @@ impl State {
         }
         self.pending_creates = retained;
 
+        let interrupted_drops: Vec<_> = self
+            .workspaces
+            .values()
+            .filter(|workspace| {
+                if workspace.view_path.exists() {
+                    return false;
+                }
+                let prefix = format!("{}-{}-", workspace.name, workspace.fork_time_ns);
+                fs::read_dir(&trash_root).is_ok_and(|entries| {
+                    entries.take(128).flatten().any(|entry| {
+                        entry
+                            .file_name()
+                            .to_str()
+                            .is_some_and(|name| name.starts_with(&prefix))
+                    })
+                })
+            })
+            .map(|workspace| workspace.name.clone())
+            .collect();
+        for name in interrupted_drops {
+            self.workspaces.remove(&name);
+            let _ = crate::manifest::remove(&name);
+            changed = true;
+        }
+
         let manifest_root = forkspace_home().join("manifests");
         if let Ok(entries) = fs::read_dir(&manifest_root) {
             for path in entries
                 .take(128)
                 .filter_map(|entry| entry.ok().map(|value| value.path()))
             {
-                if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+                let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
                     continue;
-                }
-                let Some(name) = path.file_stem().and_then(|value| value.to_str()) else {
+                };
+                let (name, writer_pid, installed) = if let Some(name) = file_name
+                    .strip_prefix('.')
+                    .and_then(|value| value.split_once(".jsonl.tmp-"))
+                {
+                    (name.0, name.1.parse::<u32>().ok(), false)
+                } else if let Some(name) = file_name.strip_suffix(".jsonl.new") {
+                    (name, None, false)
+                } else if let Some(name) = file_name.strip_suffix(".jsonl") {
+                    (name, None, true)
+                } else {
                     continue;
                 };
                 let owned = self.workspaces.contains_key(name)
@@ -298,7 +334,8 @@ impl State {
                         .pending_creates
                         .iter()
                         .any(|pending| pending.name == name);
-                if !owned && fs::remove_file(&path).is_ok() {
+                let live_writer = writer_pid.is_some_and(crate::util::is_pid_alive);
+                if ((!installed && !live_writer) || !owned) && fs::remove_file(&path).is_ok() {
                     changed = true;
                 }
             }
@@ -324,19 +361,12 @@ impl State {
                 changed = true;
                 return false;
             }
-            let _ = std::process::Command::new("rm")
-                .args(["-rf", "--"])
-                .arg(&record.path)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
             true
         });
         Ok(changed)
     }
 
-    pub fn load() -> Result<State> {
+    fn load_unlocked() -> Result<State> {
         let path = forkspace_home().join("state.json");
         recover_interrupted_migration(&path)?;
         if !path.exists() {
@@ -386,6 +416,12 @@ impl State {
         if state.version <= CURRENT_VERSION && state.reconcile_runtime()? {
             state.save()?;
         }
+        Ok(state)
+    }
+
+    pub fn load() -> Result<State> {
+        let state = Self::with_lock(Self::load_unlocked)?;
+        crate::reconcile::start_trash_removals();
         Ok(state)
     }
 
@@ -513,12 +549,14 @@ impl State {
     where
         F: FnOnce(&mut State) -> Result<R>,
     {
-        State::with_lock(|| {
-            let mut state = State::load()?;
+        let result = State::with_lock(|| {
+            let mut state = State::load_unlocked()?;
             let result = f(&mut state)?;
             state.save()?;
             Ok(result)
-        })
+        })?;
+        crate::reconcile::start_trash_removals();
+        Ok(result)
     }
 
     pub fn require_workspace(&self, name: &str) -> Result<&Workspace> {

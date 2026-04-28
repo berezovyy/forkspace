@@ -117,7 +117,18 @@ mod macos {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/macos-clone")
             .join(format!("{name}.stderr"));
-        assert_eq!(format!("{error}\n"), fs::read_to_string(fixture).unwrap());
+        let mut rendered = format!("{error}\n");
+        if name == "non-apfs" {
+            let prefix = "backend unavailable: ";
+            let marker = "; APFS clones are unavailable there";
+            if let Some((_, tail)) = rendered
+                .strip_prefix(prefix)
+                .and_then(|value| value.split_once(marker))
+            {
+                rendered = format!("{prefix}<BASE> is <FILESYSTEM>{marker}{tail}");
+            }
+        }
+        assert_eq!(rendered, fs::read_to_string(fixture).unwrap());
         assert_eq!(
             error.exit_code().to_string(),
             fs::read_to_string(
@@ -205,6 +216,125 @@ mod macos {
                 "FORKSPACE_TEST_SKIP {{\"capability\":\"node\",\"reason\":\"node executable unavailable\"}}"
             );
         }
+    }
+
+    #[test]
+    #[serial]
+    fn apfs_clone_preserves_quarantine_and_custom_extended_attributes() {
+        if !command_exists("xattr") {
+            eprintln!(
+                "FORKSPACE_TEST_SKIP {{\"capability\":\"xattr\",\"reason\":\"xattr executable unavailable\"}}"
+            );
+            return;
+        }
+        let (_home, base) = setup();
+        let file = base.path().join("downloaded");
+        fs::write(&file, b"payload\n").unwrap();
+        let quarantine = "0081;00000000;forkspace-tests;00000000-0000-0000-0000-000000000000";
+        for (name, value) in [
+            ("com.apple.quarantine", quarantine),
+            ("com.forkspace.fixture", "preserved"),
+        ] {
+            let output = Command::new("xattr")
+                .args(["-w", name, value])
+                .arg(&file)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let workspace = fork(base.path(), "xattrs");
+        for (name, expected) in [
+            ("com.apple.quarantine", quarantine),
+            ("com.forkspace.fixture", "preserved"),
+        ] {
+            let output = Command::new("xattr")
+                .args(["-p", name])
+                .arg(workspace.view_path.join("downloaded"))
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn normalization_case_non_utf8_and_long_paths_do_not_duplicate_or_disappear() {
+        let (_home, base) = setup();
+        let nfc = "caf\u{e9}";
+        let nfd = "cafe\u{301}";
+        fs::write(base.path().join(nfc), b"old\n").unwrap();
+        assert!(base.path().join(nfd).exists());
+        let non_utf8 = std::ffi::OsString::from_vec(b"raw-\xff".to_vec());
+        if let Err(error) = fs::write(base.path().join(&non_utf8), b"old\n") {
+            eprintln!(
+                "FORKSPACE_TEST_SKIP {{\"capability\":\"non-utf8-filename\",\"reason\":{}}}",
+                serde_json::to_string(&error.to_string()).unwrap()
+            );
+            return;
+        }
+        let long = (0..30)
+            .map(|index| format!("segment-{index:02}-abcdefghijklmnop"))
+            .collect::<std::path::PathBuf>();
+        fs::create_dir_all(base.path().join(&long).parent().unwrap()).unwrap();
+        fs::write(base.path().join(&long), b"old\n").unwrap();
+
+        let case_probe = base.path().join("CaseProbe");
+        fs::write(&case_probe, b"case\n").unwrap();
+        let case_insensitive = base.path().join("caseprobe").exists();
+        let workspace = fork(base.path(), "names");
+        let workspace = wait_for_manifest(&workspace.name);
+        fs::write(workspace.view_path.join(nfd), b"new\n").unwrap();
+        fs::write(workspace.view_path.join(&non_utf8), b"new\n").unwrap();
+        fs::write(workspace.view_path.join(&long), b"new\n").unwrap();
+        if case_insensitive {
+            fs::write(workspace.view_path.join("caseprobe"), b"new\n").unwrap();
+        } else {
+            eprintln!(
+                "FORKSPACE_TEST_SKIP {{\"capability\":\"case-insensitive-apfs\",\"reason\":\"test volume is case-sensitive\"}}"
+            );
+        }
+        let changes = select_backend(Some(BackendKind::MacClone))
+            .unwrap()
+            .changes(&workspace, true, false)
+            .unwrap();
+        assert_eq!(
+            changes
+                .iter()
+                .filter(|change| {
+                    change.path.as_os_str().as_bytes() == nfc.as_bytes()
+                        || change.path.as_os_str().as_bytes() == nfd.as_bytes()
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            changes
+                .iter()
+                .filter(|change| change.path.as_os_str() == non_utf8)
+                .count(),
+            1
+        );
+        let merged = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env(
+                "FORKSPACE_HOME",
+                std::env::var_os("FORKSPACE_HOME").unwrap(),
+            )
+            .args(["merge", "names", "--no-install", "--quiet"])
+            .output()
+            .unwrap();
+        assert!(
+            merged.status.success(),
+            "{}",
+            String::from_utf8_lossy(&merged.stderr)
+        );
+        assert_eq!(fs::read(base.path().join(nfc)).unwrap(), b"new\n");
+        assert_eq!(fs::read(base.path().join(&non_utf8)).unwrap(), b"new\n");
+        assert_eq!(fs::read(base.path().join(&long)).unwrap(), b"new\n");
     }
 
     #[test]
@@ -1166,9 +1296,9 @@ http.server.ThreadingHTTPServer(('127.0.0.1',int(os.environ['PORT'])),H).serve_f
                 .preflight(Path::new(&base))
                 .unwrap_err();
             assert_preflight_golden("non-apfs", &error);
-            assert_eq!(error.exit_code(), 6);
+            assert_eq!(error.exit_code(), 7);
             let message = error.to_string();
-            assert!(message.contains("not on an APFS"));
+            assert!(message.contains("APFS clones are unavailable"));
             assert!(!message.contains('\n'));
             assert!(!message.contains("FUSE"));
             assert!(!message.contains("brew"));
