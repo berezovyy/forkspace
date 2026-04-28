@@ -29,12 +29,12 @@ honest full-copy floor automatically. Project writes are isolated; host-global c
 
 |                         |  `cp -r`  |  Docker   | Git Worktree |   **forkspace**   |
 | :---------------------- | :-------: | :-------: | :----------: | :-----------: |
-| **Speed**               |   Slow    |   Slow    |     Fast     | **Backend-dependent** |
-| `.env` / `node_modules` |    Yes    |    No     |      No      |    **Yes**    |
-| **Isolation**           |   Full    |   Full    |   Partial    | **Project-local** |
-| **Disk usage**          | Full copy | Full copy |   Partial    | **CoW or disclosed copy** |
-| **Root required**       |    No     |   Often   |      No      |    **No**     |
-| **Cleanup**             |  Manual   |  Manual   |    Manual    | `forkspace drop`  |
+| **Speed**               |   Slow    |   Slow    |     Fast     | [**Backend-dependent**](docs/benchmarks.md) |
+| `.env` / `node_modules` |    Yes    |    No     |      No      | [**Yes**](docs/workspace-contract.md) |
+| **Isolation**           |   Full    |   Full    |   Partial    | [**Project-local**](docs/macos-limitations.md) |
+| **Disk usage**          | Full copy | Full copy |   Partial    | [**CoW or disclosed copy**](docs/platform-parity.md) |
+| **Root required**       |    No     |   Often   |      No      | [**No**](docs/platform-parity.md) |
+| **Cleanup**             |  Manual   |  Manual   |    Manual    | [`forkspace drop`](docs/cli-reference.md) |
 
 <br/>
 
@@ -42,16 +42,14 @@ honest full-copy floor automatically. Project writes are isolated; host-global c
 
 ```bash
 forkspace fork . --name experiment     # backend selected automatically
-forkspace enter experiment             # opens a shell inside the workspace
-
-# make changes, break things, go wild
-# ...then exit the shell
+forkspace enter experiment -- npm install
+forkspace enter experiment -- sh -c 'mkdir -p src && printf "experiment\n" > src/experiment.txt'
 
 forkspace diff experiment              # see what changed
 forkspace diff experiment --full       # unified diff
 
-forkspace merge experiment --drop      # happy? merge back
-forkspace drop experiment              # not happy? throw it away
+forkspace merge experiment --no-install # happy? merge back
+forkspace drop experiment               # discard the isolated directory
 ```
 
 ```
@@ -68,24 +66,10 @@ project/                 forkspace fork . --name experiment
 
 ## Install
 
+<!-- notest: registry publication is networked; docs CI installs this checkout with cargo install --path -->
 ```bash
 cargo install forkspace
 ```
-
-<details><summary><strong>Optional Linux fast path</strong> - fuse-overlayfs &amp; fuse3</summary>
-
-```bash
-# Ubuntu/Debian
-sudo apt install fuse-overlayfs fuse3
-
-# Fedora
-sudo dnf install fuse-overlayfs fuse3
-
-# Arch
-sudo pacman -S fuse-overlayfs fuse3
-```
-
-</details>
 
 <br/>
 
@@ -97,13 +81,13 @@ sudo pacman -S fuse-overlayfs fuse3
 forkspace fork . --name approach-a
 forkspace fork . --name approach-b
 
-# two isolated workspaces, same base
-# open each in a separate terminal, editor, or agent
+forkspace enter approach-a -- sh -c 'printf "approach a\n" > approach.txt'
+forkspace enter approach-b -- sh -c 'printf "approach b\n" > approach.txt'
 
 forkspace diff approach-a --stat
 forkspace diff approach-b --stat
 
-forkspace merge approach-a --commit -m "switch to Hono"
+forkspace merge approach-a --no-install
 forkspace drop approach-b
 ```
 
@@ -111,6 +95,7 @@ forkspace drop approach-b
 
 Run dev servers in different workspaces and switch between them without restarting anything:
 
+<!-- notest: starts long-running host services; the proxy integration suite executes this lifecycle -->
 ```bash
 forkspace fork . --name feature-a
 forkspace fork . --name feature-b
@@ -206,7 +191,7 @@ They share the same fork manifest, ctime scan, conflict planner, and command out
 | **setsid()**        | Dev servers run as independent sessions, survive your terminal    |
 | **kill() + pgid**   | Stopping a server kills the entire process tree                   |
 | **Atomic writes**   | write → fsync → rename - state file can't corrupt on crash        |
-| **User namespaces** | Unprivileged operation - no root needed, ever                     |
+| **Capability probes** | Select the fastest available backend without privileged setup  |
 
 <br/>
 
