@@ -1251,6 +1251,65 @@ http.server.ThreadingHTTPServer(('127.0.0.1',int(os.environ['PORT'])),H).serve_f
 
     #[test]
     #[serial]
+    fn stopping_and_resuming_at_the_clone_intent_boundary_converges() {
+        let (home, base) = setup();
+        for index in 0..100_000 {
+            let directory = base.path().join(format!("sleep/{:03}", index / 1000));
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join(format!("{index:06}")), b"x").unwrap();
+        }
+        let before = hash_tree(base.path());
+        let mut child = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args([
+                "fork",
+                base.path().to_str().unwrap(),
+                "--name",
+                "sleep-resume",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let state_path = home.path().join("state.json");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stopped = false;
+        while Instant::now() < deadline {
+            let has_intent = fs::read(&state_path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .and_then(|state| state["pending_creates"].as_array().cloned())
+                .is_some_and(|pending| !pending.is_empty());
+            if has_intent && unsafe { libc::kill(child.id() as i32, libc::SIGSTOP) } == 0 {
+                stopped = true;
+                break;
+            }
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        if !stopped {
+            let _ = child.wait();
+            eprintln!(
+                "FORKSPACE_TEST_SKIP {{\"capability\":\"sleep-mid-clone\",\"reason\":\"clone completed before the stop window\"}}"
+            );
+            return;
+        }
+        thread::sleep(Duration::from_millis(100));
+        assert!(!State::load()
+            .unwrap()
+            .workspaces
+            .contains_key("sleep-resume"));
+        assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGCONT) }, 0);
+        assert!(child.wait().unwrap().success());
+        let state = State::load().unwrap();
+        assert!(state.workspaces.contains_key("sleep-resume"));
+        assert_eq!(hash_tree(base.path()), before);
+    }
+
+    #[test]
+    #[serial]
     fn nested_workspace_root_error_is_one_line_and_macos_specific() {
         let (_home, base) = setup();
         unsafe { std::env::set_var("FORKSPACE_HOME", base.path().join(".forkspace")) };
