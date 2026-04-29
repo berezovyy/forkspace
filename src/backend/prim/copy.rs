@@ -35,8 +35,13 @@ impl ForkPrimitive for CopyPrim {
     fn degradation(&self) -> Option<Degradation> {
         Some(Degradation {
             diagnosis: "the workspace was materialized as a full copy".to_string(),
-            remedy: "install fuse-overlayfs or use a reflink-capable volume for faster forks"
-                .to_string(),
+            remedy: if cfg!(target_os = "macos") {
+                "place the project and FORKSPACE_HOME on the same APFS volume for faster clone forks"
+                    .to_string()
+            } else {
+                "install fuse-overlayfs or use a reflink-capable volume for faster forks"
+                    .to_string()
+            },
         })
     }
 }

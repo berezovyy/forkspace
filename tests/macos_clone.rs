@@ -1349,7 +1349,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',int(os.environ['PORT'])),H).serve_f
         let non_apfs_base = std::env::var_os("FORKSPACE_TEST_NON_APFS_BASE");
         let non_apfs_home = std::env::var_os("FORKSPACE_TEST_NON_APFS_HOME");
         if let (Some(base), Some(home)) = (non_apfs_base, non_apfs_home) {
-            unsafe { std::env::set_var("FORKSPACE_HOME", home) };
+            unsafe { std::env::set_var("FORKSPACE_HOME", &home) };
             let error = select_backend(None)
                 .unwrap()
                 .preflight(Path::new(&base))
@@ -1361,6 +1361,27 @@ http.server.ThreadingHTTPServer(('127.0.0.1',int(os.environ['PORT'])),H).serve_f
             assert!(!message.contains('\n'));
             assert!(!message.contains("FUSE"));
             assert!(!message.contains("brew"));
+
+            let copied = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+                .env("FORKSPACE_HOME", &home)
+                .args([
+                    "fork",
+                    Path::new(&base).to_str().unwrap(),
+                    "--name",
+                    "non-apfs-copy",
+                    "--copy",
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                copied.status.success(),
+                "{}",
+                String::from_utf8_lossy(&copied.stderr)
+            );
+            let stderr = String::from_utf8_lossy(&copied.stderr);
+            assert!(stderr.contains("full copy"));
+            assert!(stderr.contains("APFS"));
+            assert!(!stderr.contains("fuse"));
         } else {
             eprintln!(
                 "FORKSPACE_TEST_SKIP {{\"capability\":\"non-apfs\",\"reason\":\"set FORKSPACE_TEST_NON_APFS_BASE and FORKSPACE_TEST_NON_APFS_HOME\"}}"

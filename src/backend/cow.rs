@@ -225,8 +225,12 @@ impl<P: ForkPrimitive> WorkspaceBackend for CowDirBackend<P> {
             BackendKind::PlainCopy => (
                 true,
                 Some(format!(
-                    "used a full copy ({} bytes in {elapsed_ms} ms); install fuse-overlayfs or use a reflink-capable volume for faster forks",
-                    stats.copied_bytes
+                    "used a full copy ({} bytes in {elapsed_ms} ms); {}",
+                    stats.copied_bytes,
+                    self.primitive.degradation().map_or_else(
+                        || "use a copy-on-write filesystem for faster forks".to_string(),
+                        |value| value.remedy
+                    )
                 )),
             ),
             BackendKind::LinuxReflink => (
