@@ -28,6 +28,6 @@ pub fn dispatch(cli: Cli) -> Result {
         Commands::Merge(args) => merge::exec(args),
         Commands::Pull(args) => pull::exec(args),
         Commands::Land(args) => land::exec(args),
-        Commands::ProxyDaemon(args) => crate::proxy::run_proxy(args.port),
+        Commands::ProxyDaemon(args) => crate::process::proxy::run_proxy(args.port),
     }
 }

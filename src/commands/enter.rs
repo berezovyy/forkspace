@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::backend::select_backend;
-use crate::commands::{drop as drop_cmd, fork};
 use crate::error::{ForkspaceError, Result};
-use crate::merge;
 use crate::state::State;
+use crate::sync::merge;
 use crate::util::IoContext;
+use crate::workspace::guard;
 
 fn generate_ephemeral_name() -> String {
     use std::collections::hash_map::DefaultHasher;
@@ -35,7 +35,7 @@ fn read_single_char() -> Option<char> {
 
 fn drop_workspace_by_name(name: &str) -> Result {
     State::with_state(|state| {
-        drop_cmd::remove_workspace(state, name)?;
+        crate::workspace::remove(state, name)?;
         Ok(())
     })
 }
@@ -58,8 +58,15 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
 
-        let ws =
-            fork::create_workspace_with_copy(base, &name, None, None, args.tmpfs, None, args.copy)?;
+        let ws = crate::workspace::create(
+            base,
+            &name,
+            crate::workspace::CreateOptions {
+                tmpfs: args.tmpfs,
+                force_copy: args.copy,
+                ..Default::default()
+            },
+        )?;
 
         if args.ephemeral {
             State::with_state(|state| {
@@ -87,9 +94,8 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
 
     let state = State::load()?;
     let workspace = state.require_workspace(&ws_name)?;
-    crate::reconcile::require_view(workspace)?;
-    crate::reconcile::guard_merge(&ws_name)?;
-    crate::pull::guard(&ws_name)?;
+    guard::require_view(workspace)?;
+    guard::ensure_idle(&ws_name)?;
     let backend = select_backend(Some(workspace.backend_kind))?;
 
     let mut cmd = if !args.command.is_empty() {
@@ -131,8 +137,8 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
         if changes.is_empty() {
             println!("clean — no changes to merge");
         } else {
-            let preview = crate::merge_plan::build(workspace, true)?;
-            println!("{}", crate::merge_plan::render(&preview));
+            let preview = crate::sync::plan::build(workspace, true)?;
+            println!("{}", crate::sync::plan::render(&preview));
             let interactive = unsafe { libc::isatty(libc::STDIN_FILENO) } == 1;
             let choice = if interactive {
                 eprint!("[m]erge  [d]rop  [k]eep workspace? ");

@@ -1,6 +1,6 @@
 use crate::cli::CompareArgs;
-use crate::compare;
 use crate::error::{ForkspaceError, Result};
+use crate::review::compare;
 use crate::state::State;
 
 pub fn exec(args: CompareArgs) -> Result {

@@ -1,20 +1,20 @@
 use crate::backend::select_backend;
-use crate::cli::DiffArgs;
-use crate::diff::{
+use crate::changes::filter::ChangeFilter;
+use crate::changes::manifest::ManifestStatus;
+use crate::changes::{
     collect_cumulative_changes, collect_cumulative_changes_fast, format_diff,
     generate_unified_diff, DiffFormat, DiffOutput,
 };
+use crate::cli::DiffArgs;
 use crate::error::{ForkspaceError, Result};
-use crate::filter::ChangeFilter;
-use crate::manifest::ManifestStatus;
 use crate::state::State;
+use crate::workspace::guard;
 
 pub fn exec(args: DiffArgs) -> Result {
-    crate::pull::guard(&args.name)?;
-    crate::reconcile::guard_merge(&args.name)?;
+    guard::ensure_idle(&args.name)?;
     let state = State::load()?;
     let workspace = state.require_workspace(&args.name)?;
-    crate::reconcile::require_view(workspace)?;
+    guard::require_view(workspace)?;
 
     let need_line_counts = !args.stat && !args.files;
     let changes = if args.cumulative {
@@ -36,7 +36,7 @@ pub fn exec(args: DiffArgs) -> Result {
     } else {
         ChangeFilter::build(&workspace.base).filter_changes(changes)
     };
-    let signals = crate::signals::collect(workspace, &changes);
+    let signals = crate::review::signals::collect(workspace, &changes);
 
     let manifest_status = State::load()?
         .workspaces
@@ -99,7 +99,7 @@ pub fn exec(args: DiffArgs) -> Result {
         };
         println!("{}", format_diff(&changes, &fmt));
         if args.stat {
-            if let Some(line) = crate::signals::render(&signals) {
+            if let Some(line) = crate::review::signals::render(&signals) {
                 println!("{line}");
             }
         }

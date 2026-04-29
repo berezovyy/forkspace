@@ -11,7 +11,7 @@ pub fn exec(args: SwitchArgs) -> Result {
             .as_ref()
             .ok_or_else(|| ForkspaceError::NoProcessRunning(args.name.clone()))?;
 
-        if !crate::process_watch::is_alive(proc.pid, proc.identity.as_deref()) {
+        if !crate::process::watch::is_alive(proc.pid, proc.identity.as_deref()) {
             return Err(ForkspaceError::NoProcessRunning(args.name.clone()));
         }
 

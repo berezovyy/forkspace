@@ -7,7 +7,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 use forkspace::backend::ChangeCount;
-use forkspace::manifest::{self, ManifestKind, ManifestStatus};
+use forkspace::changes::manifest::{self, ManifestKind, ManifestStatus};
 use forkspace::state::State;
 use forkspace::util::now_unix_ns;
 use serial_test::serial;
@@ -172,8 +172,7 @@ fn ready_manifest_counts_changes_and_respects_ignore_files() {
     fs::write(view.path().join(".gitignore"), b"ignored\n").unwrap();
     manifest::build("count", view.path(), u128::MAX).unwrap();
 
-    let mut workspace =
-        forkspace::workspace::Workspace::new("count", view.path().to_path_buf(), None);
+    let mut workspace = forkspace::workspace::Workspace::new("count", view.path().to_path_buf(), None);
     workspace.view_path = view.path().to_path_buf();
     workspace.fork_time_ns = now_unix_ns();
     workspace.manifest_status = ManifestStatus::Ready;

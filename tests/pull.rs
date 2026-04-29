@@ -6,10 +6,10 @@ use std::path::Path;
 use std::process::Command;
 
 use forkspace::backend::{BackendKind, BackendState};
-use forkspace::diff::collect_clone_changes;
+use forkspace::changes::collect_clone_changes;
+use forkspace::changes::manifest::{self, ManifestStatus};
 use forkspace::error::ForkspaceError;
-use forkspace::manifest::{self, ManifestStatus};
-use forkspace::pull;
+use forkspace::sync::pull;
 use forkspace::util::now_unix_ns;
 use forkspace::workspace::Workspace;
 use serial_test::serial;
@@ -154,14 +154,14 @@ fn open_journal_blocks_stale_ancestor_operations_and_resume_converges() {
     let plan = build_plan(&ws, false).unwrap();
     let journal = pull::start(&ws, &plan).unwrap();
     assert!(matches!(
-        pull::guard(&ws.name),
+        forkspace::workspace::guard::ensure_no_interrupted_pull(&ws.name),
         Err(ForkspaceError::StaleAncestor(_))
     ));
     let resumed = pull::resume_apply(&ws).unwrap();
     assert_eq!(resumed, journal);
     pull::finish(&mut ws, &journal).unwrap();
     pull::complete(&journal).unwrap();
-    pull::guard(&ws.name).unwrap();
+    forkspace::workspace::guard::ensure_no_interrupted_pull(&ws.name).unwrap();
     assert_eq!(fs::read(view.path().join("a")).unwrap(), b"new\n");
 }
 
@@ -255,14 +255,13 @@ fn dry_run_text_and_json_match_the_subsequent_public_apply() {
     let home = common::setup_test_env();
     let base = tempfile::tempdir().unwrap();
     fs::write(base.path().join("file"), b"old\n").unwrap();
-    let ws = forkspace::commands::fork::create_workspace_with_copy(
+    let ws = forkspace::workspace::create(
         base.path().to_path_buf(),
         "pull-dry",
-        None,
-        None,
-        false,
-        None,
-        true,
+        forkspace::workspace::CreateOptions {
+            force_copy: true,
+            ..Default::default()
+        },
     )
     .unwrap();
     fs::write(base.path().join("file"), b"new\n").unwrap();
@@ -300,14 +299,13 @@ fn package_pull_runs_the_manager_in_the_view_and_never_copies_node_modules() {
         b"{\"lockfileVersion\":3,\"packages\":{}}\n",
     )
     .unwrap();
-    let ws = forkspace::commands::fork::create_workspace_with_copy(
+    let ws = forkspace::workspace::create(
         base.path().to_path_buf(),
         "pull-package",
-        None,
-        None,
-        false,
-        None,
-        true,
+        forkspace::workspace::CreateOptions {
+            force_copy: true,
+            ..Default::default()
+        },
     )
     .unwrap();
     fs::write(
@@ -381,7 +379,7 @@ fn merge_after_pull_pushes_only_remaining_workspace_edits() {
     pull::complete(&journal).unwrap();
     fs::write(view.path().join("ours-a"), b"a\n").unwrap();
     fs::write(view.path().join("ours-b"), b"b\n").unwrap();
-    let plan = forkspace::merge_plan::build_from_changes(
+    let plan = forkspace::sync::plan::build_from_changes(
         &ws,
         ws.view_path.clone(),
         collect_clone_changes(&ws, true, false).unwrap(),
@@ -395,8 +393,8 @@ fn merge_after_pull_pushes_only_remaining_workspace_edits() {
             .collect::<Vec<_>>(),
         [Path::new("ours-a"), Path::new("ours-b")]
     );
-    let journal = forkspace::merge_plan::execute(&plan).unwrap();
-    forkspace::merge_plan::finish(&journal).unwrap();
+    let journal = forkspace::sync::plan::execute(&plan).unwrap();
+    forkspace::sync::journal::remove(&journal).unwrap();
     assert_eq!(fs::read(base.path().join("advanced")).unwrap(), b"base\n");
 }
 
@@ -407,24 +405,22 @@ fn child_pull_uses_its_immediate_parent_and_propagates_one_level_at_a_time() {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("file"), b"root-0\n").unwrap();
     fs::write(root.path().join("root-only"), b"root-0\n").unwrap();
-    let parent = forkspace::commands::fork::create_workspace_with_copy(
+    let parent = forkspace::workspace::create(
         root.path().to_path_buf(),
         "pull-parent",
-        None,
-        None,
-        false,
-        None,
-        true,
+        forkspace::workspace::CreateOptions {
+            force_copy: true,
+            ..Default::default()
+        },
     )
     .unwrap();
-    let child = forkspace::commands::fork::create_workspace_with_copy(
+    let child = forkspace::workspace::create(
         std::path::PathBuf::from("pull-parent"),
         "pull-child",
-        None,
-        None,
-        false,
-        None,
-        true,
+        forkspace::workspace::CreateOptions {
+            force_copy: true,
+            ..Default::default()
+        },
     )
     .unwrap();
     fs::write(parent.view_path.join("file"), b"parent-1\n").unwrap();

@@ -1,31 +1,42 @@
-#[cfg(target_os = "macos")]
-mod clone;
-mod cow;
-mod linux;
-pub mod prim;
+//! Workspace backends: how a workspace view is materialized, scanned, and destroyed.
+//!
+//! Every command dispatches through [`WorkspaceBackend`]. The backend kind is chosen once at
+//! fork time (by capability probe) and persisted, so later commands use [`select_backend`]
+//! with the recorded kind.
+
+pub mod overlay;
 pub mod probe;
+pub mod snapshot;
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::capabilities::Capabilities;
-use crate::diff::FileChange;
+use crate::changes::manifest::ManifestStatus;
+use crate::changes::FileChange;
 use crate::error::{ForkspaceError, Result};
-use crate::manifest::ManifestStatus;
 use crate::workspace::Workspace;
 
-#[cfg(target_os = "macos")]
-pub use clone::CloneBackend;
-pub use cow::{CowDirBackend, Degradation, ForkPrimitive, ForkStats, ForkTimePolicy, ProbeResult};
-pub use linux::{LinuxBackend, LinuxBackendState};
+pub use overlay::{OverlayBackend, OverlayState};
+pub use snapshot::{
+    Degradation, ForkPrimitive, ForkStats, ForkTimePolicy, ProbeResult, SnapshotBackend,
+};
+
+/// Static feature flags a backend advertises.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capabilities {
+    pub tmpfs_backing: bool,
+    pub network_namespace: bool,
+    pub instant_fork: bool,
+    pub sealed_parent: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BackendKind {
     #[serde(rename = "linux", alias = "linux-overlay")]
-    Linux,
+    Overlay,
     MacClone,
     LinuxReflink,
     #[serde(rename = "copy")]
@@ -35,7 +46,7 @@ pub enum BackendKind {
 impl BackendKind {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Linux => "linux",
+            Self::Overlay => "linux",
             Self::MacClone => "mac-clone",
             Self::LinuxReflink => "linux-reflink",
             Self::PlainCopy => "copy",
@@ -44,7 +55,7 @@ impl BackendKind {
 
     fn parse(value: &str) -> Option<Self> {
         match value {
-            "linux" | "linux-overlay" => Some(Self::Linux),
+            "linux" | "linux-overlay" => Some(Self::Overlay),
             "mac-clone" => Some(Self::MacClone),
             "linux-reflink" => Some(Self::LinuxReflink),
             "copy" => Some(Self::PlainCopy),
@@ -54,7 +65,7 @@ impl BackendKind {
 
     fn platform(self) -> &'static str {
         match self {
-            Self::Linux => "Linux",
+            Self::Overlay => "Linux",
             Self::MacClone => "macOS",
             Self::LinuxReflink => "Linux",
             Self::PlainCopy => "any supported platform",
@@ -69,7 +80,8 @@ impl BackendKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum BackendState {
-    Linux(LinuxBackendState),
+    #[serde(rename = "linux")]
+    Overlay(OverlayState),
     MacClone {
         #[serde(flatten)]
         unknown_fields: Map<String, Value>,
@@ -89,7 +101,6 @@ pub struct CreateReq {
     pub base: PathBuf,
     pub tmpfs: bool,
     pub tmpfs_size: Option<String>,
-    pub copy: bool,
 }
 
 pub struct ViewInfo {
@@ -128,7 +139,7 @@ pub trait WorkspaceBackend {
     ) -> Result<Vec<FileChange>>;
     fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount>;
     fn base_changes(&self, ws: &Workspace) -> Result<Vec<FileChange>> {
-        crate::pull::base_changes(ws)
+        crate::sync::pull::base_changes(ws)
     }
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)>;
 }
@@ -159,27 +170,27 @@ pub fn select_backend(recorded: Option<BackendKind>) -> Result<Box<dyn Workspace
                 if cfg!(target_os = "macos") {
                     BackendKind::MacClone
                 } else {
-                    BackendKind::Linux
+                    BackendKind::Overlay
                 }
             }
         },
     };
 
     match requested {
-        BackendKind::Linux if cfg!(target_os = "linux") => Ok(Box::new(LinuxBackend::new())),
+        BackendKind::Overlay if cfg!(target_os = "linux") => Ok(Box::new(OverlayBackend::new())),
         #[cfg(target_os = "macos")]
-        BackendKind::MacClone => Ok(Box::new(CloneBackend::new(prim::ClonefilePrim))),
+        BackendKind::MacClone => Ok(Box::new(SnapshotBackend::new(snapshot::ClonefilePrimitive))),
         BackendKind::LinuxReflink if cfg!(target_os = "linux") => {
             #[cfg(target_os = "linux")]
             {
-                Ok(Box::new(CowDirBackend::new(prim::ReflinkPrim)))
+                Ok(Box::new(SnapshotBackend::new(snapshot::ReflinkPrimitive)))
             }
             #[cfg(not(target_os = "linux"))]
             {
                 unreachable!()
             }
         }
-        BackendKind::PlainCopy => Ok(Box::new(CowDirBackend::new(prim::CopyPrim))),
+        BackendKind::PlainCopy => Ok(Box::new(SnapshotBackend::new(snapshot::CopyPrimitive))),
         kind => Err(unavailable(kind)),
     }
 }
@@ -189,18 +200,22 @@ pub fn select_backend_for_create(
     force_copy: bool,
 ) -> Result<Box<dyn WorkspaceBackend>> {
     if force_copy {
-        return Ok(Box::new(CowDirBackend::new(prim::CopyPrim)));
+        return Ok(Box::new(SnapshotBackend::new(snapshot::CopyPrimitive)));
     }
     if std::env::var_os("FORKSPACE_BACKEND").is_some() {
         return select_backend(None);
     }
     #[cfg(target_os = "linux")]
     {
-        let report = probe::linux_report(base, &crate::util::forkspace_home().join("workspaces"));
+        let report = probe::linux_report(base, &crate::paths::snapshot_root());
         match report.winner() {
-            Some(BackendKind::Linux) => Ok(Box::new(LinuxBackend::new())),
-            Some(BackendKind::LinuxReflink) => Ok(Box::new(CowDirBackend::new(prim::ReflinkPrim))),
-            Some(BackendKind::PlainCopy) => Ok(Box::new(CowDirBackend::new(prim::CopyPrim))),
+            Some(BackendKind::Overlay) => Ok(Box::new(OverlayBackend::new())),
+            Some(BackendKind::LinuxReflink) => {
+                Ok(Box::new(SnapshotBackend::new(snapshot::ReflinkPrimitive)))
+            }
+            Some(BackendKind::PlainCopy) => {
+                Ok(Box::new(SnapshotBackend::new(snapshot::CopyPrimitive)))
+            }
             _ => Err(ForkspaceError::BackendUnavailable {
                 diagnosis: "no workspace materialization primitive passed its capability probe"
                     .to_string(),
@@ -211,21 +226,19 @@ pub fn select_backend_for_create(
     #[cfg(target_os = "macos")]
     {
         let _ = base;
-        Ok(Box::new(CloneBackend::new(prim::ClonefilePrim)))
+        Ok(Box::new(SnapshotBackend::new(snapshot::ClonefilePrimitive)))
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = base;
-        Ok(Box::new(CowDirBackend::new(prim::CopyPrim)))
+        Ok(Box::new(SnapshotBackend::new(snapshot::CopyPrimitive)))
     }
 }
 
 pub(crate) fn pending_create_path(kind: BackendKind, name: &str) -> PathBuf {
     match kind {
-        BackendKind::Linux => crate::util::forkspace_home().join(name),
-        BackendKind::MacClone => crate::util::forkspace_home().join("workspaces").join(name),
-        BackendKind::LinuxReflink | BackendKind::PlainCopy => {
-            crate::util::forkspace_home().join("workspaces").join(name)
-        }
+        BackendKind::Overlay => crate::paths::overlay_root(name),
+        BackendKind::MacClone => crate::paths::snapshot_dir(name),
+        BackendKind::LinuxReflink | BackendKind::PlainCopy => crate::paths::snapshot_dir(name),
     }
 }

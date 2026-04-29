@@ -12,7 +12,7 @@ fn test_fork_creates_workspace() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws = common::fork_helper(base.path().to_path_buf(), "test-ws", None, None).unwrap();
+    let ws = common::fork_helper(base.path().to_path_buf(), "test-ws").unwrap();
 
     assert!(ws.upper_path().unwrap().exists());
     assert!(ws.work_path().unwrap().exists());
@@ -30,7 +30,7 @@ fn test_fork_merged_shows_files() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws = common::fork_helper(base.path().to_path_buf(), "files-ws", None, None).unwrap();
+    let ws = common::fork_helper(base.path().to_path_buf(), "files-ws").unwrap();
 
     assert!(ws.view_path.join("README.md").exists());
     assert!(ws.view_path.join("src/main.rs").exists());
@@ -45,9 +45,9 @@ fn test_fork_duplicate_name() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws = common::fork_helper(base.path().to_path_buf(), "dup-ws", None, None).unwrap();
+    let ws = common::fork_helper(base.path().to_path_buf(), "dup-ws").unwrap();
 
-    let result = common::fork_helper(base.path().to_path_buf(), "dup-ws", None, None);
+    let result = common::fork_helper(base.path().to_path_buf(), "dup-ws");
     assert!(matches!(
         result.unwrap_err(),
         ForkspaceError::WorkspaceExists(_)
@@ -60,12 +60,7 @@ fn test_fork_duplicate_name() {
 #[serial]
 fn test_fork_nonexistent_base() {
     let _dir = common::setup_test_env();
-    let result = common::fork_helper(
-        PathBuf::from("/tmp/does-not-exist-forkspace-test"),
-        "bad-ws",
-        None,
-        None,
-    );
+    let result = common::fork_helper(PathBuf::from("/tmp/does-not-exist-forkspace-test"), "bad-ws");
     assert!(result.is_err());
 }
 
@@ -75,8 +70,8 @@ fn test_fork_stacked() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws1 = common::fork_helper(base.path().to_path_buf(), "parent-ws", None, None).unwrap();
-    let ws2 = common::fork_helper(PathBuf::from("parent-ws"), "child-ws", None, None).unwrap();
+    let ws1 = common::fork_helper(base.path().to_path_buf(), "parent-ws").unwrap();
+    let ws2 = common::fork_helper(PathBuf::from("parent-ws"), "child-ws").unwrap();
 
     assert_eq!(ws2.parent.as_deref(), Some("parent-ws"));
     assert_eq!(ws2.base, ws1.view_path.canonicalize().unwrap());
@@ -91,11 +86,13 @@ fn test_fork_writes_state() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws = common::fork_helper(
+    let ws = forkspace::workspace::create(
         base.path().to_path_buf(),
         "state-ws",
-        None,
-        Some("my-session".into()),
+        forkspace::workspace::CreateOptions {
+            session: Some("my-session".into()),
+            ..Default::default()
+        },
     )
     .unwrap();
 
@@ -116,8 +113,8 @@ fn test_drop_workspace() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws = common::fork_helper(base.path().to_path_buf(), "drop-ws", None, None).unwrap();
-    let ws_dir = forkspace::util::forkspace_home().join("drop-ws");
+    let ws = common::fork_helper(base.path().to_path_buf(), "drop-ws").unwrap();
+    let ws_dir = forkspace::paths::forkspace_home().join("drop-ws");
     assert!(ws_dir.exists());
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
@@ -156,8 +153,8 @@ fn test_drop_with_children_requires_force() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws1 = common::fork_helper(base.path().to_path_buf(), "parent-drop", None, None).unwrap();
-    let ws2 = common::fork_helper(PathBuf::from("parent-drop"), "child-drop", None, None).unwrap();
+    let ws1 = common::fork_helper(base.path().to_path_buf(), "parent-drop").unwrap();
+    let ws2 = common::fork_helper(PathBuf::from("parent-drop"), "child-drop").unwrap();
 
     let result = forkspace::commands::drop::exec(forkspace::cli::DropArgs {
         name: Some("parent-drop".to_string()),
@@ -190,10 +187,8 @@ fn test_drop_force_cascade() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let _ws1 =
-        common::fork_helper(base.path().to_path_buf(), "cascade-parent", None, None).unwrap();
-    let _ws2 =
-        common::fork_helper(PathBuf::from("cascade-parent"), "cascade-child", None, None).unwrap();
+    let _ws1 = common::fork_helper(base.path().to_path_buf(), "cascade-parent").unwrap();
+    let _ws2 = common::fork_helper(PathBuf::from("cascade-parent"), "cascade-child").unwrap();
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
         name: Some("cascade-parent".to_string()),
@@ -228,7 +223,7 @@ fn test_ls_shows_workspaces() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws = common::fork_helper(base.path().to_path_buf(), "ls-test-ws", None, None).unwrap();
+    let ws = common::fork_helper(base.path().to_path_buf(), "ls-test-ws").unwrap();
     forkspace::commands::ls::exec(forkspace::cli::LsArgs {
         names: false,
         json: false,
@@ -247,13 +242,14 @@ fn test_ls_shows_workspaces() {
 fn test_fork_tmpfs_with_overlay() {
     let (_dir, base) = common::setup_with_project();
 
-    let result = forkspace::commands::fork::create_workspace(
+    let result = forkspace::workspace::create(
         base.path().to_path_buf(),
         "tmpfs-overlay-ws",
-        None,
-        None,
-        true,
-        Some("128m".to_string()),
+        forkspace::workspace::CreateOptions {
+            tmpfs: true,
+            tmpfs_size: Some("128m".to_string()),
+            ..Default::default()
+        },
     );
 
     assert!(matches!(
@@ -268,7 +264,7 @@ fn test_fork_tmpfs_with_overlay() {
 fn test_fork_rejects_unsafe_workspace_names() {
     let (_dir, base) = common::setup_with_project();
     for name in ["", ".", "..", "a/b", "a\0b"] {
-        let error = common::fork_helper(base.path().to_path_buf(), name, None, None).unwrap_err();
+        let error = common::fork_helper(base.path().to_path_buf(), name).unwrap_err();
         assert!(
             matches!(error, ForkspaceError::InvalidArgument(_)),
             "accepted {name:?}"
@@ -276,7 +272,7 @@ fn test_fork_rejects_unsafe_workspace_names() {
     }
 
     let long_name = "x".repeat(256);
-    let error = common::fork_helper(base.path().to_path_buf(), &long_name, None, None).unwrap_err();
+    let error = common::fork_helper(base.path().to_path_buf(), &long_name).unwrap_err();
     assert!(matches!(error, ForkspaceError::InvalidArgument(_)));
 }
 
@@ -297,15 +293,8 @@ fn test_fork_stack_depth_is_bounded() {
     }
     state.save().unwrap();
 
-    let error = forkspace::commands::fork::create_workspace(
-        PathBuf::from("depth-31"),
-        "too-deep",
-        None,
-        None,
-        false,
-        None,
-    )
-    .unwrap_err();
+    let error = forkspace::workspace::create(PathBuf::from("depth-31"), "too-deep", Default::default())
+        .unwrap_err();
     assert!(matches!(
         error,
         forkspace::error::ForkspaceError::InvalidArgument(_)

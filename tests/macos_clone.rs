@@ -21,10 +21,10 @@ mod macos {
     use std::time::{Duration, Instant};
 
     use forkspace::backend::{select_backend, BackendKind};
+    use forkspace::changes::manifest::{self, ManifestStatus};
     use forkspace::cli::DropArgs;
     use forkspace::commands;
     use forkspace::error::ForkspaceError;
-    use forkspace::manifest::{self, ManifestStatus};
     use forkspace::state::State;
     use serial_test::serial;
 
@@ -39,10 +39,7 @@ mod macos {
 
     fn fork(base: &std::path::Path, name: &str) -> forkspace::workspace::Workspace {
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env(
-                "FORKSPACE_HOME",
-                std::env::var_os("FORKSPACE_HOME").unwrap(),
-            )
+            .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
             .args(["fork", base.to_str().unwrap(), "--name", name])
             .output()
             .unwrap();
@@ -344,10 +341,7 @@ mod macos {
             1
         );
         let merged = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env(
-                "FORKSPACE_HOME",
-                std::env::var_os("FORKSPACE_HOME").unwrap(),
-            )
+            .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
             .args(["merge", "names", "--no-install", "--quiet"])
             .output()
             .unwrap();
@@ -508,19 +502,16 @@ mod macos {
     #[serial]
     fn tmpfs_refuses_and_drop_allows_immediate_refork() {
         let (home, base) = setup();
-        let error = commands::fork::create_workspace(
+        let error = forkspace::workspace::create(
             base.path().to_path_buf(),
             "ram",
-            None,
-            None,
-            true,
-            None,
+            forkspace::workspace::CreateOptions {
+                tmpfs: true,
+                ..Default::default()
+            },
         )
         .unwrap_err();
-        assert!(matches!(
-            error,
-            ForkspaceError::CapabilityUnsupported { .. }
-        ));
+        assert!(matches!(error, ForkspaceError::CapabilityUnsupported { .. }));
 
         let workspace = fork(base.path(), "again");
         let old_view = workspace.view_path.clone();
@@ -545,27 +536,13 @@ mod macos {
         let (_home, base) = setup();
         for name in ["", ".", "..", "a/b", "a\0b"] {
             assert!(matches!(
-                commands::fork::create_workspace(
-                    base.path().to_path_buf(),
-                    name,
-                    None,
-                    None,
-                    false,
-                    None,
-                ),
+                forkspace::workspace::create(base.path().to_path_buf(), name, Default::default()),
                 Err(ForkspaceError::InvalidArgument(_))
             ));
         }
         let long = "x".repeat(256);
         assert!(matches!(
-            commands::fork::create_workspace(
-                base.path().to_path_buf(),
-                &long,
-                None,
-                None,
-                false,
-                None,
-            ),
+            forkspace::workspace::create(base.path().to_path_buf(), &long, Default::default()),
             Err(ForkspaceError::InvalidArgument(_))
         ));
 
@@ -578,10 +555,7 @@ mod macos {
                 thread::spawn(move || {
                     barrier.wait();
                     Command::new(env!("CARGO_BIN_EXE_forkspace"))
-                        .env(
-                            "FORKSPACE_HOME",
-                            std::env::var_os("FORKSPACE_HOME").unwrap(),
-                        )
+                        .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
                         .args(["fork", base_path.to_str().unwrap(), "--name", "winner"])
                         .output()
                         .unwrap()
@@ -609,10 +583,7 @@ mod macos {
         );
 
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env(
-                "FORKSPACE_HOME",
-                std::env::var_os("FORKSPACE_HOME").unwrap(),
-            )
+            .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
             .args([
                 "enter",
                 "ephemeral-mac",
@@ -1175,7 +1146,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',int(os.environ['PORT'])),H).serve_f
             glob: false,
         })
         .unwrap();
-        assert!(!forkspace::process_watch::is_alive(
+        assert!(!forkspace::process::watch::is_alive(
             b_process.pid,
             b_process.identity.as_deref()
         ));
@@ -1185,7 +1156,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',int(os.environ['PORT'])),H).serve_f
             .output()
             .unwrap();
         assert!(stopped.status.success());
-        assert!(forkspace::process_watch::terminate_group(
+        assert!(forkspace::process::watch::terminate_group(
             proxy.proxy_pid.unwrap(),
             proxy.proxy_identity.as_deref(),
         ));

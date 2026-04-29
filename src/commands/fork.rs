@@ -1,149 +1,11 @@
-use std::path::PathBuf;
-
-use crate::backend::{pending_create_path, select_backend, select_backend_for_create, CreateReq};
+use crate::backend::BackendKind;
+use crate::cli::ForkArgs;
 use crate::error::{ForkspaceError, Result};
-use crate::state::{PendingCreate, State};
-use crate::util::IoContext;
-use crate::workspace::Workspace;
+use crate::git;
+use crate::state::State;
+use crate::workspace::{self, CreateOptions};
 
-const MAX_FORK_DEPTH: usize = 32;
-
-pub fn create_workspace(
-    base: PathBuf,
-    name: &str,
-    parent: Option<String>,
-    session: Option<String>,
-    tmpfs: bool,
-    size: Option<String>,
-) -> Result<Workspace> {
-    create_workspace_with_copy(base, name, parent, session, tmpfs, size, false)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn create_workspace_with_copy(
-    base: PathBuf,
-    name: &str,
-    parent: Option<String>,
-    session: Option<String>,
-    tmpfs: bool,
-    size: Option<String>,
-    force_copy: bool,
-) -> Result<Workspace> {
-    validate_workspace_name(name)?;
-    let (resolved_base, resolved_parent, backend) = {
-        let state = State::load()?;
-        if state.workspaces.contains_key(name) {
-            return Err(ForkspaceError::WorkspaceExists(name.to_string()));
-        }
-        if state
-            .pending_creates
-            .iter()
-            .any(|pending| pending.name == name)
-        {
-            return Err(ForkspaceError::WorkspaceExists(name.to_string()));
-        }
-        if let Some(ws) = state.workspaces.get(base.to_str().unwrap_or("")) {
-            crate::reconcile::guard_merge(&ws.name)?;
-            crate::pull::guard(&ws.name)?;
-            if state.depth_of(&ws.name) + 1 >= MAX_FORK_DEPTH {
-                return Err(ForkspaceError::InvalidArgument(format!(
-                    "workspace stack depth is limited to {MAX_FORK_DEPTH}; merge or fork from an earlier ancestor"
-                )));
-            }
-            let origin = select_backend(Some(ws.backend_kind))?.view_path(ws);
-            let backend = if force_copy {
-                select_backend_for_create(&origin, true)?
-            } else {
-                select_backend(Some(ws.backend_kind))?
-            };
-            (origin, Some(ws.name.clone()), backend)
-        } else {
-            (
-                base.clone(),
-                parent,
-                select_backend_for_create(&base, force_copy)?,
-            )
-        }
-    };
-
-    backend.preflight(&resolved_base)?;
-
-    let resolved_base = resolved_base.canonicalize().io_context(|| {
-        format!(
-            "failed to canonicalize base path: {}",
-            resolved_base.display()
-        )
-    })?;
-    let request = CreateReq {
-        name: name.to_string(),
-        base: resolved_base.clone(),
-        tmpfs,
-        tmpfs_size: size,
-        copy: force_copy,
-    };
-    let intent = PendingCreate {
-        name: name.to_string(),
-        path: pending_create_path(backend.kind(), name),
-        backend_kind: backend.kind(),
-        pid: std::process::id(),
-        identity: crate::process_watch::identity(std::process::id()),
-        unknown_fields: serde_json::Map::new(),
-    };
-    State::with_state(|state| {
-        if state.workspaces.contains_key(name)
-            || state
-                .pending_creates
-                .iter()
-                .any(|pending| pending.name == name)
-        {
-            return Err(ForkspaceError::WorkspaceExists(name.to_string()));
-        }
-        state.pending_creates.push(intent);
-        Ok(())
-    })?;
-    let view = match backend.create(&request) {
-        Ok(view) => view,
-        Err(error) => {
-            State::with_state(|state| {
-                state.pending_creates.retain(|pending| pending.name != name);
-                Ok(())
-            })?;
-            return Err(error);
-        }
-    };
-    let ws = Workspace::from_view(
-        name.to_string(),
-        resolved_base,
-        resolved_parent,
-        session,
-        backend.kind(),
-        view,
-    );
-
-    State::with_state(|state| {
-        state.pending_creates.retain(|pending| pending.name != name);
-        state.add_workspace(ws.clone())?;
-        Ok(())
-    })?;
-
-    Ok(ws)
-}
-
-fn validate_workspace_name(name: &str) -> Result {
-    let invalid = name.is_empty()
-        || name == "."
-        || name == ".."
-        || name.len() > 255
-        || name.bytes().any(|byte| byte == 0 || byte == b'/');
-    if invalid {
-        return Err(ForkspaceError::InvalidArgument(
-            "invalid workspace name; use 1-255 bytes without '/', NUL, '.' or '..'".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-pub fn exec(args: crate::cli::ForkArgs) -> Result {
+pub fn exec(args: ForkArgs) -> Result {
     let branch_base = if args.branch.is_some() {
         let state = State::load()?;
         Some(
@@ -159,21 +21,21 @@ pub fn exec(args: crate::cli::ForkArgs) -> Result {
         None
     };
     if let (Some(branch), Some(base)) = (args.branch.as_deref(), branch_base.as_deref()) {
-        if !crate::git::is_repo(base) {
+        if !git::is_repo(base) {
             return Err(ForkspaceError::CapabilityUnsupported {
                 diagnosis: format!("{} is not a Git repository", base.display()),
                 remedy: "omit --branch, or run `git init` first".to_string(),
             });
         }
-        if crate::git::git_dir_is_file(base) {
+        if git::git_dir_is_file(base) {
             return Err(ForkspaceError::CapabilityUnsupported {
                 diagnosis: "--branch cannot fork a Git worktree or submodule checkout".to_string(),
                 remedy: "fork the main checkout instead".to_string(),
             });
         }
-        crate::git::validate_branch(base, branch)?;
+        git::validate_branch(base, branch)?;
         let reference = format!("refs/heads/{branch}");
-        if crate::git::ref_exists(base, &reference) {
+        if git::ref_exists(base, &reference) {
             return Err(ForkspaceError::BranchExists(format!(
                 "'{branch}' already exists; choose another branch name"
             )));
@@ -192,18 +54,19 @@ pub fn exec(args: crate::cli::ForkArgs) -> Result {
                 )
             })?,
     };
-    let mut ws = create_workspace_with_copy(
+    let mut ws = workspace::create(
         args.base,
         &name,
-        None,
-        args.session,
-        args.tmpfs,
-        args.size,
-        args.copy,
+        CreateOptions {
+            session: args.session,
+            tmpfs: args.tmpfs,
+            tmpfs_size: args.size,
+            force_copy: args.copy,
+        },
     )?;
     if let Some(branch) = args.branch {
-        if crate::git::run_git(&ws.view_path, &["switch", "-c", &branch]).is_err() {
-            State::with_state(|state| crate::commands::drop::remove_workspace(state, &ws.name))?;
+        if git::run_git(&ws.view_path, &["switch", "-c", &branch]).is_err() {
+            State::with_state(|state| workspace::remove(state, &ws.name))?;
             return Err(ForkspaceError::BranchExists(format!(
                 "'{branch}' could not be created; no workspace was kept"
             )));
@@ -217,7 +80,7 @@ pub fn exec(args: crate::cli::ForkArgs) -> Result {
     if let Some(reason) = &ws.probe_reason {
         if ws.degraded {
             eprintln!("warning: {reason}");
-        } else if ws.backend_kind == crate::backend::BackendKind::LinuxReflink {
+        } else if ws.backend_kind == BackendKind::LinuxReflink {
             eprintln!("note: {reason}");
         }
     }

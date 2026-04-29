@@ -6,7 +6,7 @@ use crate::backend::select_backend;
 use crate::cli::RunArgs;
 use crate::error::{ForkspaceError, Result};
 use crate::state::{ProxyConfig, State};
-use crate::util::{forkspace_home, kill_process};
+
 use crate::workspace::RunningProcess;
 
 const PORT_RANGE_START: u16 = 5501;
@@ -61,7 +61,7 @@ fn allocate_port(state: &State) -> Result<u16> {
 fn ensure_proxy(state: &mut State, listen_port: u16) -> Result {
     if let Some(ref proxy) = state.proxy {
         if let Some(pid) = proxy.proxy_pid {
-            if crate::process_watch::is_alive(pid, proxy.proxy_identity.as_deref()) {
+            if crate::process::watch::is_alive(pid, proxy.proxy_identity.as_deref()) {
                 return Ok(());
             }
         }
@@ -76,7 +76,7 @@ fn ensure_proxy(state: &mut State, listen_port: u16) -> Result {
     let exe = std::env::current_exe()
         .map_err(|e| ForkspaceError::ProxyFailed(format!("cannot find self: {}", e)))?;
 
-    let log_dir = forkspace_home();
+    let log_dir = crate::paths::forkspace_home();
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
         eprintln!(
             "warning: failed to create log directory {}: {e}",
@@ -84,14 +84,10 @@ fn ensure_proxy(state: &mut State, listen_port: u16) -> Result {
         );
     }
 
-    let (stdout, stderr) = open_log_pair(
-        &log_dir,
-        "proxy.log",
-        "proxy.err",
-        ForkspaceError::ProxyFailed,
-    )?;
+    let (stdout, stderr) =
+        open_log_pair(&log_dir, "proxy.log", "proxy.err", ForkspaceError::ProxyFailed)?;
 
-    let proxy_identity = crate::process_watch::new_identity();
+    let proxy_identity = crate::process::watch::new_identity();
     let child = spawn_detached(
         Command::new(exe)
             .args(["proxy-daemon", "--port", &listen_port.to_string()])
@@ -128,10 +124,10 @@ pub fn exec(args: RunArgs) -> Result {
 
     State::with_state(|state| {
         let ws = state.require_workspace(&args.name)?;
-        crate::reconcile::require_view(ws)?;
+        crate::workspace::guard::require_view(ws)?;
 
         if let Some(ref proc) = ws.process {
-            if crate::process_watch::is_alive(proc.pid, proc.identity.as_deref()) {
+            if crate::process::watch::is_alive(proc.pid, proc.identity.as_deref()) {
                 return Err(ForkspaceError::ProcessAlreadyRunning(args.name.clone()));
             }
         }
@@ -151,10 +147,9 @@ pub fn exec(args: RunArgs) -> Result {
         let workspace = state.require_workspace(&args.name)?;
         let merged = select_backend(Some(workspace.backend_kind))?.view_path(workspace);
 
-        let log_dir = forkspace_home().join("logs").join(&args.name);
-        std::fs::create_dir_all(&log_dir).map_err(|error| {
-            ForkspaceError::ProcessFailed(format!("create log directory: {error}"))
-        })?;
+        let log_dir = crate::paths::log_dir(&args.name);
+        std::fs::create_dir_all(&log_dir)
+            .map_err(|error| ForkspaceError::ProcessFailed(format!("create log directory: {error}")))?;
         let (stdout, stderr) = open_log_pair(
             &log_dir,
             "stdout.log",
@@ -162,7 +157,7 @@ pub fn exec(args: RunArgs) -> Result {
             ForkspaceError::ProcessFailed,
         )?;
 
-        let identity = crate::process_watch::new_identity();
+        let identity = crate::process::watch::new_identity();
         let child = spawn_detached(
             Command::new("sh")
                 .args(["-c", &cmd])
@@ -188,7 +183,7 @@ pub fn exec(args: RunArgs) -> Result {
         });
 
         if let Err(error) = ensure_proxy(state, proxy_listen_port) {
-            kill_process(pid, identity.as_deref());
+            crate::process::watch::terminate_group(pid, identity.as_deref());
             state.require_workspace_mut(&args.name)?.process = None;
             return Err(error);
         }
@@ -218,7 +213,7 @@ fn stop(name: &str) -> Result {
             .take()
             .ok_or_else(|| ForkspaceError::NoProcessRunning(name.to_string()))?;
 
-        kill_process(proc.pid, proc.identity.as_deref());
+        crate::process::watch::terminate_group(proc.pid, proc.identity.as_deref());
 
         println!("stopped '{}' (PID {})", proc.command, proc.pid);
         Ok(())

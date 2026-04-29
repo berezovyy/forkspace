@@ -1,19 +1,20 @@
+use crate::changes::ChangeKind;
 use crate::cli::MergeArgs;
-use crate::commands::drop as drop_cmd;
-use crate::diff::ChangeKind;
 use crate::error::Result;
-use crate::merge;
-use crate::merge_plan;
 use crate::state::State;
+use crate::sync::journal::{self, OperationPhase};
+use crate::sync::merge;
+use crate::sync::plan as merge_plan;
+use crate::workspace::guard;
 
 pub fn exec(args: MergeArgs) -> Result {
     State::with_state(|state| {
-        crate::pull::guard(&args.name)?;
+        guard::ensure_no_interrupted_pull(&args.name)?;
         if !args.resume {
-            crate::reconcile::guard_merge(&args.name)?;
+            guard::ensure_no_interrupted_merge(&args.name)?;
         }
         let workspace = state.require_workspace(&args.name)?.clone();
-        crate::reconcile::require_view(&workspace)?;
+        guard::require_view(&workspace)?;
 
         if args.patch {
             let plan = merge_plan::build(&workspace, true)?;
@@ -23,14 +24,14 @@ pub fn exec(args: MergeArgs) -> Result {
             }
             print!("{}", merge::generate_patch(&workspace, &plan.changes)?);
             if args.drop {
-                drop_cmd::remove_workspace(state, &args.name)?;
+                crate::workspace::remove(state, &args.name)?;
                 eprintln!("removed '{}'", args.name);
             }
             return Ok(());
         }
 
         let overwrite = args.overwrite_base || args.force;
-        let (plan, journal) = if args.resume {
+        let (plan, journal_path) = if args.resume {
             (None, Some(merge_plan::resume(&workspace)?))
         } else {
             let plan = merge_plan::build(&workspace, overwrite || args.dry_run)?;
@@ -59,12 +60,12 @@ pub fn exec(args: MergeArgs) -> Result {
                 println!("{review}");
                 println!("applying…");
             }
-            let journal = if plan.changes.is_empty() {
+            let journal_path = if plan.changes.is_empty() {
                 None
             } else {
                 Some(merge_plan::execute(&plan)?)
             };
-            (Some(plan), journal)
+            (Some(plan), journal_path)
         };
 
         if !args.no_install {
@@ -74,18 +75,15 @@ pub fn exec(args: MergeArgs) -> Result {
             }
         }
         if args.commit || args.message.is_some() {
-            let default_msg = format!(
-                "forkspace merge: applied changes from workspace {}",
-                args.name
-            );
+            let default_msg = format!("forkspace merge: applied changes from workspace {}", args.name);
             merge::git_commit(
                 &workspace.base,
                 args.message.as_deref().unwrap_or(&default_msg),
             )?;
         }
-        if let Some(journal) = &journal {
-            merge_plan::set_operation_phase(journal, merge_plan::OperationPhase::Done)?;
-            merge_plan::finish(journal)?;
+        if let Some(path) = &journal_path {
+            journal::set_phase(path, OperationPhase::Done)?;
+            journal::remove(path)?;
         }
 
         let (added, modified, deleted) = plan.as_ref().map_or((0, 0, 0), |plan| {
@@ -110,7 +108,7 @@ pub fn exec(args: MergeArgs) -> Result {
             return Ok(());
         }
         if args.drop {
-            drop_cmd::remove_workspace(state, &args.name)?;
+            crate::workspace::remove(state, &args.name)?;
         }
         println!("merged {total} files ({added} added, {modified} modified, {deleted} deleted)");
         if args.drop {
@@ -122,8 +120,8 @@ pub fn exec(args: MergeArgs) -> Result {
 
 fn review_plan(workspace: &crate::workspace::Workspace, plan: &merge_plan::MergePlan) -> String {
     let mut rendered = merge_plan::render(plan);
-    let signals = crate::signals::collect(workspace, &plan.changes);
-    if let Some(line) = crate::signals::render(&signals) {
+    let signals = crate::review::signals::collect(workspace, &plan.changes);
+    if let Some(line) = crate::review::signals::render(&signals) {
         rendered.push('\n');
         rendered.push_str(&line);
     }

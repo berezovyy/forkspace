@@ -16,7 +16,7 @@ fn install_state_fixture(dir: &tempfile::TempDir, name: &str) {
 
 fn make_workspace(name: &str, parent: Option<String>) -> Workspace {
     let base = PathBuf::from("/tmp/base");
-    let root = forkspace::util::forkspace_home();
+    let root = forkspace::paths::forkspace_home();
     common::make_test_workspace(&root, name, &base, parent)
 }
 
@@ -106,7 +106,7 @@ fn test_update_workspace() {
     state.add_workspace(make_workspace("upd", None)).unwrap();
 
     let ws = state.workspaces.get_mut("upd").unwrap();
-    if let forkspace::backend::BackendState::Linux(backend) = &mut ws.backend_state {
+    if let forkspace::backend::BackendState::Overlay(backend) = &mut ws.backend_state {
         backend.tmpfs = true;
     }
 
@@ -123,10 +123,7 @@ fn test_corrupted_json() {
 
     let result = State::load();
     assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        ForkspaceError::StateCorrupted(_)
-    ));
+    assert!(matches!(result.unwrap_err(), ForkspaceError::StateCorrupted(_)));
 }
 
 #[test]

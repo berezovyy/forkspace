@@ -3,14 +3,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use forkspace::backend::Capabilities;
 use forkspace::backend::{
     select_backend, BackendKind, BackendState, ChangeCount, CreateReq, DestroyMode, ViewInfo,
     WorkspaceBackend,
 };
-use forkspace::capabilities::Capabilities;
-use forkspace::diff::FileChange;
+use forkspace::changes::manifest::ManifestStatus;
+use forkspace::changes::FileChange;
 use forkspace::error::{ForkspaceError, Result};
-use forkspace::manifest::ManifestStatus;
 use forkspace::workspace::Workspace;
 use serial_test::serial;
 
@@ -103,7 +103,6 @@ fn fake_backend_passes_workspace_contract() {
         base: root.path().to_path_buf(),
         tmpfs: false,
         tmpfs_size: None,
-        copy: false,
     };
 
     backend.preflight(root.path()).unwrap();
@@ -141,10 +140,10 @@ fn fake_backend_passes_workspace_contract() {
 fn backend_selection_is_automatic_and_debug_overridable() {
     unsafe { std::env::remove_var("FORKSPACE_BACKEND") };
     let selected = select_backend(None).unwrap();
-    assert_eq!(selected.kind(), BackendKind::Linux);
+    assert_eq!(selected.kind(), BackendKind::Overlay);
 
     unsafe { std::env::set_var("FORKSPACE_BACKEND", "linux") };
-    assert_eq!(select_backend(None).unwrap().kind(), BackendKind::Linux);
+    assert_eq!(select_backend(None).unwrap().kind(), BackendKind::Overlay);
 
     unsafe { std::env::set_var("FORKSPACE_BACKEND", "invalid") };
     let error = select_backend(None).err().unwrap();
@@ -219,9 +218,10 @@ fn command_layer_has_no_linux_layout_or_platform_diagnostics() {
         }
     }
 
-    let linux =
-        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/backend/linux.rs"))
-            .unwrap();
-    assert!(!linux.contains("brew install"));
-    assert!(!linux.contains("APFS"));
+    for file in ["src/backend/overlay/mod.rs", "src/backend/overlay/mount.rs"] {
+        let overlay =
+            fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(file)).unwrap();
+        assert!(!overlay.contains("brew install"), "{file} mentions brew");
+        assert!(!overlay.contains("APFS"), "{file} mentions APFS");
+    }
 }

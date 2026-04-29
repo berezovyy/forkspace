@@ -1,8 +1,9 @@
 use crate::cli::PullArgs;
 use crate::error::{ForkspaceError, Result};
-use crate::merge;
-use crate::pull;
 use crate::state::State;
+use crate::sync::merge;
+use crate::sync::pull;
+use crate::workspace::guard;
 
 pub fn exec(args: PullArgs) -> Result {
     let name = args
@@ -15,14 +16,14 @@ pub fn exec(args: PullArgs) -> Result {
         })?;
 
     State::with_state(|state| {
-        crate::reconcile::guard_merge(&name)?;
+        guard::ensure_no_interrupted_merge(&name)?;
         let workspace = state.require_workspace(&name)?.clone();
-        crate::reconcile::require_view(&workspace)?;
+        guard::require_view(&workspace)?;
         let (path, count) = if args.resume {
             let path = pull::resume_apply(&workspace)?;
             (path, None)
         } else {
-            pull::guard(&name)?;
+            guard::ensure_no_interrupted_pull(&name)?;
             let plan = pull::build(&workspace, args.theirs)?;
             if args.json {
                 println!(

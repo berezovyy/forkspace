@@ -34,10 +34,8 @@ pub fn setup_with_project() -> (tempfile::TempDir, tempfile::TempDir) {
 pub fn fork_helper(
     base: std::path::PathBuf,
     name: &str,
-    parent: Option<String>,
-    session: Option<String>,
 ) -> forkspace::error::Result<forkspace::workspace::Workspace> {
-    forkspace::commands::fork::create_workspace(base, name, parent, session, false, None)
+    forkspace::workspace::create(base, name, Default::default())
 }
 
 pub fn make_test_workspace(
@@ -54,7 +52,7 @@ pub fn make_test_workspace(
     let mut workspace = Workspace::new(name, base.to_path_buf(), parent);
     workspace.created = now_rfc3339();
     workspace.view_path = ws_dir.join("merged");
-    if let forkspace::backend::BackendState::Linux(state) = &mut workspace.backend_state {
+    if let forkspace::backend::BackendState::Overlay(state) = &mut workspace.backend_state {
         state.upper = ws_dir.join("upper");
         state.work = ws_dir.join("work");
         state.merged = ws_dir.join("merged");
@@ -80,13 +78,13 @@ pub fn strip_ansi(s: &str) -> String {
 }
 
 pub fn cleanup_workspace(ws: &forkspace::workspace::Workspace) {
-    let _ = forkspace::overlay::unmount_overlay(&ws.view_path);
+    let _ = forkspace::backend::overlay::mount::unmount_overlay(&ws.view_path);
 }
 
 #[macro_export]
 macro_rules! skip_without_overlay {
     () => {{
-        if let Err(reason) = forkspace::overlay::probe_fuse_overlayfs() {
+        if let Err(reason) = forkspace::backend::overlay::mount::probe_fuse_overlayfs() {
             eprintln!(
                 "FORKSPACE_TEST_SKIP {{\"capability\":\"fuse-overlayfs\",\"reason\":{}}}",
                 serde_json::to_string(&reason).expect("serialize skip reason")

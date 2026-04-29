@@ -46,7 +46,7 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
                     "backend": workspace.backend_kind.as_str(),
                     "degraded": workspace.degraded,
                     "probe_reason": workspace.probe_reason,
-                    "base_missing": crate::reconcile::base_missing(&workspace.base),
+                    "base_missing": !workspace.base.is_dir(),
                     "view_missing": !workspace.view_path.is_dir(),
                 })
             })
@@ -75,7 +75,7 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
             } else {
                 shorten_path(&ws.base)
             };
-            if crate::reconcile::base_missing(&ws.base) {
+            if !ws.base.is_dir() {
                 origin.push_str(" (missing)");
             }
 
@@ -88,7 +88,7 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
                 };
 
             let proc_info = match &ws.process {
-                Some(p) if crate::process_watch::is_alive(p.pid, p.identity.as_deref()) => {
+                Some(p) if crate::process::watch::is_alive(p.pid, p.identity.as_deref()) => {
                     format!(":{} ({})", p.port, p.command)
                 }
                 Some(_) => "stopped".to_string(),

@@ -45,7 +45,7 @@ fn reconciliation_sweeps_only_terminal_journals_and_is_idempotent() {
     )
     .unwrap();
     assert!(matches!(
-        forkspace::reconcile::guard_merge("work"),
+        forkspace::workspace::guard::ensure_no_interrupted_merge("work"),
         Err(ForkspaceError::InterruptedOperation { .. })
     ));
     State::load().unwrap();
@@ -466,8 +466,9 @@ fn backend_override_is_echoed_but_other_platform_state_is_never_repaired_away() 
         .output()
         .unwrap();
     assert!(forked.status.success());
-    assert!(String::from_utf8_lossy(&forked.stderr)
-        .contains("FORKSPACE_BACKEND override selected 'copy'"));
+    assert!(
+        String::from_utf8_lossy(&forked.stderr).contains("FORKSPACE_BACKEND override selected 'copy'")
+    );
 
     let state_path = home.path().join("state.json");
     let mut state: serde_json::Value =
@@ -552,7 +553,7 @@ fn manifest_install_failure_keeps_the_view_and_reports_tracking_degraded() {
     assert!(workspace.degraded);
     assert_eq!(
         workspace.manifest_status,
-        forkspace::manifest::ManifestStatus::Degraded
+        forkspace::changes::manifest::ManifestStatus::Degraded
     );
     assert_eq!(
         fs::read(workspace.view_path.join("file")).unwrap(),

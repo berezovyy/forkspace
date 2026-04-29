@@ -2,8 +2,8 @@ mod common;
 
 use std::fs;
 
-use forkspace::diff;
-use forkspace::merge;
+use forkspace::changes;
+use forkspace::sync::merge;
 
 #[test]
 fn test_full_lifecycle() {
@@ -28,20 +28,20 @@ fn test_full_lifecycle() {
     .unwrap();
     fs::write(ws.upper_path().unwrap().join(".wh.README.md"), "").unwrap();
 
-    let changes = diff::collect_changes(&ws).unwrap();
+    let changes = changes::collect_changes(&ws).unwrap();
     assert_eq!(changes.len(), 3, "expected 3 changes, got: {changes:?}");
 
     let added = changes
         .iter()
-        .filter(|c| matches!(c.kind, diff::ChangeKind::Added))
+        .filter(|c| matches!(c.kind, changes::ChangeKind::Added))
         .count();
     let modified = changes
         .iter()
-        .filter(|c| matches!(c.kind, diff::ChangeKind::Modified))
+        .filter(|c| matches!(c.kind, changes::ChangeKind::Modified))
         .count();
     let deleted = changes
         .iter()
-        .filter(|c| matches!(c.kind, diff::ChangeKind::Deleted))
+        .filter(|c| matches!(c.kind, changes::ChangeKind::Deleted))
         .count();
     assert_eq!(added, 1);
     assert_eq!(modified, 1);

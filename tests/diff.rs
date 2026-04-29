@@ -4,8 +4,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-use forkspace::diff::{collect_changes, is_binary, ChangeKind, DiffFormat, DiffOutput};
-use forkspace::filter::{ChangeClass, ChangeFilter};
+use forkspace::changes::filter::{ChangeClass, ChangeFilter};
+use forkspace::changes::{collect_changes, is_binary, ChangeKind, DiffFormat, DiffOutput};
 use serial_test::serial;
 
 #[test]
@@ -93,7 +93,7 @@ fn test_diff_files_mode() {
     fs::write(ws.upper_path().unwrap().join("b.txt"), "world\n").unwrap();
 
     let changes = collect_changes(&ws).unwrap();
-    let output = forkspace::diff::format_diff(&changes, &DiffFormat::Files);
+    let output = forkspace::changes::format_diff(&changes, &DiffFormat::Files);
     let lines: Vec<&str> = output.lines().collect();
     assert_eq!(lines.len(), 2);
     assert!(lines.contains(&"a.txt"));
@@ -118,7 +118,7 @@ fn test_diff_stat_mode() {
     fs::write(ws.upper_path().unwrap().join(".wh.gone.txt"), "").unwrap();
 
     let changes = collect_changes(&ws).unwrap();
-    let output = forkspace::diff::format_diff(&changes, &DiffFormat::Stat);
+    let output = forkspace::changes::format_diff(&changes, &DiffFormat::Stat);
     assert!(output.contains("3 files changed"));
     assert!(output.contains("1 added"));
     assert!(output.contains("1 modified"));
@@ -139,7 +139,7 @@ fn test_diff_json_output() {
         workspace: "test-ws".to_string(),
         base: base.clone(),
         changes,
-        signals: forkspace::signals::Signals::default(),
+        signals: forkspace::review::signals::Signals::default(),
     };
     let json_str = serde_json::to_string_pretty(&output).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
@@ -342,7 +342,7 @@ fn test_diff_default_format() {
     fs::write(ws.upper_path().unwrap().join("new.rs"), "fn new() {}\n").unwrap();
 
     let changes = collect_changes(&ws).unwrap();
-    let output = forkspace::diff::format_diff(&changes, &DiffFormat::Default);
+    let output = forkspace::changes::format_diff(&changes, &DiffFormat::Default);
     let plain = common::strip_ansi(&output);
     assert!(
         plain.contains("M  mod.rs"),

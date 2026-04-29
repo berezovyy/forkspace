@@ -1,8 +1,8 @@
 mod common;
 
 use forkspace::error::ForkspaceError;
+use forkspace::paths::forkspace_home;
 use forkspace::state::State;
-use forkspace::util::forkspace_home;
 use serial_test::serial;
 
 fn add_fake_workspace(state: &mut State, name: &str, parent: Option<String>) {

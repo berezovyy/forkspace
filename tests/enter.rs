@@ -24,7 +24,7 @@ fn test_enter_command_passthrough() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws = common::fork_helper(base.path().to_path_buf(), "enter-cmd-ws", None, None).unwrap();
+    let ws = common::fork_helper(base.path().to_path_buf(), "enter-cmd-ws").unwrap();
 
     let output = Command::new(forkspace_bin())
         .env("FORKSPACE_HOME", std::env::var("FORKSPACE_HOME").unwrap())
@@ -38,11 +38,7 @@ fn test_enter_command_passthrough() {
         "expected 'hello' in stdout, got: {}",
         stdout
     );
-    assert!(
-        output.status.success(),
-        "forkspace enter failed: {:?}",
-        output
-    );
+    assert!(output.status.success(), "forkspace enter failed: {:?}", output);
 
     common::cleanup_workspace(&ws);
 }
@@ -53,7 +49,7 @@ fn test_enter_env_vars() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws = common::fork_helper(base.path().to_path_buf(), "enter-env-ws", None, None).unwrap();
+    let ws = common::fork_helper(base.path().to_path_buf(), "enter-env-ws").unwrap();
 
     let output = Command::new(forkspace_bin())
         .env("FORKSPACE_HOME", std::env::var("FORKSPACE_HOME").unwrap())
@@ -86,7 +82,7 @@ fn test_enter_env_base() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let ws = common::fork_helper(base.path().to_path_buf(), "enter-base-ws", None, None).unwrap();
+    let ws = common::fork_helper(base.path().to_path_buf(), "enter-base-ws").unwrap();
 
     let base_canonical = base.path().canonicalize().unwrap();
 

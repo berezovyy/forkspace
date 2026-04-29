@@ -73,10 +73,8 @@ pub fn ref_exists(directory: &Path, reference: &str) -> bool {
 }
 
 pub fn is_ancestor(directory: &Path, old: &str, new: &str) -> Result<bool> {
-    let output =
-        capture_output(directory, &["merge-base", "--is-ancestor", old, new]).map_err(|error| {
-            ForkspaceError::GitFailed(format!("failed to compare commits: {error}"))
-        })?;
+    let output = capture_output(directory, &["merge-base", "--is-ancestor", old, new])
+        .map_err(|error| ForkspaceError::GitFailed(format!("failed to compare commits: {error}")))?;
     match output.status.code() {
         Some(0) => Ok(true),
         Some(1) => Ok(false),
@@ -105,9 +103,7 @@ pub fn fetch_refspec(base: &Path, view: &Path, source_branch: &str, staging: &st
     let source = format!("refs/heads/{source_branch}");
     let refspec = format!("+{source}:{staging}");
     let view = view.to_str().ok_or_else(|| {
-        ForkspaceError::InvalidArgument(
-            "workspace path is not valid UTF-8 for git fetch".to_string(),
-        )
+        ForkspaceError::InvalidArgument("workspace path is not valid UTF-8 for git fetch".to_string())
     })?;
     run_git(base, &["fetch", "--no-tags", "--quiet", view, &refspec])
 }
@@ -123,11 +119,7 @@ pub fn delete_ref(directory: &Path, reference: &str) {
 pub fn prune_staging_refs(directory: &Path) {
     let Ok(refs) = capture_git(
         directory,
-        &[
-            "for-each-ref",
-            "--format=%(refname)",
-            "refs/forkspace/land/",
-        ],
+        &["for-each-ref", "--format=%(refname)", "refs/forkspace/land/"],
     ) else {
         return;
     };

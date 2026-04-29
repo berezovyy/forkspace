@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use super::cow::ProbeResult;
+use super::snapshot::ProbeResult;
 use super::BackendKind;
 
 #[cfg(target_os = "linux")]
@@ -54,8 +54,8 @@ impl ProbeReport {
 pub fn linux_report(base: &Path, destination_parent: &Path) -> ProbeReport {
     let mut report = ProbeReport::default();
     report.record(
-        BackendKind::Linux,
-        match crate::overlay::probe_fuse_overlayfs() {
+        BackendKind::Overlay,
+        match crate::backend::overlay::mount::probe_fuse_overlayfs() {
             Ok(()) => ProbeResult::available("fuse-overlayfs and /dev/fuse are usable"),
             Err(reason) => ProbeResult::unavailable(reason),
         },

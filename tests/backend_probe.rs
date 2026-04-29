@@ -8,8 +8,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 use forkspace::backend::{select_backend, BackendKind};
-use forkspace::commands::fork::create_workspace_with_copy;
-use forkspace::manifest;
+use forkspace::changes::manifest;
 use serial_test::serial;
 use walkdir::WalkDir;
 
@@ -56,14 +55,13 @@ fn plain_copy_is_a_privilege_free_fidelity_floor() {
         b"preserved",
     );
 
-    let workspace = create_workspace_with_copy(
+    let workspace = forkspace::workspace::create(
         base.path().to_path_buf(),
         "copy-floor",
-        None,
-        None,
-        false,
-        None,
-        true,
+        forkspace::workspace::CreateOptions {
+            force_copy: true,
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_eq!(workspace.backend_kind, BackendKind::PlainCopy);
@@ -137,9 +135,9 @@ fn plain_copy_is_a_privilege_free_fidelity_floor() {
     let changes = backend.changes(&workspace, true, false).unwrap();
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].path, Path::new("edit"));
-    let plan = forkspace::merge_plan::build(&workspace, false).unwrap();
-    let journal = forkspace::merge_plan::execute(&plan).unwrap();
-    forkspace::merge_plan::finish(&journal).unwrap();
+    let plan = forkspace::sync::plan::build(&workspace, false).unwrap();
+    let journal = forkspace::sync::plan::execute(&plan).unwrap();
+    forkspace::sync::journal::remove(&journal).unwrap();
     assert_eq!(fs::read(base.path().join("edit")).unwrap(), b"changed\n");
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
@@ -160,7 +158,7 @@ fn reflink_probe_is_ioctl_based_and_override_is_sticky() {
     fs::write(base.path().join("file"), b"x").unwrap();
     let _honest_runtime_verdict = forkspace::backend::probe::reflink_supported(
         base.path(),
-        &forkspace::util::forkspace_home().join("workspaces"),
+        &forkspace::paths::forkspace_home().join("workspaces"),
     );
     let source = fs::read_to_string("src/backend/probe.rs").unwrap();
     assert!(source.contains("FICLONE"));
@@ -186,7 +184,7 @@ fn probe_report_is_ordered_and_uses_the_ioctl_verdict() {
     fs::write(base.path().join("file"), b"x").unwrap();
     #[cfg(target_os = "linux")]
     {
-        let destination = forkspace::util::forkspace_home().join("workspaces");
+        let destination = forkspace::paths::forkspace_home().join("workspaces");
         let report = forkspace::backend::probe::linux_report(base.path(), &destination);
         assert_eq!(
             report
@@ -195,7 +193,7 @@ fn probe_report_is_ordered_and_uses_the_ioctl_verdict() {
                 .map(|candidate| candidate.backend)
                 .collect::<Vec<_>>(),
             [
-                BackendKind::Linux,
+                BackendKind::Overlay,
                 BackendKind::LinuxReflink,
                 BackendKind::PlainCopy
             ]
@@ -233,8 +231,7 @@ fn requested_real_reflink_volume_materializes_without_data_copy() {
         &home.join("workspaces")
     ));
     let workspace =
-        create_workspace_with_copy(base.clone(), "real-reflink", None, None, false, None, false)
-            .unwrap();
+        forkspace::workspace::create(base.clone(), "real-reflink", Default::default()).unwrap();
     assert_eq!(workspace.backend_kind, BackendKind::LinuxReflink);
     let forkspace::backend::BackendState::CowDir {
         reflinked_files,
@@ -284,8 +281,7 @@ fn reflink_mixed_submount_falls_back_per_file_without_failing_the_fork() {
         std::env::set_var("FORKSPACE_BACKEND", "linux-reflink");
     }
     let workspace =
-        create_workspace_with_copy(base.to_path_buf(), "mixed", None, None, false, None, false)
-            .unwrap();
+        forkspace::workspace::create(base.to_path_buf(), "mixed", Default::default()).unwrap();
     let forkspace::backend::BackendState::CowDir {
         reflinked_files,
         copied_files,

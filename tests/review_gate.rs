@@ -5,16 +5,23 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use forkspace::backend::select_backend;
-use forkspace::commands::fork::create_workspace_with_copy;
-use forkspace::compare;
+use forkspace::changes::manifest::ManifestStatus;
 use forkspace::error::ForkspaceError;
-use forkspace::manifest::ManifestStatus;
-use forkspace::signals;
+use forkspace::review::compare;
+use forkspace::review::signals;
 use forkspace::workspace::Workspace;
 use serial_test::serial;
 
 fn copy_workspace(base: &Path, name: &str) -> Workspace {
-    create_workspace_with_copy(base.to_path_buf(), name, None, None, false, None, true).unwrap()
+    forkspace::workspace::create(
+        base.to_path_buf(),
+        name,
+        forkspace::workspace::CreateOptions {
+            force_copy: true,
+            ..Default::default()
+        },
+    )
+    .unwrap()
 }
 
 #[test]
@@ -387,7 +394,7 @@ fn synthetic_workspace(base: &Path, view: &Path, name: &str) -> Workspace {
     std::thread::sleep(std::time::Duration::from_millis(2));
     workspace.fork_time_ns = forkspace::util::now_unix_ns();
     workspace.manifest_status = ManifestStatus::Ready;
-    forkspace::manifest::build(name, view, workspace.fork_time_ns).unwrap();
+    forkspace::changes::manifest::build(name, view, workspace.fork_time_ns).unwrap();
     workspace
 }
 

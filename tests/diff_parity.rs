@@ -6,9 +6,9 @@ use std::path::Path;
 use std::process::Command;
 
 use forkspace::backend::{BackendKind, BackendState};
-use forkspace::diff::{collect_clone_changes, generate_unified_diff, ChangeKind, OldContent};
-use forkspace::filter::ChangeClass;
-use forkspace::manifest::{self, ManifestStatus};
+use forkspace::changes::filter::ChangeClass;
+use forkspace::changes::manifest::{self, ManifestStatus};
+use forkspace::changes::{collect_clone_changes, generate_unified_diff, ChangeKind, OldContent};
 use forkspace::util::now_unix_ns;
 use forkspace::workspace::Workspace;
 use serial_test::serial;
@@ -43,7 +43,7 @@ fn write_pair(base: &Path, view: &Path, relative: &str, content: &[u8]) {
         .unwrap();
 }
 
-fn kind(changes: &[forkspace::diff::FileChange], path: &str) -> ChangeKind {
+fn kind(changes: &[forkspace::changes::FileChange], path: &str) -> ChangeKind {
     changes
         .iter()
         .find(|change| change.path == Path::new(path))
@@ -163,7 +163,7 @@ fn manifest_metadata_uses_nanosecond_precision() {
 
 #[test]
 fn stacking_semantics_are_a_backend_property() {
-    assert!(!BackendKind::Linux.stacking_is_snapshot());
+    assert!(!BackendKind::Overlay.stacking_is_snapshot());
     assert!(BackendKind::MacClone.stacking_is_snapshot());
     assert!(BackendKind::LinuxReflink.stacking_is_snapshot());
     assert!(BackendKind::PlainCopy.stacking_is_snapshot());

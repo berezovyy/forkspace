@@ -1,5 +1,4 @@
 use crate::cli::LandArgs;
-use crate::commands::drop as drop_cmd;
 use crate::error::{ForkspaceError, Result};
 use crate::git;
 use crate::state::State;
@@ -128,7 +127,7 @@ pub fn exec(args: LandArgs) -> Result {
         git::delete_ref(&base, &staging);
         let message = outcome?;
         if args.drop {
-            drop_cmd::remove_workspace(state, &args.name)?;
+            crate::workspace::remove(state, &args.name)?;
         }
         println!("{message}");
         if args.drop {
