@@ -414,6 +414,47 @@ fn moved_base_is_flagged_but_the_independent_workspace_still_enters_and_diffs() 
 
 #[test]
 #[serial]
+fn missing_or_ejected_workspace_volume_is_flagged_without_erasing_state() {
+    let home = common::setup_test_env();
+    let base = tempfile::tempdir().unwrap();
+    fs::write(base.path().join("file"), b"old\n").unwrap();
+    assert!(forkspace(
+        home.path(),
+        &[
+            "fork",
+            base.path().to_str().unwrap(),
+            "--name",
+            "ejected",
+            "--copy"
+        ]
+    )
+    .status
+    .success());
+    let view = State::load().unwrap().workspaces["ejected"]
+        .view_path
+        .clone();
+    let unavailable = view.with_file_name("ejected-volume-offline");
+    fs::rename(&view, &unavailable).unwrap();
+
+    let listed = forkspace(home.path(), &["ls", "--json"]);
+    assert!(listed.status.success());
+    let rows: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(rows[0]["view_missing"], true);
+    let entered = forkspace(home.path(), &["enter", "ejected", "--", "true"]);
+    assert_eq!(entered.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&entered.stderr);
+    assert!(stderr.contains("recorded view path"));
+    assert!(stderr.contains(&view.display().to_string()));
+    assert!(State::load().unwrap().workspaces.contains_key("ejected"));
+
+    fs::rename(unavailable, view).unwrap();
+    assert!(forkspace(home.path(), &["enter", "ejected", "--", "true"])
+        .status
+        .success());
+}
+
+#[test]
+#[serial]
 fn backend_override_is_echoed_but_other_platform_state_is_never_repaired_away() {
     let home = common::setup_test_env();
     let base = tempfile::tempdir().unwrap();

@@ -128,6 +128,7 @@ pub fn exec(args: RunArgs) -> Result {
 
     State::with_state(|state| {
         let ws = state.require_workspace(&args.name)?;
+        crate::reconcile::require_view(ws)?;
 
         if let Some(ref proc) = ws.process {
             if crate::process_watch::is_alive(proc.pid, proc.identity.as_deref()) {

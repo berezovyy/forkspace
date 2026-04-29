@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{ForkspaceError, Result};
 use crate::util::{forkspace_home, IoContext};
+use crate::workspace::Workspace;
 
 const SWEEP_LIMIT: usize = 128;
 
@@ -115,4 +116,15 @@ pub fn guard_merge(workspace: &str) -> Result {
 
 pub fn base_missing(base: &Path) -> bool {
     !base.is_dir()
+}
+
+pub fn require_view(workspace: &Workspace) -> Result {
+    if workspace.view_path.is_dir() {
+        return Ok(());
+    }
+    Err(ForkspaceError::RecordedPathMissing {
+        workspace: workspace.name.clone(),
+        kind: "view".to_string(),
+        path: workspace.view_path.display().to_string(),
+    })
 }

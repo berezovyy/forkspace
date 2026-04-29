@@ -87,6 +87,7 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
 
     let state = State::load()?;
     let workspace = state.require_workspace(&ws_name)?;
+    crate::reconcile::require_view(workspace)?;
     crate::reconcile::guard_merge(&ws_name)?;
     crate::pull::guard(&ws_name)?;
     let backend = select_backend(Some(workspace.backend_kind))?;

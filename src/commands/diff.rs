@@ -14,6 +14,7 @@ pub fn exec(args: DiffArgs) -> Result {
     crate::reconcile::guard_merge(&args.name)?;
     let state = State::load()?;
     let workspace = state.require_workspace(&args.name)?;
+    crate::reconcile::require_view(workspace)?;
 
     let need_line_counts = !args.stat && !args.files;
     let changes = if args.cumulative {

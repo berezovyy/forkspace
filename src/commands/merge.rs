@@ -13,6 +13,7 @@ pub fn exec(args: MergeArgs) -> Result {
             crate::reconcile::guard_merge(&args.name)?;
         }
         let workspace = state.require_workspace(&args.name)?.clone();
+        crate::reconcile::require_view(&workspace)?;
 
         if args.patch {
             let plan = merge_plan::build(&workspace, true)?;

@@ -47,6 +47,7 @@ pub fn exec(args: crate::cli::LsArgs) -> Result {
                     "degraded": workspace.degraded,
                     "probe_reason": workspace.probe_reason,
                     "base_missing": crate::reconcile::base_missing(&workspace.base),
+                    "view_missing": !workspace.view_path.is_dir(),
                 })
             })
             .collect();
