@@ -220,6 +220,30 @@ mod macos {
 
     #[test]
     #[serial]
+    fn cloned_large_file_consumes_less_than_one_megabyte_of_new_blocks() {
+        let (_home, base) = setup();
+        fs::write(
+            base.path().join("large.bin"),
+            vec![0x5a_u8; 64 * 1024 * 1024],
+        )
+        .unwrap();
+        let before = available_bytes(base.path());
+        let workspace = fork(base.path(), "zero-copy");
+        let allocated = before.saturating_sub(available_bytes(base.path()));
+        assert!(
+            allocated < 1024 * 1024,
+            "APFS clone allocated {allocated} bytes for unchanged file data"
+        );
+        assert_eq!(
+            fs::metadata(workspace.view_path.join("large.bin"))
+                .unwrap()
+                .len(),
+            64 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    #[serial]
     fn apfs_clone_preserves_quarantine_and_custom_extended_attributes() {
         if !command_exists("xattr") {
             eprintln!(
