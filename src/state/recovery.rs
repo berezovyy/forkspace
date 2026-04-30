@@ -4,8 +4,8 @@
 //! the next command.
 
 use std::fs;
-
-use serde_json::Map;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use super::{State, TrashRecord};
 use crate::changes::manifest;
@@ -19,15 +19,32 @@ use crate::util::{now_unix_ns, IoContext};
 const SWEEP_LIMIT: usize = 128;
 
 impl State {
-    /// Returns whether the state changed and needs saving.
+    /// Bring the state back in line with the disk after a crash. Returns whether the state
+    /// changed and needs saving.
+    ///
+    /// The sweeps run in dependency order: trashing partial creates and forgetting
+    /// interrupted drops happen before orphaned manifests are judged against the surviving
+    /// names, and trash discovery happens before pruning.
     pub(crate) fn reconcile_runtime(&mut self) -> Result<bool> {
         let trash_root = paths::trash_dir();
         fs::create_dir_all(&trash_root)
             .io_context(|| format!("create trash directory {}", trash_root.display()))?;
+
+        let mut changed = journal::sweep_terminal()?;
+        changed |= self.trash_abandoned_creates(&trash_root);
+        changed |= self.forget_interrupted_drops(&trash_root);
+        changed |= self.remove_orphan_manifests();
+        changed |= self.adopt_untracked_trash(&trash_root);
+        changed |= self.forget_deleted_trash();
+        Ok(changed)
+    }
+
+    /// A pending create whose creator died is moved to the trash, so no half-built view
+    /// lingers under a name that could be reused.
+    fn trash_abandoned_creates(&mut self, trash_root: &Path) -> bool {
         let mut changed = false;
-        changed |= journal::sweep_terminal()?;
         let mut retained = Vec::new();
-        for pending in self.pending_creates.drain(..) {
+        for pending in std::mem::take(&mut self.pending_creates) {
             if is_alive(pending.pid, pending.identity.as_deref()) {
                 retained.push(pending);
                 continue;
@@ -44,117 +61,140 @@ impl State {
             ));
             match fs::rename(&pending.path, &destination) {
                 Ok(()) => {
-                    self.trash.push(TrashRecord {
-                        path: destination,
-                        unknown_fields: Map::new(),
-                    });
+                    self.trash.push(TrashRecord::new(destination));
                     changed = true;
                 }
+                // Keep the intent so the next load retries the move.
                 Err(_) => retained.push(pending),
             }
         }
         self.pending_creates = retained;
+        changed
+    }
 
-        let interrupted_drops: Vec<_> = self
+    /// A workspace whose view is gone but whose trashed view (`<name>-<fork_time_ns>-…`) is
+    /// present was mid-drop when forkspace stopped; finish the drop by forgetting it.
+    fn forget_interrupted_drops(&mut self, trash_root: &Path) -> bool {
+        let interrupted: Vec<String> = self
             .workspaces
             .values()
+            .filter(|workspace| !workspace.view_path.exists())
             .filter(|workspace| {
-                if workspace.view_path.exists() {
-                    return false;
-                }
                 let prefix = format!("{}-{}-", workspace.name, workspace.fork_time_ns);
-                fs::read_dir(&trash_root).is_ok_and(|entries| {
-                    entries.take(SWEEP_LIMIT).flatten().any(|entry| {
-                        entry
-                            .file_name()
-                            .to_str()
-                            .is_some_and(|name| name.starts_with(&prefix))
-                    })
+                bounded_entries(trash_root).any(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with(&prefix))
                 })
             })
             .map(|workspace| workspace.name.clone())
             .collect();
-        for name in interrupted_drops {
-            self.workspaces.remove(&name);
-            let _ = manifest::remove(&name);
-            changed = true;
+        for name in &interrupted {
+            self.workspaces.remove(name);
+            let _ = manifest::remove(name);
         }
-
-        let manifest_root = paths::manifest_dir();
-        if let Ok(entries) = fs::read_dir(&manifest_root) {
-            for path in entries
-                .take(SWEEP_LIMIT)
-                .filter_map(|entry| entry.ok().map(|value| value.path()))
-            {
-                let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
-                    continue;
-                };
-                let (name, writer_pid, installed) = if let Some(name) = file_name
-                    .strip_prefix('.')
-                    .and_then(|value| value.split_once(".jsonl.tmp-"))
-                {
-                    (name.0, name.1.parse::<u32>().ok(), false)
-                } else if let Some(name) = file_name.strip_suffix(".jsonl.new") {
-                    (name, None, false)
-                } else if let Some(name) = file_name.strip_suffix(".jsonl") {
-                    (name, None, true)
-                } else {
-                    continue;
-                };
-                let owned = self.workspaces.contains_key(name)
-                    || self
-                        .pending_creates
-                        .iter()
-                        .any(|pending| pending.name == name);
-                let live_writer = writer_pid.is_some_and(|pid| is_alive(pid, None));
-                if ((!installed && !live_writer) || !owned) && fs::remove_file(&path).is_ok() {
-                    changed = true;
-                }
-            }
-        }
-
-        if let Ok(entries) = fs::read_dir(&trash_root) {
-            for path in entries
-                .take(SWEEP_LIMIT)
-                .filter_map(|entry| entry.ok().map(|value| value.path()))
-            {
-                if !self.trash.iter().any(|record| record.path == path) {
-                    self.trash.push(TrashRecord {
-                        path,
-                        unknown_fields: Map::new(),
-                    });
-                    changed = true;
-                }
-            }
-        }
-
-        self.trash.retain(|record| {
-            if !record.path.exists() {
-                changed = true;
-                return false;
-            }
-            true
-        });
-        Ok(changed)
+        !interrupted.is_empty()
     }
+
+    /// Manifests belong to a recorded or pending workspace; temporary manifests also need a
+    /// live writer. Anything else is deleted.
+    fn remove_orphan_manifests(&self) -> bool {
+        let mut changed = false;
+        for path in bounded_entries(&paths::manifest_dir()) {
+            let Some(file) = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(ManifestFile::parse)
+            else {
+                continue;
+            };
+            let owned = self.name_in_use(file.workspace);
+            let abandoned =
+                !file.installed && !file.writer_pid.is_some_and(|pid| is_alive(pid, None));
+            if (abandoned || !owned) && fs::remove_file(&path).is_ok() {
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Every directory in the trash is tracked, so deletions interrupted before they were
+    /// recorded are still retried.
+    fn adopt_untracked_trash(&mut self, trash_root: &Path) -> bool {
+        let mut changed = false;
+        for path in bounded_entries(trash_root) {
+            if !self.trash.iter().any(|record| record.path == path) {
+                self.trash.push(TrashRecord::new(path));
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Trash records whose directory has been deleted are dropped.
+    fn forget_deleted_trash(&mut self) -> bool {
+        let before = self.trash.len();
+        self.trash.retain(|record| record.path.exists());
+        self.trash.len() != before
+    }
+}
+
+/// A file in the manifest directory, classified by its name.
+struct ManifestFile<'a> {
+    workspace: &'a str,
+    /// The writing process, for in-progress `.<name>.jsonl.tmp-<pid>` files.
+    writer_pid: Option<u32>,
+    /// `<name>.jsonl`, as opposed to a temporary or staged (`.jsonl.new`) file.
+    installed: bool,
+}
+
+impl<'a> ManifestFile<'a> {
+    fn parse(file_name: &'a str) -> Option<Self> {
+        if let Some((workspace, pid)) = file_name
+            .strip_prefix('.')
+            .and_then(|name| name.split_once(".jsonl.tmp-"))
+        {
+            return Some(Self {
+                workspace,
+                writer_pid: pid.parse().ok(),
+                installed: false,
+            });
+        }
+        if let Some(workspace) = file_name.strip_suffix(".jsonl.new") {
+            return Some(Self {
+                workspace,
+                writer_pid: None,
+                installed: false,
+            });
+        }
+        file_name.strip_suffix(".jsonl").map(|workspace| Self {
+            workspace,
+            writer_pid: None,
+            installed: true,
+        })
+    }
+}
+
+/// At most [`SWEEP_LIMIT`] entries of `dir`, skipping unreadable ones; empty if `dir`
+/// cannot be read.
+fn bounded_entries(dir: &Path) -> impl Iterator<Item = PathBuf> {
+    fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .take(SWEEP_LIMIT)
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
 }
 
 /// Delete trashed directories in the background; a crash mid-delete just leaves them for
 /// the next sweep.
 pub fn start_trash_removals() {
-    let Ok(entries) = fs::read_dir(paths::trash_dir()) else {
-        return;
-    };
-    for path in entries
-        .take(SWEEP_LIMIT)
-        .filter_map(|entry| entry.ok().map(|value| value.path()))
-    {
-        let _ = std::process::Command::new("rm")
+    for path in bounded_entries(&paths::trash_dir()) {
+        let _ = Command::new("rm")
             .args(["-rf", "--"])
             .arg(path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn();
     }
 }

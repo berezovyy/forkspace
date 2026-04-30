@@ -1,10 +1,12 @@
 //! The workspace record persisted in `state.json`, and its lifecycle.
 
 mod create;
+mod env;
 pub mod guard;
 pub mod remove;
 
 pub use create::{create, CreateOptions};
+pub use env::{inherited_venvs, process_env, InheritedVenv};
 pub use remove::remove;
 
 use std::path::{Path, PathBuf};
@@ -15,33 +17,59 @@ use serde_json::{Map, Value};
 use crate::backend::{BackendKind, BackendState, OverlayState, ViewInfo};
 use crate::changes::manifest::ManifestStatus;
 use crate::error::{ForkspaceError, Result};
+use crate::paths;
+use crate::process::watch;
 use crate::util::{now_rfc3339, now_unix_ns};
 
+/// The dev server `forkspace run` started in a workspace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunningProcess {
+    /// Leader of the process group.
     pub pid: u32,
+    /// Guards against PID reuse; see [`crate::process::watch`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<String>,
     pub command: String,
+    /// The app's `$PORT`, which the proxy forwards to.
     pub port: u16,
     #[serde(flatten)]
     pub unknown_fields: Map<String, Value>,
 }
 
+impl RunningProcess {
+    /// Whether this exact process (not a PID recycler) is still running.
+    pub fn is_alive(&self) -> bool {
+        watch::is_alive(self.pid, self.identity.as_deref())
+    }
+
+    /// Terminate the process group; returns whether it was still running.
+    pub fn terminate(&self) -> bool {
+        watch::terminate_group(self.pid, self.identity.as_deref())
+    }
+}
+
+/// One workspace as recorded in `state.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub name: String,
+    /// The canonical directory this workspace was forked from (a parent's view if stacked).
     pub base: PathBuf,
+    /// The workspace this one is stacked on, if any.
     pub parent: Option<String>,
+    /// RFC 3339 creation time.
     pub created: String,
     pub session: Option<String>,
+    /// Git branch created by `fork --branch`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// Removed automatically when the `enter` session that created it exits.
     #[serde(default)]
     pub ephemeral: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<RunningProcess>,
+    /// The directory users work in.
     pub view_path: PathBuf,
+    /// Fork time; also part of the trashed view's name, which crash recovery relies on.
     pub fork_time_ns: u128,
     pub backend_kind: BackendKind,
     pub backend_state: BackendState,
@@ -51,8 +79,10 @@ pub struct Workspace {
     pub manifest_generation: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_pull: Option<String>,
+    /// The backend fell back to a slower path (e.g. a full copy) or lost change tracking.
     #[serde(default, skip_serializing_if = "is_false")]
     pub degraded: bool,
+    /// Why the backend behaved as it did, shown to the user after `fork`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe_reason: Option<String>,
     #[serde(flatten)]
@@ -60,30 +90,14 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn compare_key(&self) -> (PathBuf, Option<String>) {
-        (
-            self.base
-                .canonicalize()
-                .unwrap_or_else(|_| self.base.clone()),
-            self.parent.clone(),
-        )
-    }
-
+    /// A fresh overlay record laid out under [`paths::overlay_root`], with nothing created
+    /// on disk. Used to build records directly, e.g. in tests.
     pub fn new(name: &str, base: PathBuf, parent: Option<String>) -> Self {
-        let root = crate::paths::overlay_root(name);
+        let root = paths::overlay_root(name);
         let merged = root.join("merged");
-        Self {
-            name: name.to_string(),
-            base,
-            parent,
-            created: now_rfc3339(),
-            session: None,
-            branch: None,
-            ephemeral: false,
-            process: None,
+        let view = ViewInfo {
             view_path: merged.clone(),
             fork_time_ns: now_unix_ns(),
-            backend_kind: BackendKind::Overlay,
             backend_state: BackendState::Overlay(OverlayState {
                 upper: root.join("upper"),
                 work: root.join("work"),
@@ -93,14 +107,23 @@ impl Workspace {
                 unknown_fields: Map::new(),
             }),
             manifest_status: ManifestStatus::Absent,
-            manifest_generation: 0,
-            last_pull: None,
             degraded: false,
             probe_reason: None,
-            unknown_fields: Map::new(),
+        };
+        Self {
+            manifest_generation: 0,
+            ..Self::from_view(
+                name.to_string(),
+                base,
+                parent,
+                None,
+                BackendKind::Overlay,
+                view,
+            )
         }
     }
 
+    /// The record for a view a backend just materialized.
     pub fn from_view(
         name: String,
         base: PathBuf,
@@ -131,6 +154,18 @@ impl Workspace {
         }
     }
 
+    /// Workspaces can be compared side by side only if they share this key: the same
+    /// canonical base and the same parent.
+    pub fn compare_key(&self) -> (PathBuf, Option<String>) {
+        (
+            self.base
+                .canonicalize()
+                .unwrap_or_else(|_| self.base.clone()),
+            self.parent.clone(),
+        )
+    }
+
+    /// The overlay layers, or [`ForkspaceError::BackendUnavailable`] for a snapshot workspace.
     pub fn linux_state(&self) -> Result<&OverlayState> {
         match &self.backend_state {
             BackendState::Overlay(state) => Ok(state),
@@ -144,14 +179,17 @@ impl Workspace {
         }
     }
 
+    /// The overlay's writable layer, where this workspace's changes live.
     pub fn upper_path(&self) -> Result<&Path> {
         Ok(&self.linux_state()?.upper)
     }
 
+    /// The overlay's scratch directory.
     pub fn work_path(&self) -> Result<&Path> {
         Ok(&self.linux_state()?.work)
     }
 
+    /// Whether the overlay layers live on tmpfs (always false for snapshot workspaces).
     pub fn tmpfs(&self) -> bool {
         self.linux_state().is_ok_and(|state| state.tmpfs)
     }

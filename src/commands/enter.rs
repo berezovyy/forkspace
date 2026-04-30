@@ -1,89 +1,23 @@
-use std::io::{self, Read as _};
-use std::path::PathBuf;
-use std::process::Command;
+//! `forkspace enter`: open a shell (or run a command) inside a workspace, optionally creating it
+//! first and merging, dropping, or discarding it on exit.
 
-use crate::backend::select_backend;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::io::{self, IsTerminal, Read as _};
+use std::path::PathBuf;
+use std::process::{Command, ExitStatus};
+
+use crate::backend::{select_backend, WorkspaceBackend};
+use crate::cli::EnterArgs;
 use crate::error::{ForkspaceError, Result};
 use crate::state::State;
-use crate::sync::merge;
-use crate::util::IoContext;
-use crate::workspace::guard;
+use crate::sync::{merge, plan};
+use crate::util::{now_unix_ns, IoContext};
+use crate::workspace::{self, guard, CreateOptions};
 
-fn generate_ephemeral_name() -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::SystemTime;
-
-    let mut hasher = DefaultHasher::new();
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        .hash(&mut hasher);
-    std::process::id().hash(&mut hasher);
-    let hash = hasher.finish();
-    format!("ephemeral-{:08x}", hash as u32)
-}
-
-fn read_single_char() -> Option<char> {
-    let mut buf = [0u8; 1];
-    match io::stdin().read_exact(&mut buf) {
-        Ok(()) => Some(buf[0] as char),
-        Err(_) => None,
-    }
-}
-
-fn drop_workspace_by_name(name: &str) -> Result {
-    State::with_state(|state| {
-        crate::workspace::remove(state, name)?;
-        Ok(())
-    })
-}
-
-pub fn exec(args: crate::cli::EnterArgs) -> Result {
-    let ws_name = if args.ephemeral || args.create {
-        let name = if let Some(n) = args.name.clone() {
-            n
-        } else if args.ephemeral {
-            generate_ephemeral_name()
-        } else {
-            return Err(ForkspaceError::InvalidArgument(
-                "workspace name required when using --new".to_string(),
-            ));
-        };
-
-        let base = args
-            .from
-            .as_deref()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-
-        let ws = crate::workspace::create(
-            base,
-            &name,
-            crate::workspace::CreateOptions {
-                tmpfs: args.tmpfs,
-                force_copy: args.copy,
-                ..Default::default()
-            },
-        )?;
-
-        if args.ephemeral {
-            State::with_state(|state| {
-                if let Some(stored) = state.workspaces.get_mut(&name) {
-                    stored.ephemeral = true;
-                }
-                Ok(())
-            })?;
-        }
-
-        println!(
-            "created workspace '{}' from {}",
-            ws.name,
-            ws.view_path.display()
-        );
-
-        name
+pub fn exec(args: EnterArgs) -> Result {
+    let name = if args.ephemeral || args.create {
+        create_for_entry(&args)?
     } else {
         args.name.clone().ok_or_else(|| {
             ForkspaceError::InvalidArgument(
@@ -93,86 +27,163 @@ pub fn exec(args: crate::cli::EnterArgs) -> Result {
     };
 
     let state = State::load()?;
-    let workspace = state.require_workspace(&ws_name)?;
+    let workspace = state.require_workspace(&name)?;
     guard::require_view(workspace)?;
-    guard::ensure_idle(&ws_name)?;
+    guard::ensure_idle(&name)?;
     let backend = select_backend(Some(workspace.backend_kind))?;
 
-    let mut cmd = if !args.command.is_empty() {
-        let mut c = Command::new(&args.command[0]);
-        c.args(&args.command[1..]);
-        c
-    } else {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        Command::new(shell)
-    };
-
-    cmd.current_dir(backend.view_path(workspace))
-        .env("FORKSPACE_WORKSPACE", &workspace.name)
-        .env("FORKSPACE_BASE", &workspace.base);
-    for (key, value) in backend.shell_env(workspace) {
-        cmd.env(key, value);
-    }
-
-    if let Some(ref sess) = args.session.or_else(|| workspace.session.clone()) {
-        cmd.env("FORKSPACE_SESSION", sess);
-    }
-
-    let status = cmd
+    let status = shell_command(&args, &state, workspace, backend.as_ref())?
         .status()
         .io_context(|| "failed to spawn command".to_string())?;
-
-    if status.success() {
-        println!("left '{}'", ws_name);
-    } else {
-        let code = status.code().unwrap_or(-1);
-        eprintln!("left '{}' (exit code {})", ws_name, code);
-    }
+    report_exit(&name, status);
 
     if args.merge_on_exit {
-        let state = State::load()?;
-        let workspace = state.require_workspace(&ws_name)?;
-        let changes = backend.changes(workspace, false, false)?;
-
-        if changes.is_empty() {
-            println!("clean — no changes to merge");
-        } else {
-            let preview = crate::sync::plan::build(workspace, true)?;
-            println!("{}", crate::sync::plan::render(&preview));
-            let interactive = unsafe { libc::isatty(libc::STDIN_FILENO) } == 1;
-            let choice = if interactive {
-                eprint!("[m]erge  [d]rop  [k]eep workspace? ");
-                let choice = read_single_char().unwrap_or('k');
-                eprintln!();
-                choice
-            } else {
-                'k'
-            };
-
-            match choice {
-                'm' => {
-                    merge::merge_workspace(workspace)?;
-                    println!("merged changes into base");
-                    drop_workspace_by_name(&ws_name)?;
-                    println!("removed '{}' after merge", ws_name);
-                    return Ok(());
-                }
-                'd' => {
-                    drop_workspace_by_name(&ws_name)?;
-                    println!("removed");
-                    return Ok(());
-                }
-                _ => {
-                    println!("keeping workspace");
-                }
-            }
+        let outcome = resolve_changes_on_exit(&name, backend.as_ref())?;
+        if outcome == Outcome::Removed {
+            return Ok(());
         }
     }
-
     if args.ephemeral {
-        drop_workspace_by_name(&ws_name)?;
+        drop_workspace(&name)?;
         println!("ephemeral workspace removed");
     }
-
     Ok(())
+}
+
+/// Create the workspace for `--new` / `--ephemeral` and return its name.
+fn create_for_entry(args: &EnterArgs) -> Result<String> {
+    let name = match (&args.name, args.ephemeral) {
+        (Some(name), _) => name.clone(),
+        (None, true) => ephemeral_name(),
+        (None, false) => {
+            return Err(ForkspaceError::InvalidArgument(
+                "workspace name required when using --new".to_string(),
+            ))
+        }
+    };
+    let base = PathBuf::from(args.from.as_deref().unwrap_or("."));
+
+    let created = workspace::create(
+        base,
+        &name,
+        CreateOptions {
+            tmpfs: args.tmpfs,
+            force_copy: args.copy,
+            ..Default::default()
+        },
+    )?;
+    if args.ephemeral {
+        State::with_state(|state| {
+            if let Some(stored) = state.workspaces.get_mut(&name) {
+                stored.ephemeral = true;
+            }
+            Ok(())
+        })?;
+    }
+    println!(
+        "created workspace '{}' from {}",
+        created.name,
+        created.view_path.display()
+    );
+    super::fork::warn_inherited_venvs(&created);
+    Ok(name)
+}
+
+/// A name unlikely to collide: `ephemeral-` plus 8 hex digits hashed from time and PID.
+fn ephemeral_name() -> String {
+    let mut hasher = DefaultHasher::new();
+    now_unix_ns().hash(&mut hasher);
+    std::process::id().hash(&mut hasher);
+    format!("ephemeral-{:08x}", hasher.finish() as u32)
+}
+
+/// The user's command (or `$SHELL`) set up to run in the workspace view.
+fn shell_command(
+    args: &EnterArgs,
+    state: &State,
+    workspace: &workspace::Workspace,
+    backend: &dyn WorkspaceBackend,
+) -> Result<Command> {
+    let mut command = match args.command.split_first() {
+        Some((program, rest)) => {
+            let mut command = Command::new(program);
+            command.args(rest);
+            command
+        }
+        None => Command::new(std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())),
+    };
+    command
+        .current_dir(backend.view_path(workspace))
+        .envs(workspace::process_env(state, workspace)?);
+    if let Some(session) = args.session.as_ref().or(workspace.session.as_ref()) {
+        command.env("FORKSPACE_SESSION", session);
+    }
+    Ok(command)
+}
+
+fn report_exit(name: &str, status: ExitStatus) {
+    if status.success() {
+        println!("left '{}'", name);
+    } else {
+        let code = status.code().unwrap_or(-1);
+        eprintln!("left '{}' (exit code {})", name, code);
+    }
+}
+
+#[derive(PartialEq, Eq)]
+enum Outcome {
+    Kept,
+    Removed,
+}
+
+/// `--merge-on-exit`: show the pending changes and ask whether to merge, drop, or keep.
+/// Without a terminal on stdin the workspace is kept.
+fn resolve_changes_on_exit(name: &str, backend: &dyn WorkspaceBackend) -> Result<Outcome> {
+    let state = State::load()?;
+    let workspace = state.require_workspace(name)?;
+    if backend.changes(workspace, false, false)?.is_empty() {
+        println!("clean — no changes to merge");
+        return Ok(Outcome::Kept);
+    }
+
+    println!("{}", plan::render(&plan::build(workspace, true)?));
+    match prompt_choice() {
+        Some('m') => {
+            merge::merge_workspace(workspace)?;
+            println!("merged changes into base");
+            drop_workspace(name)?;
+            println!("removed '{}' after merge", name);
+            Ok(Outcome::Removed)
+        }
+        Some('d') => {
+            drop_workspace(name)?;
+            println!("removed");
+            Ok(Outcome::Removed)
+        }
+        _ => {
+            println!("keeping workspace");
+            Ok(Outcome::Kept)
+        }
+    }
+}
+
+/// Ask `[m]erge  [d]rop  [k]eep` and read one byte, or `None` if stdin is not a terminal.
+fn prompt_choice() -> Option<char> {
+    if !io::stdin().is_terminal() {
+        return None;
+    }
+    eprint!("[m]erge  [d]rop  [k]eep workspace? ");
+    let choice = read_single_char();
+    eprintln!();
+    choice
+}
+
+fn read_single_char() -> Option<char> {
+    let mut buf = [0u8; 1];
+    io::stdin().read_exact(&mut buf).ok()?;
+    Some(char::from(buf[0]))
+}
+
+fn drop_workspace(name: &str) -> Result {
+    State::with_state(|state| workspace::remove(state, name))
 }

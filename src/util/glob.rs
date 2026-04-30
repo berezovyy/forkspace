@@ -1,3 +1,5 @@
+//! Minimal shell-style glob matching for workspace-name patterns.
+
 /// Shell-style glob match supporting `*` and `?` (no character classes).
 pub fn glob_matches(pattern: &str, text: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();

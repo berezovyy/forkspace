@@ -12,10 +12,12 @@ pub fn forkspace_home() -> PathBuf {
     }
 }
 
+/// The workspace registry.
 pub fn state_file() -> PathBuf {
     forkspace_home().join("state.json")
 }
 
+/// `flock` target serializing every state mutation.
 pub fn state_lock() -> PathBuf {
     forkspace_home().join("state.lock")
 }
@@ -30,6 +32,7 @@ pub fn snapshot_root() -> PathBuf {
     forkspace_home().join("workspaces")
 }
 
+/// Directory of the snapshot workspace `name`.
 pub fn snapshot_dir(name: &str) -> PathBuf {
     snapshot_root().join(name)
 }
@@ -49,7 +52,7 @@ pub fn manifest_dir() -> PathBuf {
     forkspace_home().join("manifests")
 }
 
-/// Dev-server stdout/stderr logs.
+/// Dev-server stdout/stderr logs for workspace `name`.
 pub fn log_dir(name: &str) -> PathBuf {
     forkspace_home().join("logs").join(name)
 }

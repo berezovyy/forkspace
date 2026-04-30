@@ -7,13 +7,20 @@
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
+use crate::util::now_unix_ns;
+
+/// Environment variable carrying the identity token of a process forkspace spawned.
+pub(crate) const IDENTITY_ENV: &str = "FORKSPACE_PROCESS_IDENTITY";
+
+/// The identity of the running process `pid`: its [`IDENTITY_ENV`] value if set, otherwise
+/// its start time. `None` if the process cannot be inspected.
 pub fn identity(pid: u32) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
         if let Ok(bytes) = std::fs::read(format!("/proc/{pid}/environ")) {
             if let Some(value) = bytes
                 .split(|byte| *byte == 0)
-                .find_map(|entry| entry.strip_prefix(b"FORKSPACE_PROCESS_IDENTITY="))
+                .find_map(|entry| env_value(entry, IDENTITY_ENV.as_bytes()))
             {
                 return Some(String::from_utf8_lossy(value).into_owned());
             }
@@ -33,9 +40,9 @@ pub fn identity(pid: u32) -> Option<String> {
         {
             if let Some(value) = String::from_utf8_lossy(&output.stdout)
                 .split_whitespace()
-                .find_map(|field| field.strip_prefix("FORKSPACE_PROCESS_IDENTITY="))
+                .find_map(|field| env_value(field.as_bytes(), IDENTITY_ENV.as_bytes()))
             {
-                return Some(value.to_string());
+                return Some(String::from_utf8_lossy(value).into_owned());
             }
         }
         let output = Command::new("ps")
@@ -50,15 +57,14 @@ pub fn identity(pid: u32) -> Option<String> {
     }
 }
 
+/// The value of `entry` if it is the assignment `key=value`.
+fn env_value<'a>(entry: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    entry.strip_prefix(key)?.strip_prefix(b"=")
+}
+
+/// A fresh identity token to hand a child process through [`IDENTITY_ENV`].
 pub fn new_identity() -> String {
-    format!(
-        "forkspace-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    )
+    format!("forkspace-{}-{}", std::process::id(), now_unix_ns())
 }
 
 #[cfg(target_os = "macos")]
@@ -86,6 +92,7 @@ fn is_signalable(pid: u32) -> bool {
     pid != 0 && pid <= i32::MAX as u32
 }
 
+/// Whether `pid` is running and, when `expected_identity` is given, is still that process.
 pub fn is_alive(pid: u32, expected_identity: Option<&str>) -> bool {
     if !is_signalable(pid) {
         return false;

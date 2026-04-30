@@ -13,10 +13,10 @@ use serde_json::{Map, Value};
 use super::{ProxyConfig, State, CURRENT_VERSION};
 use crate::backend::{BackendKind, BackendState, OverlayState};
 use crate::changes::manifest::ManifestStatus;
-use crate::error::Result;
+use crate::error::{ForkspaceError, Result};
 use crate::util::fs::{sync_dir, sync_file, write_atomic};
 use crate::util::IoContext;
-use crate::workspace::Workspace;
+use crate::workspace::{RunningProcess, Workspace};
 
 #[derive(Deserialize)]
 struct LegacyState {
@@ -33,10 +33,10 @@ struct LegacyState {
 #[derive(Deserialize)]
 struct LegacyWorkspace {
     name: String,
-    base: std::path::PathBuf,
-    upper: std::path::PathBuf,
-    work: std::path::PathBuf,
-    merged: std::path::PathBuf,
+    base: PathBuf,
+    upper: PathBuf,
+    work: PathBuf,
+    merged: PathBuf,
     parent: Option<String>,
     created: String,
     session: Option<String>,
@@ -49,7 +49,7 @@ struct LegacyWorkspace {
     #[serde(default)]
     ephemeral: bool,
     #[serde(default)]
-    process: Option<crate::workspace::RunningProcess>,
+    process: Option<RunningProcess>,
     #[serde(flatten)]
     unknown_fields: Map<String, Value>,
 }
@@ -86,8 +86,9 @@ impl From<LegacyWorkspace> for Workspace {
     }
 }
 
+/// The v1 backup and the in-progress marker, both next to the state file.
 fn migration_paths(path: &Path) -> (PathBuf, PathBuf) {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = parent_dir(path);
     (parent.join("state.v1.bak"), parent.join(".migrating"))
 }
 
@@ -117,9 +118,8 @@ pub(super) fn recover_interrupted(path: &Path) -> Result {
 
 /// Parse a version-1 state file and persist it as the current version.
 pub(super) fn migrate_v1(path: &Path, content: &str, value: Value) -> Result<State> {
-    let legacy: LegacyState = serde_json::from_value(value).map_err(|e| {
-        crate::error::ForkspaceError::StateCorrupted(format!("invalid version 1 state file: {e}"))
-    })?;
+    let legacy: LegacyState = serde_json::from_value(value)
+        .map_err(|e| ForkspaceError::StateCorrupted(format!("invalid version 1 state file: {e}")))?;
     let (backup, marker) = migration_paths(path);
     fs::write(&marker, b"1 -> 2\n")
         .io_context(|| format!("create migration marker {}", marker.display()))?;
@@ -134,9 +134,8 @@ pub(super) fn migrate_v1(path: &Path, content: &str, value: Value) -> Result<Sta
             .map(|(name, workspace)| (name, workspace.into()))
             .collect(),
         proxy: legacy.proxy,
-        pending_creates: Vec::new(),
-        trash: Vec::new(),
         unknown_fields: legacy.unknown_fields,
+        ..State::default()
     };
     state.save()?;
     fs::remove_file(&marker)

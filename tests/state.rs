@@ -309,3 +309,21 @@ fn test_orphan_manifest_is_removed_during_reconciliation() {
     State::load().unwrap();
     assert!(!orphan.exists());
 }
+
+#[test]
+#[serial]
+fn forkspace_home_is_created_private_and_tightened() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = tempfile::tempdir().unwrap();
+    let home = parent.path().join("fresh-home");
+    unsafe { std::env::set_var("FORKSPACE_HOME", &home) };
+    State::load().unwrap();
+    let mode = std::fs::metadata(&home).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).unwrap();
+    State::load().unwrap();
+    let mode = std::fs::metadata(&home).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+}

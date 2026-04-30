@@ -4,7 +4,6 @@ use crate::backend::{select_backend, DestroyMode};
 use crate::changes::manifest;
 use crate::error::Result;
 use crate::git;
-use crate::process::watch::terminate_group;
 use crate::state::State;
 use crate::workspace::guard;
 
@@ -18,7 +17,7 @@ pub fn remove(state: &mut State, name: &str) -> Result {
     warn_if_unlanded(state, name);
 
     if let Some(process) = &workspace.process {
-        terminate_group(process.pid, process.identity.as_deref());
+        process.terminate();
     }
 
     let backend = select_backend(Some(workspace.backend_kind))?;
@@ -60,16 +59,12 @@ fn warn_if_unlanded(state: &State, name: &str) {
         .first()
         .map_or_else(|| workspace.base.clone(), |root| root.base.clone());
     let reference = format!("refs/heads/{branch}");
-    let unlanded = git::rev_parse(&workspace.view_path, &reference)
-        .ok()
-        .is_some_and(|tip| {
-            git::rev_parse(&root_base, &reference)
-                .ok()
-                .is_none_or(|base_tip| {
-                    !git::is_ancestor(&root_base, &tip, &base_tip).unwrap_or(false)
-                })
-        });
-    if unlanded {
+    let Ok(tip) = git::rev_parse(&workspace.view_path, &reference) else {
+        return;
+    };
+    let landed = git::rev_parse(&root_base, &reference)
+        .is_ok_and(|base_tip| git::is_ancestor(&root_base, &tip, &base_tip).unwrap_or(false));
+    if !landed {
         eprintln!(
             "warning: workspace '{name}' has unlanded work on '{branch}' — run `forkspace land {name}` first, or accept history loss"
         );

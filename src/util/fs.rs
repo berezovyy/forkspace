@@ -37,10 +37,39 @@ impl WalkDirExt for std::result::Result<walkdir::DirEntry, walkdir::Error> {
     }
 }
 
+/// Create `path`'s parent directory (and its ancestors) if missing.
 pub fn ensure_parent_dir(path: &Path) -> Result {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .io_context(|| format!("create parent directory {}", parent.display()))?;
+    }
+    Ok(())
+}
+
+/// Create `path` (and its ancestors) if missing, and make `path` itself owner-only (0700).
+///
+/// Workspaces hold copies of ignored files such as `.env`, so the directory above them must
+/// not be traversable by other users whatever the umask was. An existing directory with
+/// group or other bits is tightened in place.
+pub fn ensure_private_dir(path: &Path) -> Result {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    if !path.is_dir() {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .io_context(|| format!("create parent directory {}", parent.display()))?;
+        }
+        match fs::DirBuilder::new().mode(0o700).create(path) {
+            Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => {
+                return Err(error).io_context(|| format!("create {}", path.display()));
+            }
+            _ => {}
+        }
+    }
+    let metadata = fs::metadata(path).io_context(|| format!("inspect {}", path.display()))?;
+    if metadata.mode() & 0o077 != 0 {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .io_context(|| format!("make {} private", path.display()))?;
     }
     Ok(())
 }

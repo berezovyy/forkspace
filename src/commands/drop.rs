@@ -1,3 +1,6 @@
+//! `forkspace drop`: remove one workspace (with `--force`, its descendants too), every workspace
+//! matching a glob, or all of them.
+
 use crate::cli::DropArgs;
 use crate::error::{ForkspaceError, Result};
 use crate::state::State;
@@ -14,24 +17,29 @@ pub fn exec(args: DropArgs) -> Result {
         )
     })?;
     if args.glob {
-        return drop_matching(&name);
+        drop_matching(&name)
+    } else {
+        drop_one(&name, args.force)
     }
+}
 
+/// Drop `name`; its descendants go too with `force`, otherwise their presence is an error.
+fn drop_one(name: &str, force: bool) -> Result {
     State::with_state(|state| {
-        state.require_workspace(&name)?;
+        state.require_workspace(name)?;
         let children: Vec<String> = state
-            .children_of(&name)
+            .children_of(name)
             .iter()
             .map(|ws| ws.name.clone())
             .collect();
-        if !children.is_empty() && !args.force {
+        if !children.is_empty() && !force {
             return Err(ForkspaceError::HasChildren {
-                workspace: name.clone(),
+                workspace: name.to_string(),
                 children,
             });
         }
 
-        let names = workspace::remove::with_descendants(state, &name);
+        let names = workspace::remove::with_descendants(state, name);
         remove_all(state, &names)?;
         if names.len() == 1 {
             println!("removed '{name}'");

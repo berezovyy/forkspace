@@ -10,6 +10,7 @@ pub fn ensure_idle(name: &str) -> Result {
     ensure_no_interrupted_pull(name)
 }
 
+/// Refuse while a merge of `name` into its base is half-applied.
 pub fn ensure_no_interrupted_merge(name: &str) -> Result {
     if journal::find_open(OperationKind::Merge, name)?.is_some() {
         return Err(ForkspaceError::InterruptedOperation {
@@ -21,6 +22,7 @@ pub fn ensure_no_interrupted_merge(name: &str) -> Result {
     Ok(())
 }
 
+/// Refuse while a pull into `name` is half-applied: its view mixes two base versions.
 pub fn ensure_no_interrupted_pull(name: &str) -> Result {
     if journal::find_open(OperationKind::Pull, name)?.is_some() {
         return Err(ForkspaceError::StaleAncestor(name.to_string()));

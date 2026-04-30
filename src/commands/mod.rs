@@ -1,3 +1,6 @@
+//! One handler per subcommand: check the arguments, call into the domain modules, and
+//! print the result.
+
 pub(crate) mod compare;
 pub(crate) mod completions;
 pub mod diff;
@@ -14,6 +17,7 @@ pub(crate) mod switch;
 use crate::cli::{Cli, Commands};
 use crate::error::Result;
 
+/// Run the parsed subcommand.
 pub fn dispatch(cli: Cli) -> Result {
     match cli.command {
         Commands::Fork(args) => fork::exec(args),

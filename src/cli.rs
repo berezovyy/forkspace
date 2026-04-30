@@ -1,6 +1,9 @@
+//! Command-line grammar. Help text and flag names here are part of the CLI contract.
+
+use std::path::PathBuf;
+
 use clap::{Args, Parser, Subcommand};
 use clap_complete::Shell;
-use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(

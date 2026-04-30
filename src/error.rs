@@ -1,7 +1,12 @@
+//! The crate-wide error type and the process exit code each error maps to.
+//!
+//! Both the `Display` text and [`ForkspaceError::exit_code`] are part of the CLI contract.
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ForkspaceError {
+    // Workspace lookup and naming.
     #[error("workspace '{0}' not found (run 'forkspace ls' to see available workspaces)")]
     WorkspaceNotFound(String),
 
@@ -10,6 +15,20 @@ pub enum ForkspaceError {
 
     #[error("branch conflict: {0}")]
     BranchExists(String),
+
+    #[error("recorded {kind} path for workspace '{workspace}' is missing: {path}")]
+    RecordedPathMissing {
+        workspace: String,
+        kind: String,
+        path: String,
+    },
+
+    // Refusals: the workspace or its base is not in a state where the command is safe.
+    #[error("workspace '{workspace}' has children: {children:?} — use --force to remove all, or drop children first")]
+    HasChildren {
+        workspace: String,
+        children: Vec<String>,
+    },
 
     #[error("workspace '{0}' has uncommitted tracked changes; commit them, or use `forkspace merge` for file-level transfer")]
     WorkspaceDirty(String),
@@ -24,34 +43,13 @@ pub enum ForkspaceError {
         expected: String,
     },
 
-    #[error("recorded {kind} path for workspace '{workspace}' is missing: {path}")]
-    RecordedPathMissing {
-        workspace: String,
-        kind: String,
-        path: String,
-    },
-
-    #[error("state operation failed: {0}")]
-    StateFailed(String),
-
-    #[error("state corrupted: {0}")]
-    StateCorrupted(String),
-
-    #[error("lock failed: {0}")]
-    LockFailed(String),
-
-    #[error("workspace '{workspace}' has children: {children:?} — use --force to remove all, or drop children first")]
-    HasChildren {
-        workspace: String,
-        children: Vec<String>,
-    },
-
     #[error("merge conflict: base changed since fork for {paths:?}; review the paths or rerun with --overwrite-base")]
     MergeConflict { paths: Vec<String> },
 
     #[error("pull conflict: base and workspace both changed {paths:?}; review the paths or rerun with --theirs")]
     PullConflict { paths: Vec<String> },
 
+    // Half-applied operations that must be resumed first.
     #[error("workspace '{0}' has an interrupted pull; run `forkspace pull {0} --resume` before diff or merge")]
     StaleAncestor(String),
 
@@ -62,18 +60,30 @@ pub enum ForkspaceError {
         remedy: String,
     },
 
-    #[error("mount failed: {0}")]
-    MountFailed(String),
+    // The state store.
+    #[error("state operation failed: {0}")]
+    StateFailed(String),
 
+    #[error("state corrupted: {0}")]
+    StateCorrupted(String),
+
+    #[error("lock failed: {0}")]
+    LockFailed(String),
+
+    // Workspace backends.
     #[error("unsupported capability: {diagnosis}; {remedy}")]
     CapabilityUnsupported { diagnosis: String, remedy: String },
 
     #[error("backend unavailable: {diagnosis}; {remedy}")]
     BackendUnavailable { diagnosis: String, remedy: String },
 
+    #[error("mount failed: {0}")]
+    MountFailed(String),
+
     #[error("unmount failed: {0}")]
     UnmountFailed(String),
 
+    // Dev-server processes and the proxy.
     #[error("process failed: {0}")]
     ProcessFailed(String),
 
@@ -91,12 +101,14 @@ pub enum ForkspaceError {
     #[error("no process running in workspace '{0}'")]
     NoProcessRunning(String),
 
+    // External tools.
     #[error("package manager failed: {0}")]
     PackageManagerFailed(String),
 
     #[error("git operation failed: {0}")]
     GitFailed(String),
 
+    // Generic.
     #[error("{0}")]
     InvalidArgument(String),
 
@@ -112,21 +124,37 @@ pub enum ForkspaceError {
 }
 
 impl ForkspaceError {
+    /// The process exit status for this error.
+    ///
+    /// The match is exhaustive on purpose: a new variant must choose its code explicitly.
     pub fn exit_code(&self) -> i32 {
         match self {
-            Self::WorkspaceNotFound(_) => 3,
-            Self::WorkspaceExists(_) => 4,
-            Self::BranchExists(_) => 4,
+            Self::WorkspaceNotFound(_) | Self::RecordedPathMissing { .. } => 3,
+            Self::WorkspaceExists(_) | Self::BranchExists(_) => 4,
             Self::HasChildren { .. }
-            | Self::MergeConflict { .. }
-            | Self::PullConflict { .. }
             | Self::WorkspaceDirty(_)
             | Self::BranchCheckedOut { .. }
-            | Self::BaseMismatch { .. } => 5,
+            | Self::BaseMismatch { .. }
+            | Self::MergeConflict { .. }
+            | Self::PullConflict { .. } => 5,
             Self::CapabilityUnsupported { .. } => 6,
             Self::BackendUnavailable { .. } | Self::MountFailed(_) => 7,
-            Self::RecordedPathMissing { .. } => 3,
-            _ => 1,
+            Self::StaleAncestor(_)
+            | Self::InterruptedOperation { .. }
+            | Self::StateFailed(_)
+            | Self::StateCorrupted(_)
+            | Self::LockFailed(_)
+            | Self::UnmountFailed(_)
+            | Self::ProcessFailed(_)
+            | Self::ProxyFailed(_)
+            | Self::PortRangeExhausted
+            | Self::ProcessAlreadyRunning(_)
+            | Self::NoProcessRunning(_)
+            | Self::PackageManagerFailed(_)
+            | Self::GitFailed(_)
+            | Self::InvalidArgument(_)
+            | Self::Serialization(_)
+            | Self::Io { .. } => 1,
         }
     }
 }

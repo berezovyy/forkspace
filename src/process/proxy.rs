@@ -1,67 +1,133 @@
+//! The dev-server proxy: a detached daemon on a fixed port that forwards each TCP
+//! connection to the dev server of the currently active workspace.
+//!
+//! The daemon holds no routing state of its own; it re-reads `state.json` per connection,
+//! so `forkspace switch` takes effect without restarting it.
+
 use std::io;
 use std::net::{Shutdown, TcpListener, TcpStream};
+use std::process::Command;
 use std::thread;
+use std::time::Duration;
 
+use super::port_is_free;
+use super::spawn::{create_logs, spawn_detached};
+use super::watch::{self, IDENTITY_ENV};
 use crate::error::{ForkspaceError, Result};
-use crate::state::State;
+use crate::paths;
+use crate::state::{ProxyConfig, State};
 
+/// Port the proxy daemon listens on.
+const LISTEN_PORT: u16 = 4000;
+
+/// Serve forever on `listen_port`; the body of the hidden `proxy-daemon` subcommand.
 pub fn run_proxy(listen_port: u16) -> Result {
     let listener = TcpListener::bind(("127.0.0.1", listen_port))
         .map_err(|e| ForkspaceError::ProxyFailed(format!("failed to bind :{}: {}", listen_port, e)))?;
 
     eprintln!("proxy: listening on http://127.0.0.1:{}", listen_port);
 
-    for stream in listener.incoming() {
-        let client = match stream {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        // Re-read state on each connection to pick up hot-switched target ports
-        thread::spawn(move || {
-            let target_port = State::load()
-                .ok()
-                .and_then(|s| s.proxy)
-                .and_then(|p| p.target_port)
-                .unwrap_or(0);
-
-            if target_port == 0 {
-                return;
-            }
-
-            let Ok(upstream) = TcpStream::connect(("127.0.0.1", target_port)) else {
-                return;
-            };
-
-            pipe(client, upstream);
-        });
+    for client in listener.incoming().flatten() {
+        thread::spawn(move || forward_to_active(client));
     }
-
     Ok(())
 }
 
+/// Connect `client` to the active dev server; drop it if there is none or it is unreachable.
+fn forward_to_active(client: TcpStream) {
+    let Some(target_port) = active_target_port() else {
+        return;
+    };
+    let Ok(upstream) = TcpStream::connect(("127.0.0.1", target_port)) else {
+        return;
+    };
+    pipe(client, upstream);
+}
+
+fn active_target_port() -> Option<u16> {
+    State::load()
+        .ok()?
+        .proxy?
+        .target_port
+        .filter(|&port| port != 0)
+}
+
+/// Copy bytes in both directions until each side reaches EOF, propagating each EOF as a
+/// write half-close so request/response protocols see the end of the stream.
 fn pipe(client: TcpStream, upstream: TcpStream) {
-    let Ok(client_w) = client.try_clone() else {
+    let Ok(client_reader) = client.try_clone() else {
         return;
     };
-    let Ok(upstream_w) = upstream.try_clone() else {
+    let Ok(upstream_reader) = upstream.try_clone() else {
         return;
     };
+    let request = thread::spawn(move || copy_then_close(client_reader, upstream));
+    copy_then_close(upstream_reader, client);
+    request.join().ok();
+}
 
-    let t1 = thread::spawn(move || {
-        let mut src = client;
-        let mut dst = upstream_w;
-        io::copy(&mut src, &mut dst).ok();
-        dst.shutdown(Shutdown::Write).ok();
-    });
+fn copy_then_close(mut from: TcpStream, mut to: TcpStream) {
+    io::copy(&mut from, &mut to).ok();
+    to.shutdown(Shutdown::Write).ok();
+}
 
-    let t2 = thread::spawn(move || {
-        let mut src = upstream;
-        let mut dst = client_w;
-        io::copy(&mut src, &mut dst).ok();
-        dst.shutdown(Shutdown::Write).ok();
-    });
+/// The running proxy daemon's config, spawning the daemon first if it is not alive.
+pub(crate) fn ensure_running(state: &mut State) -> Result<&mut ProxyConfig> {
+    let proxy = match state.proxy.take() {
+        Some(proxy) if daemon_alive(&proxy) => proxy,
+        stale => {
+            state.proxy = stale;
+            spawn_daemon(LISTEN_PORT)?
+        }
+    };
+    Ok(state.proxy.insert(proxy))
+}
 
-    t1.join().ok();
-    t2.join().ok();
+fn daemon_alive(proxy: &ProxyConfig) -> bool {
+    proxy
+        .proxy_pid
+        .is_some_and(|pid| watch::is_alive(pid, proxy.proxy_identity.as_deref()))
+}
+
+fn spawn_daemon(listen_port: u16) -> Result<ProxyConfig> {
+    if !port_is_free(listen_port) {
+        return Err(ForkspaceError::ProxyFailed(format!(
+            "port {listen_port} is unavailable; stop the process using it and retry"
+        )));
+    }
+
+    let exe = std::env::current_exe()
+        .map_err(|e| ForkspaceError::ProxyFailed(format!("cannot find self: {}", e)))?;
+
+    let log_dir = paths::forkspace_home();
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!(
+            "warning: failed to create log directory {}: {e}",
+            log_dir.display()
+        );
+    }
+    let (stdout, stderr) = create_logs(&log_dir, "proxy.log", "proxy.err")
+        .map_err(|e| ForkspaceError::ProxyFailed(format!("log file: {}", e)))?;
+
+    let identity = watch::new_identity();
+    let child = spawn_detached(
+        Command::new(exe)
+            .args(["proxy-daemon", "--port", &listen_port.to_string()])
+            .env(IDENTITY_ENV, &identity)
+            .stdout(stdout)
+            .stderr(stderr),
+    )
+    .map_err(|e| ForkspaceError::ProxyFailed(format!("spawn proxy: {}", e)))?;
+
+    // Give the daemon a moment to bind before the caller points a browser at it.
+    thread::sleep(Duration::from_millis(100));
+
+    Ok(ProxyConfig {
+        listen_port,
+        active_workspace: None,
+        target_port: None,
+        proxy_pid: Some(child.id()),
+        proxy_identity: Some(identity),
+        unknown_fields: serde_json::Map::new(),
+    })
 }
