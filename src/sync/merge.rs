@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 
 use crate::backend::select_backend;
 use crate::changes::manifest::ManifestStatus;
+use crate::changes::ChangeCounts;
 use crate::changes::{self, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::sync::journal::{self, OperationKind};
 use crate::sync::plan::{self, MergePlan};
-use crate::sync::ChangeCounts;
 use crate::workspace::Workspace;
 
 /// What a completed [`merge_workspace`] transferred.

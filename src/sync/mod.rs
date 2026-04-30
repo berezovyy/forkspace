@@ -14,35 +14,7 @@ pub mod pull;
 use std::path::PathBuf;
 
 use crate::changes::filter::ChangeClass;
-use crate::changes::manifest::ManifestKind;
 use crate::changes::{ChangeKind, FileChange};
-
-/// How many changes of each kind a set of changes contains.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ChangeCounts {
-    pub added: usize,
-    pub modified: usize,
-    pub deleted: usize,
-}
-
-impl ChangeCounts {
-    pub fn of<'a>(changes: impl IntoIterator<Item = &'a FileChange>) -> Self {
-        changes
-            .into_iter()
-            .fold(Self::default(), |mut counts, change| {
-                match change.kind {
-                    ChangeKind::Added => counts.added += 1,
-                    ChangeKind::Modified => counts.modified += 1,
-                    ChangeKind::Deleted => counts.deleted += 1,
-                }
-                counts
-            })
-    }
-
-    pub fn total(&self) -> usize {
-        self.added + self.modified + self.deleted
-    }
-}
 
 /// Runtime and forkspace-internal paths never move between a workspace and its base.
 pub(crate) fn is_transferable(class: ChangeClass) -> bool {
@@ -82,15 +54,4 @@ pub(crate) fn render_plan(
         .chain(notes)
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// The manifest kind of an entry, from its `symlink_metadata`.
-pub(crate) fn manifest_kind(metadata: &std::fs::Metadata) -> ManifestKind {
-    if metadata.file_type().is_symlink() {
-        ManifestKind::Symlink
-    } else if metadata.is_dir() {
-        ManifestKind::Dir
-    } else {
-        ManifestKind::File
-    }
 }

@@ -466,9 +466,8 @@ fn backend_override_is_echoed_but_other_platform_state_is_never_repaired_away() 
         .output()
         .unwrap();
     assert!(forked.status.success());
-    assert!(
-        String::from_utf8_lossy(&forked.stderr).contains("FORKSPACE_BACKEND override selected 'copy'")
-    );
+    assert!(String::from_utf8_lossy(&forked.stderr)
+        .contains("FORKSPACE_BACKEND override selected 'copy'"));
 
     let state_path = home.path().join("state.json");
     let mut state: serde_json::Value =

@@ -39,8 +39,7 @@ _forkspace() {
                         '1:base directory:_directories' \
                         '--name=[Workspace name]:name:' \
                         '--session=[Session identifier]:session:' \
-                        '--tmpfs[Back with tmpfs]' \
-                        '--size=[tmpfs size limit]:size:' \
+                        '--tmpfs[Keep changes in RAM]' \
                         '--branch=[Create a Git branch]:branch:' \
                         '--copy[Consent to a full directory copy]' \
                         '--help[Show help]'
@@ -59,7 +58,7 @@ _forkspace() {
                         '--create[Create if not exists]' \
                         '--from=[Base directory]:directory:_directories' \
                         '--ephemeral[Destroy on exit]' \
-                        '--tmpfs[Back with tmpfs]' \
+                        '--tmpfs[Keep changes in RAM]' \
                         '--copy[Consent to a full directory copy]' \
                         '--merge-on-exit[Merge changes on exit]' \
                         '--session=[Session identifier]:session:' \

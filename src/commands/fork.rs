@@ -23,7 +23,6 @@ pub fn exec(args: ForkArgs) -> Result {
         CreateOptions {
             session: args.session,
             tmpfs: args.tmpfs,
-            tmpfs_size: args.size,
             force_copy: args.copy,
         },
     )?;

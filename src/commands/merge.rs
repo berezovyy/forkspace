@@ -2,13 +2,14 @@
 
 use std::path::PathBuf;
 
+use crate::changes::ChangeCounts;
 use crate::cli::MergeArgs;
 use crate::error::Result;
 use crate::review::signals;
 use crate::state::State;
 use crate::sync::journal::{self, OperationPhase};
 use crate::sync::plan::{self, MergePlan};
-use crate::sync::{install, join_paths, merge, ChangeCounts};
+use crate::sync::{install, join_paths, merge};
 use crate::workspace::{guard, Workspace};
 
 /// The outcome of the apply step: the journal still to close, and what was transferred
@@ -131,7 +132,10 @@ fn run_post_merge_steps(args: &MergeArgs, workspace: &Workspace) -> Result {
         }
     }
     if args.commit || args.message.is_some() {
-        let default_message = format!("forkspace merge: applied changes from workspace {}", args.name);
+        let default_message = format!(
+            "forkspace merge: applied changes from workspace {}",
+            args.name
+        );
         merge::git_commit(
             &workspace.base,
             args.message.as_deref().unwrap_or(&default_message),

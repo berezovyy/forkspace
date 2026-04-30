@@ -20,7 +20,7 @@
   {"name":"fork-empty-name","args":["fork","--name",""]},
   {"name":"fork-parent-name","args":["fork","--name",".."]},
   {"name":"fork-path-name","args":["fork","--name","a/b"]},
-  {"name":"fork-tmpfs","args":["fork","--name","tmpfs","--tmpfs"]},
+  {"name":"fork-tmpfs","args":["fork","--name","tmpfs","--tmpfs","--copy"]},
   {"name":"drop-missing-name","args":["drop"]},
   {"name":"drop-not-found","args":["drop","absent"]},
   {"name":"drop-all-empty","args":["drop","--all"]},

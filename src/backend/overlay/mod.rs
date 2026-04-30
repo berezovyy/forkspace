@@ -3,6 +3,7 @@
 //! The upper directory holds exactly the workspace's writes, so it doubles as the change set.
 
 pub mod mount;
+mod tmpfs;
 mod whiteout;
 
 pub(crate) use whiteout::{is_device_whiteout, Whiteout};
@@ -21,17 +22,14 @@ use super::{
 use crate::changes::filter::ChangeFilter;
 use crate::changes::manifest::ManifestStatus;
 use crate::changes::{self, FileChange};
-use crate::error::{ForkspaceError, Result};
+use crate::error::Result;
 use crate::paths;
 use crate::util::IoContext;
 use crate::workspace::Workspace;
-use mount::{
-    mount_overlay, tmpfs_not_implemented, unmount_overlay, unmount_tmpfs, OverlayOpts, ViewHealth,
-    DEFAULT_TMPFS_SIZE,
-};
+use mount::{mount_overlay, unmount_overlay, ViewHealth};
 
 const CAPABILITIES: Capabilities = Capabilities {
-    tmpfs_backing: false,
+    tmpfs_backing: true,
     network_namespace: true,
     instant_fork: true,
     sealed_parent: true,
@@ -49,6 +47,20 @@ pub struct OverlayState {
     pub tmpfs_size: Option<String>,
     #[serde(flatten)]
     pub unknown_fields: Map<String, Value>,
+}
+
+impl OverlayState {
+    /// The standard `upper/`, `work/`, `merged/` layout under `root`.
+    pub fn at(root: &Path) -> Self {
+        Self {
+            upper: root.join("upper"),
+            work: root.join("work"),
+            merged: root.join("merged"),
+            tmpfs: false,
+            tmpfs_size: None,
+            unknown_fields: Map::new(),
+        }
+    }
 }
 
 pub struct OverlayBackend;
@@ -90,6 +102,30 @@ fn apply_forkspaceclean(view: &Path) {
     }
 }
 
+/// fuse-overlayfs reads any `.wh.<name>` entry in the lower layer as a whiteout, so a base
+/// file with that name would vanish from the view together with `<name>`. Refuse such bases
+/// rather than fork a view that silently hides files.
+fn refuse_reserved_names(name: &str) -> Result {
+    for row in crate::changes::manifest::stream(name)? {
+        let row = row?;
+        let reserved = row
+            .path
+            .split('/')
+            .any(|component| component.starts_with(".wh."));
+        if reserved {
+            let path = crate::changes::manifest::decode_path(&row.path)?;
+            return Err(crate::error::ForkspaceError::CapabilityUnsupported {
+                diagnosis: format!(
+                    "{} uses the .wh. prefix, which fuse-overlayfs reserves for deletion markers",
+                    path.display()
+                ),
+                remedy: "rename that path, or fork with --copy (or FORKSPACE_BACKEND=linux-reflink on a reflink filesystem)".to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
 impl WorkspaceBackend for OverlayBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Overlay
@@ -100,65 +136,52 @@ impl WorkspaceBackend for OverlayBackend {
     }
 
     fn preflight(&self, base: &Path) -> Result<()> {
-        if !base.exists() {
-            return Err(ForkspaceError::Io {
-                context: format!("base path does not exist: {}", base.display()),
-                source: std::io::Error::new(std::io::ErrorKind::NotFound, "base path not found"),
-            });
-        }
-        if !base.is_dir() {
-            return Err(ForkspaceError::Io {
-                context: format!("base path is not a directory: {}", base.display()),
-                source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a directory"),
-            });
-        }
-        Ok(())
+        super::require_directory(base)
     }
 
     fn create(&self, req: &CreateReq) -> Result<ViewInfo> {
-        if req.tmpfs && !self.capabilities().tmpfs_backing {
-            return Err(tmpfs_not_implemented());
-        }
-
         let root = paths::overlay_root(&req.name);
-        let upper = root.join("upper");
-        let work = root.join("work");
-        let merged = root.join("merged");
-        for path in [&upper, &work, &merged] {
-            fs::create_dir_all(path)
-                .io_context(|| format!("failed to create workspace dir: {}", path.display()))?;
+        let fork_time_ns = crate::util::now_unix_ns();
+        let mut layers = OverlayState::at(&root);
+        if req.tmpfs {
+            let tmpfs = tmpfs::create_layers(&req.name, fork_time_ns)?;
+            layers.upper = tmpfs.upper;
+            layers.work = tmpfs.work;
+            layers.tmpfs = true;
+        }
+        let cleanup = |layers: &OverlayState| {
+            if layers.tmpfs {
+                let _ = tmpfs::remove_layers(&layers.upper);
+            }
+            let _ = fs::remove_dir_all(&root);
+        };
+        for path in [&layers.upper, &layers.work, &layers.merged] {
+            if let Err(error) = fs::create_dir_all(path)
+                .io_context(|| format!("failed to create workspace dir: {}", path.display()))
+            {
+                cleanup(&layers);
+                return Err(error);
+            }
         }
 
-        let opts = OverlayOpts {
-            tmpfs: req.tmpfs,
-            tmpfs_size: req
-                .tmpfs_size
-                .clone()
-                .unwrap_or_else(|| DEFAULT_TMPFS_SIZE.to_string()),
-        };
-        if let Err(error) = mount_overlay(&req.base, &upper, &work, &merged, &opts) {
-            let _ = fs::remove_dir_all(&root);
+        if let Err(error) = mount_overlay(&req.base, &layers.upper, &layers.work, &layers.merged) {
+            cleanup(&layers);
             return Err(error);
         }
-        apply_forkspaceclean(&merged);
-        let fork_time_ns = crate::util::now_unix_ns();
-        if let Err(error) = crate::changes::manifest::build(&req.name, &req.base, fork_time_ns) {
-            let _ = unmount_overlay(&merged);
-            let _ = fs::remove_dir_all(&root);
+        let recorded = crate::changes::manifest::build(&req.name, &req.base, fork_time_ns)
+            .and_then(|_| refuse_reserved_names(&req.name));
+        if let Err(error) = recorded {
+            let _ = unmount_overlay(&layers.merged);
+            let _ = crate::changes::manifest::remove(&req.name);
+            cleanup(&layers);
             return Err(error);
         }
+        apply_forkspaceclean(&layers.merged);
 
         Ok(ViewInfo {
-            view_path: merged.clone(),
+            view_path: layers.merged.clone(),
             fork_time_ns,
-            backend_state: BackendState::Overlay(OverlayState {
-                upper,
-                work,
-                merged,
-                tmpfs: req.tmpfs,
-                tmpfs_size: req.tmpfs_size.clone(),
-                unknown_fields: Map::new(),
-            }),
+            backend_state: BackendState::Overlay(layers),
             manifest_status: ManifestStatus::Ready,
             degraded: false,
             probe_reason: None,
@@ -169,17 +192,19 @@ impl WorkspaceBackend for OverlayBackend {
         let state = ws.linux_state()?;
         unmount_overlay(&state.merged)?;
         if state.tmpfs {
-            unmount_tmpfs(&state.upper)?;
-            unmount_tmpfs(&state.work)?;
+            tmpfs::remove_layers(&state.upper)?;
         }
         let root = paths::overlay_root(&ws.name);
-        fs::remove_dir_all(&root).io_context(|| {
-            format!(
-                "remove workspace directory {}; retry `forkspace drop {}` after closing processes using it",
-                root.display(),
-                ws.name
-            )
-        })
+        match fs::remove_dir_all(&root) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            result => result.io_context(|| {
+                format!(
+                    "remove workspace directory {}; retry `forkspace drop {}` after closing processes using it",
+                    root.display(),
+                    ws.name
+                )
+            }),
+        }
     }
 
     fn view_path(&self, ws: &Workspace) -> PathBuf {
@@ -211,9 +236,15 @@ impl WorkspaceBackend for OverlayBackend {
     }
 
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {
-        let mut env = vec![("FORKSPACE_VIEW".to_string(), ws.view_path.display().to_string())];
+        let mut env = vec![(
+            "FORKSPACE_VIEW".to_string(),
+            ws.view_path.display().to_string(),
+        )];
         if let Ok(state) = ws.linux_state() {
-            env.push(("FORKSPACE_UPPER".to_string(), state.upper.display().to_string()));
+            env.push((
+                "FORKSPACE_UPPER".to_string(),
+                state.upper.display().to_string(),
+            ));
         }
         env
     }
@@ -261,13 +292,7 @@ fn remount(ws: &Workspace, state: &OverlayState) -> Result {
             state.merged.display()
         )));
     }
-    mount_overlay(
-        &ws.base,
-        &state.upper,
-        &state.work,
-        &state.merged,
-        &OverlayOpts::default(),
-    )?;
+    mount_overlay(&ws.base, &state.upper, &state.work, &state.merged)?;
     eprintln!("note: remounted workspace '{}'", ws.name);
     Ok(())
 }

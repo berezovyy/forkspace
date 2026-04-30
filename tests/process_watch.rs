@@ -25,7 +25,10 @@ fn stale_identity_cannot_kill_a_process_group() {
         Some("recycled-process-identity")
     ));
     assert!(child.try_wait().unwrap().is_none());
-    assert!(forkspace::process::watch::terminate_group(pid, Some(&identity)));
+    assert!(forkspace::process::watch::terminate_group(
+        pid,
+        Some(&identity)
+    ));
     child.wait().unwrap();
     assert!(!forkspace::process::watch::is_alive(pid, Some(&identity)));
 }

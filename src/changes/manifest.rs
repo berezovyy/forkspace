@@ -192,6 +192,19 @@ fn row(root: &Path, entry: &walkdir::DirEntry, fork_time_ns: u128) -> Result<Man
 
 /// Walk `view` and durably install its manifest for workspace `name`. Returns the row count.
 pub fn build(name: &str, view: &Path, fork_time_ns: u128) -> Result<usize> {
+    build_rows(name, view, None, fork_time_ns)
+}
+
+/// [`build`] for a manifest recorded after the workspace was handed to the user (the macOS
+/// background builder). Entries deleted or renamed in the view before the walk reached them
+/// are recovered from `base`: wherever a view directory changed after the fork, base entries
+/// it no longer holds are recorded from the base, as long as the base has not changed them
+/// since the fork either. Without this, such deletions would never show up in `diff`.
+pub fn build_after_fork(name: &str, view: &Path, base: &Path, fork_time_ns: u128) -> Result<usize> {
+    build_rows(name, view, Some(base), fork_time_ns)
+}
+
+fn build_rows(name: &str, view: &Path, base: Option<&Path>, fork_time_ns: u128) -> Result<usize> {
     let path = manifest_path(name);
     let directory = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(directory)
@@ -203,7 +216,7 @@ pub fn build(name: &str, view: &Path, fork_time_ns: u128) -> Result<usize> {
         .io_context(|| format!("create manifest {}", temporary.display()))?;
 
     let mut writer = BufWriter::new(file);
-    let count = write_rows(&mut writer, view, fork_time_ns, &temporary)?;
+    let count = write_rows(&mut writer, view, base, fork_time_ns, &temporary)?;
     let file = writer.into_inner().map_err(|error| ForkspaceError::Io {
         context: format!("flush manifest {}", temporary.display()),
         source: error.into_error(),
@@ -221,20 +234,72 @@ pub fn build(name: &str, view: &Path, fork_time_ns: u128) -> Result<usize> {
 fn write_rows(
     writer: &mut impl Write,
     view: &Path,
+    base: Option<&Path>,
     fork_time_ns: u128,
     temporary: &Path,
 ) -> Result<usize> {
-    let mut count = 0;
-    for entry in WalkDir::new(view).min_depth(1).follow_links(false) {
-        let entry = entry.walk_context(view)?;
-        serde_json::to_writer(&mut *writer, &row(view, &entry, fork_time_ns)?)
-            .map_err(|error| ForkspaceError::Serialization(error.to_string()))?;
+    let mut write = |root: &Path, entry: &walkdir::DirEntry| -> Result {
+        serde_json::to_writer(&mut *writer, &row(root, entry, fork_time_ns)?)?;
         writer
             .write_all(b"\n")
-            .io_context(|| format!("write manifest {}", temporary.display()))?;
-        count += 1;
+            .io_context(|| format!("write manifest {}", temporary.display()))
+    };
+    let mut count = 0;
+    for entry in WalkDir::new(view).follow_links(false) {
+        let entry = entry.walk_context(view)?;
+        if entry.depth() > 0 {
+            write(view, &entry)?;
+            count += 1;
+        }
+        let Some(base) = base else {
+            continue;
+        };
+        let changed_dir = entry.file_type().is_dir()
+            && entry
+                .metadata()
+                .is_ok_and(|metadata| written_after_fork(&metadata, fork_time_ns));
+        if changed_dir {
+            let relative = entry.path().strip_prefix(view).unwrap_or(Path::new(""));
+            for missing in entries_missing_from_view(view, base, relative, fork_time_ns)? {
+                write(base, &missing)?;
+                count += 1;
+            }
+        }
     }
     Ok(count)
+}
+
+/// Base entries under directory `relative` that the view no longer has and that the base has
+/// not changed since `fork_time_ns`, with their unchanged descendants.
+fn entries_missing_from_view(
+    view: &Path,
+    base: &Path,
+    relative: &Path,
+    fork_time_ns: u128,
+) -> Result<Vec<walkdir::DirEntry>> {
+    let base_dir = base.join(relative);
+    let Ok(children) = fs::read_dir(&base_dir) else {
+        return Ok(Vec::new());
+    };
+    let mut missing = Vec::new();
+    for child in children.flatten() {
+        if fs::symlink_metadata(view.join(relative).join(child.file_name())).is_ok() {
+            continue;
+        }
+        let unchanged_since_fork = |entry: &walkdir::DirEntry| {
+            entry
+                .metadata()
+                .is_ok_and(|metadata| !written_after_fork(&metadata, fork_time_ns))
+        };
+        for entry in WalkDir::new(child.path())
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(unchanged_since_fork)
+        {
+            missing.push(entry.walk_context(&base_dir)?);
+        }
+    }
+    Ok(missing)
 }
 
 /// Streaming reader over a manifest's rows; see [`stream`].
@@ -352,6 +417,7 @@ fn recover_unreadable(workspace: &Workspace) -> Result<ChangeCount> {
     let _ = spawn(
         workspace.name.clone(),
         workspace.view_path.clone(),
+        workspace.base.clone(),
         workspace.fork_time_ns,
     );
     Ok(ChangeCount::Pending)

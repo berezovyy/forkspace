@@ -8,8 +8,7 @@ Arguments:
 Options:
       --name <NAME>        Name for the new workspace (defaults to directory basename)
       --session <SESSION>  Session identifier for grouping related workspaces
-      --tmpfs              Back the workspace with tmpfs (RAM-only, vanishes on reboot)
-      --size <SIZE>        Size limit for the tmpfs backing store (e.g. 512M, 2G)
+      --tmpfs              Keep the workspace's changes in RAM (Linux overlay only; lost on reboot)
       --branch <BRANCH>    Create and record a Git branch in the workspace
       --copy               Consent to a full directory copy backend
   -h, --help               Print help

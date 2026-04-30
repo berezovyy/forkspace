@@ -123,7 +123,10 @@ fn test_corrupted_json() {
 
     let result = State::load();
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), ForkspaceError::StateCorrupted(_)));
+    assert!(matches!(
+        result.unwrap_err(),
+        ForkspaceError::StateCorrupted(_)
+    ));
 }
 
 #[test]

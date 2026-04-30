@@ -107,8 +107,8 @@ pub enum BackendState {
 pub struct CreateReq {
     pub name: String,
     pub base: PathBuf,
+    /// Put the writable layers on an existing tmpfs (overlay only).
     pub tmpfs: bool,
-    pub tmpfs_size: Option<String>,
 }
 
 /// What [`WorkspaceBackend::create`] produced.
@@ -172,6 +172,17 @@ pub trait WorkspaceBackend {
     fn ensure_view(&self, _ws: &Workspace) -> Result {
         Ok(())
     }
+}
+
+/// Shared preflight: every backend requires the fork origin to be an existing directory.
+fn require_directory(base: &Path) -> Result {
+    if base.is_dir() {
+        return Ok(());
+    }
+    Err(ForkspaceError::InvalidArgument(format!(
+        "base path {} is not a directory",
+        base.display()
+    )))
 }
 
 /// Opens the backend for the `recorded` kind, falling back to the `FORKSPACE_BACKEND` override and

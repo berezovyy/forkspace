@@ -8,7 +8,7 @@ use crate::changes::{
     generate_unified_diff, DiffFormat, DiffOutput, FileChange,
 };
 use crate::cli::DiffArgs;
-use crate::error::{ForkspaceError, Result};
+use crate::error::Result;
 use crate::review;
 use crate::state::State;
 use crate::workspace::{guard, Workspace};
@@ -30,10 +30,7 @@ pub fn exec(args: DiffArgs) -> Result {
             changes,
             signals,
         };
-        let json = serde_json::to_string_pretty(&output)
-            .map_err(|error| ForkspaceError::Serialization(error.to_string()))?;
-        println!("{json}");
-        return Ok(());
+        return super::print_json(&output);
     }
     if changes.is_empty() {
         println!("clean — no changes");

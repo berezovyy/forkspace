@@ -64,3 +64,33 @@ fn enter_refuses_a_mount_point_holding_stray_files() {
     fs::remove_file(ws.view_path.join("lost.txt")).unwrap();
     common::cleanup_workspace(&ws);
 }
+
+#[test]
+#[serial]
+fn tmpfs_workspace_whose_layers_vanished_reports_the_reboot() {
+    skip_without_overlay!();
+    let (_home, base) = common::setup_with_project();
+    let ws = forkspace::workspace::create(
+        base.path().to_path_buf(),
+        "lost-tmpfs-ws",
+        forkspace::workspace::CreateOptions {
+            tmpfs: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    unmount_overlay(&ws.view_path).unwrap();
+    fs::remove_dir_all(ws.upper_path().unwrap().parent().unwrap()).unwrap();
+
+    let output = forkspace(&["enter", "lost-tmpfs-ws", "--", "true"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("lost at reboot"), "{stderr}");
+
+    let output = forkspace(&["drop", "lost-tmpfs-ws"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

@@ -10,11 +10,11 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::backend::select_backend;
 use crate::changes::filter::ChangeFilter;
-use crate::changes::manifest::{self, ManifestKind, ManifestRow, ManifestStatus};
+use crate::changes::manifest::{self, ManifestRow, ManifestStatus};
 use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
-use crate::sync::{display_paths, is_transferable, manifest_kind, render_plan};
-use crate::util::fs::{mode_bits, mtime_ns};
+use crate::sync::{display_paths, is_transferable, render_plan};
+use crate::util::fs::mtime_ns;
 use crate::util::IoContext;
 use crate::workspace::Workspace;
 
@@ -118,23 +118,13 @@ pub fn render(plan: &MergePlan) -> String {
     )
 }
 
-/// Whether the entry at `path` still has the metadata recorded for it at fork time.
+/// Whether `path` still matches its fork-time manifest row, so a merge can overwrite it.
+///
+/// Stricter than [`ManifestRow::matches`]: a re-created symlink (same target, new mtime) also
+/// counts as a base-side change.
 pub(crate) fn matches_ancestor(path: &Path, row: &ManifestRow) -> bool {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return false;
-    };
-    let kind = manifest_kind(&metadata);
-    kind == row.kind
-        && metadata.len() == row.size
-        && mtime_ns(&metadata) == row.mtime_ns
-        && (row.mode == 0 || mode_bits(&metadata) == row.mode)
-        && (kind != ManifestKind::Symlink || symlink_matches(path, row))
-}
-
-fn symlink_matches(path: &Path, row: &ManifestRow) -> bool {
-    fs::read_link(path)
-        .ok()
-        .is_some_and(|target| Some(manifest::encode_path(&target)) == row.target)
+    fs::symlink_metadata(path)
+        .is_ok_and(|metadata| row.matches(path, &metadata) && mtime_ns(&metadata) == row.mtime_ns)
 }
 
 fn ensure_manifest_usable(workspace: &Workspace) -> Result {
@@ -240,8 +230,9 @@ fn validate_space(source: &Path, target: &Path, changes: &[FileChange]) -> Resul
 }
 
 fn available_bytes(directory: &Path) -> Result<u128> {
-    let directory = CString::new(directory.as_os_str().as_bytes())
-        .map_err(|_| ForkspaceError::InvalidArgument("merge target contains a NUL byte".to_string()))?;
+    let directory = CString::new(directory.as_os_str().as_bytes()).map_err(|_| {
+        ForkspaceError::InvalidArgument("merge target contains a NUL byte".to_string())
+    })?;
     let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
     // SAFETY: `directory` is NUL-terminated and `stats` is a valid out-pointer for statvfs.
     if unsafe { libc::statvfs(directory.as_ptr(), stats.as_mut_ptr()) } != 0 {

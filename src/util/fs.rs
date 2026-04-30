@@ -1,7 +1,7 @@
 //! Filesystem helpers: error context, durable writes, and metadata timestamps.
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -126,4 +126,109 @@ pub fn ctime_ns(metadata: &fs::Metadata) -> i128 {
 /// Permission bits (including setuid/setgid/sticky).
 pub fn mode_bits(metadata: &fs::Metadata) -> u32 {
     metadata.mode() & 0o7777
+}
+
+/// Whether two files have identical bytes. Unreadable files never compare equal.
+pub fn same_contents(a: &Path, b: &Path) -> bool {
+    let (Ok(mut file_a), Ok(mut file_b)) = (fs::File::open(a), fs::File::open(b)) else {
+        return false;
+    };
+    let mut buf_a = [0u8; 8192];
+    let mut buf_b = [0u8; 8192];
+    loop {
+        let (Ok(n_a), Ok(n_b)) = (file_a.read(&mut buf_a), file_b.read(&mut buf_b)) else {
+            return false;
+        };
+        if buf_a[..n_a] != buf_b[..n_b] {
+            return false;
+        }
+        if n_a == 0 {
+            return true;
+        }
+    }
+}
+
+/// What an atomic rename flag did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FlaggedRename {
+    Done,
+    /// The destination already existed (`rename_noreplace` only); nothing moved.
+    DestinationExists,
+    /// The filesystem or kernel does not support the flag; nothing moved.
+    Unsupported,
+}
+
+/// Move `from` to `to` only if `to` does not exist, atomically (`renameat2(RENAME_NOREPLACE)`
+/// on Linux, `renamex_np(RENAME_EXCL)` on macOS).
+pub fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<FlaggedRename> {
+    flagged_rename(from, to, RenameFlag::NoReplace)
+}
+
+/// Swap `a` and `b` atomically; both must exist and may be of different types
+/// (`renameat2(RENAME_EXCHANGE)` on Linux, `renamex_np(RENAME_SWAP)` on macOS).
+pub fn rename_exchange(a: &Path, b: &Path) -> std::io::Result<FlaggedRename> {
+    flagged_rename(a, b, RenameFlag::Exchange)
+}
+
+#[derive(Clone, Copy)]
+enum RenameFlag {
+    NoReplace,
+    Exchange,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn flagged_rename(from: &Path, to: &Path, flag: RenameFlag) -> std::io::Result<FlaggedRename> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = |path: &Path| {
+        CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "NUL in path"))
+    };
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    if raw_flagged_rename(&from, &to, flag) == 0 {
+        return Ok(FlaggedRename::Done);
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::EEXIST) => Ok(FlaggedRename::DestinationExists),
+        Some(libc::EINVAL | libc::ENOSYS | libc::ENOTSUP) => Ok(FlaggedRename::Unsupported),
+        #[allow(unreachable_patterns)]
+        Some(libc::EOPNOTSUPP) => Ok(FlaggedRename::Unsupported),
+        _ => Err(error),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn raw_flagged_rename(from: &std::ffi::CStr, to: &std::ffi::CStr, flag: RenameFlag) -> i64 {
+    let flags = match flag {
+        RenameFlag::NoReplace => libc::RENAME_NOREPLACE,
+        RenameFlag::Exchange => libc::RENAME_EXCHANGE,
+    };
+    // SAFETY: both paths are NUL-terminated and outlive the call.
+    unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            flags,
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn raw_flagged_rename(from: &std::ffi::CStr, to: &std::ffi::CStr, flag: RenameFlag) -> i64 {
+    let flags = match flag {
+        RenameFlag::NoReplace => libc::RENAME_EXCL,
+        RenameFlag::Exchange => libc::RENAME_SWAP,
+    };
+    // SAFETY: both paths are NUL-terminated and outlive the call.
+    i64::from(unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), flags) })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn flagged_rename(_from: &Path, _to: &Path, _flag: RenameFlag) -> std::io::Result<FlaggedRename> {
+    Ok(FlaggedRename::Unsupported)
 }

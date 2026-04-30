@@ -81,12 +81,9 @@ pub struct ForkArgs {
 
     #[arg(
         long,
-        help = "Back the workspace with tmpfs (RAM-only, vanishes on reboot)"
+        help = "Keep the workspace's changes in RAM (Linux overlay only; lost on reboot)"
     )]
     pub tmpfs: bool,
-
-    #[arg(long, help = "Size limit for the tmpfs backing store (e.g. 512M, 2G)")]
-    pub size: Option<String>,
 
     #[arg(long, help = "Create and record a Git branch in the workspace")]
     pub branch: Option<String>,
@@ -136,7 +133,7 @@ pub struct EnterArgs {
 
     #[arg(
         long,
-        help = "Back the workspace with tmpfs (RAM-only, vanishes on reboot)"
+        help = "Keep the workspace's changes in RAM (Linux overlay only; lost on reboot)"
     )]
     pub tmpfs: bool,
 
@@ -170,6 +167,14 @@ pub struct RunArgs {
         help = "Port the app listens on inside the workspace"
     )]
     pub port: u16,
+
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 10,
+        help = "How long to wait for the app to listen before returning (0 to skip)"
+    )]
+    pub port_wait: u64,
 
     #[arg(long, help = "Stop the running process instead of starting one")]
     pub stop: bool,

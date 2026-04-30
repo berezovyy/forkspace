@@ -6,7 +6,7 @@ use owo_colors::OwoColorize;
 
 use crate::backend::{select_backend, ChangeCount};
 use crate::cli::LsArgs;
-use crate::error::{ForkspaceError, Result};
+use crate::error::Result;
 use crate::state::State;
 use crate::workspace::Workspace;
 
@@ -34,10 +34,7 @@ pub fn exec(args: LsArgs) -> Result {
             .iter()
             .map(|workspace| json_entry(workspace))
             .collect();
-        let json = serde_json::to_string_pretty(&values)
-            .map_err(|error| ForkspaceError::Serialization(error.to_string()))?;
-        println!("{json}");
-        return Ok(());
+        return super::print_json(&values);
     }
     if workspaces.is_empty() {
         println!("no workspaces");

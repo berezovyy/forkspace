@@ -79,3 +79,30 @@ impl FileChange {
         Self::new(path, ChangeKind::Deleted)
     }
 }
+
+/// How many changes of each kind a set of changes contains.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChangeCounts {
+    pub added: usize,
+    pub modified: usize,
+    pub deleted: usize,
+}
+
+impl ChangeCounts {
+    pub fn of<'a>(changes: impl IntoIterator<Item = &'a FileChange>) -> Self {
+        changes
+            .into_iter()
+            .fold(Self::default(), |mut counts, change| {
+                match change.kind {
+                    ChangeKind::Added => counts.added += 1,
+                    ChangeKind::Modified => counts.modified += 1,
+                    ChangeKind::Deleted => counts.deleted += 1,
+                }
+                counts
+            })
+    }
+
+    pub fn total(&self) -> usize {
+        self.added + self.modified + self.deleted
+    }
+}

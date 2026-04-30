@@ -48,7 +48,10 @@ impl Fixture {
         let view = root.path().join("view");
         fs::create_dir(&base).unwrap();
         git(&base, &["init", "--quiet", "--initial-branch=main"]);
-        git(&base, &["config", "user.email", "forkspace@example.invalid"]);
+        git(
+            &base,
+            &["config", "user.email", "forkspace@example.invalid"],
+        );
         git(&base, &["config", "user.name", "Forkspace Tests"]);
         commit(&base, "initial", "initial\n");
         let status = Command::new("git")
@@ -58,7 +61,10 @@ impl Fixture {
             .status()
             .unwrap();
         assert!(status.success());
-        git(&view, &["config", "user.email", "forkspace@example.invalid"]);
+        git(
+            &view,
+            &["config", "user.email", "forkspace@example.invalid"],
+        );
         git(&view, &["config", "user.name", "Forkspace Tests"]);
         if let Some(branch) = branch {
             git(&view, &["switch", "-c", branch]);
@@ -88,7 +94,10 @@ impl Fixture {
             .arg("land")
             .arg("attempt")
             .args(extra)
-            .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
+            .env(
+                "FORKSPACE_HOME",
+                std::env::var_os("FORKSPACE_HOME").unwrap(),
+            )
             .output()
             .unwrap()
     }
@@ -102,7 +111,10 @@ fn public_fork_branch_then_land_preserves_the_workspace_commits() {
     let base = root.path().join("base");
     fs::create_dir(&base).unwrap();
     git(&base, &["init", "--quiet", "--initial-branch=main"]);
-    git(&base, &["config", "user.email", "forkspace@example.invalid"]);
+    git(
+        &base,
+        &["config", "user.email", "forkspace@example.invalid"],
+    );
     git(&base, &["config", "user.name", "Forkspace Tests"]);
     commit(&base, "initial", "initial\n");
 
@@ -210,7 +222,10 @@ fn killed_after_fetch_leaves_no_public_ref_and_the_next_land_converges() {
         std::env::var("PATH").unwrap_or_default()
     );
     let mut child = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-        .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
+        .env(
+            "FORKSPACE_HOME",
+            std::env::var_os("FORKSPACE_HOME").unwrap(),
+        )
         .env("FORKSPACE_TEST_FETCH_MARKER", &marker)
         .env("PATH", path)
         .args(["land", "attempt"])
@@ -227,7 +242,10 @@ fn killed_after_fetch_leaves_no_public_ref_and_the_next_land_converges() {
     child.kill().unwrap();
     let _ = child.wait();
 
-    assert!(!forkspace::git::ref_exists(&fixture.base, "refs/heads/feature"));
+    assert!(!forkspace::git::ref_exists(
+        &fixture.base,
+        "refs/heads/feature"
+    ));
     assert!(forkspace::git::ref_exists(
         &fixture.base,
         "refs/forkspace/land/attempt"
@@ -287,7 +305,10 @@ fn default_branch_requires_as_and_branch_preflight_is_clone_free() {
     let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .args(["fork", "--name", "never-created", "--branch", "topic"])
         .arg(non_repo.path())
-        .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
+        .env(
+            "FORKSPACE_HOME",
+            std::env::var_os("FORKSPACE_HOME").unwrap(),
+        )
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(6));
@@ -353,7 +374,10 @@ fn stacked_child_lands_every_commit_into_the_root_repository() {
     let child_view = root.path().join("child-view");
     fs::create_dir(&base).unwrap();
     git(&base, &["init", "--quiet", "--initial-branch=main"]);
-    git(&base, &["config", "user.email", "forkspace@example.invalid"]);
+    git(
+        &base,
+        &["config", "user.email", "forkspace@example.invalid"],
+    );
     git(&base, &["config", "user.name", "Forkspace Tests"]);
     commit(&base, "initial", "initial\n");
     assert!(Command::new("git")
@@ -420,7 +444,10 @@ fn stacked_child_lands_every_commit_into_the_root_repository() {
         git(&base, &["rev-parse", "feat-2"]),
         git(&child_view, &["rev-parse", "feat-2"])
     );
-    assert!(!forkspace::git::ref_exists(&parent_view, "refs/heads/feat-2"));
+    assert!(!forkspace::git::ref_exists(
+        &parent_view,
+        "refs/heads/feat-2"
+    ));
 }
 
 #[test]
@@ -432,7 +459,10 @@ fn branch_preflight_refuses_a_git_worktree_without_touching_the_repository() {
     let worktree = root.path().join("worktree");
     fs::create_dir(&main).unwrap();
     git(&main, &["init", "--quiet", "--initial-branch=main"]);
-    git(&main, &["config", "user.email", "forkspace@example.invalid"]);
+    git(
+        &main,
+        &["config", "user.email", "forkspace@example.invalid"],
+    );
     git(&main, &["config", "user.name", "Forkspace Tests"]);
     commit(&main, "initial", "initial\n");
     git(
@@ -481,7 +511,10 @@ fn land_is_a_local_file_protocol_fetch_and_preserves_commit_metadata() {
         ],
     );
     let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-        .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
+        .env(
+            "FORKSPACE_HOME",
+            std::env::var_os("FORKSPACE_HOME").unwrap(),
+        )
         .env("GIT_ALLOW_PROTOCOL", "file")
         .args(["land", "attempt"])
         .output()
@@ -516,7 +549,10 @@ fn lfs_pointers_and_changed_submodule_commits_fail_loudly() {
     let stderr = String::from_utf8_lossy(&lfs.stderr);
     assert!(stderr.contains("Git LFS pointer large.bin"));
     assert!(stderr.contains("publish Git LFS objects"));
-    assert!(!forkspace::git::ref_exists(&fixture.base, "refs/heads/feature"));
+    assert!(!forkspace::git::ref_exists(
+        &fixture.base,
+        "refs/heads/feature"
+    ));
 
     git(&fixture.view, &["reset", "--hard", "HEAD~1"]);
     fs::create_dir_all(fixture.view.join("vendor")).unwrap();
@@ -534,5 +570,8 @@ fn lfs_pointers_and_changed_submodule_commits_fail_loudly() {
     let stderr = String::from_utf8_lossy(&submodule.stderr);
     assert!(stderr.contains("submodule vendor/dependency"));
     assert!(stderr.contains("submodule commits"));
-    assert!(!forkspace::git::ref_exists(&fixture.base, "refs/heads/feature"));
+    assert!(!forkspace::git::ref_exists(
+        &fixture.base,
+        "refs/heads/feature"
+    ));
 }

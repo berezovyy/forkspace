@@ -9,22 +9,6 @@ use std::process::Command;
 use crate::error::{ForkspaceError, Result};
 use crate::util::now_unix_ns;
 
-pub(crate) const DEFAULT_TMPFS_SIZE: &str = "256m";
-
-pub(crate) struct OverlayOpts {
-    pub tmpfs: bool,
-    pub tmpfs_size: String,
-}
-
-impl Default for OverlayOpts {
-    fn default() -> Self {
-        Self {
-            tmpfs: false,
-            tmpfs_size: DEFAULT_TMPFS_SIZE.to_string(),
-        }
-    }
-}
-
 /// Mounts and immediately unmounts a scratch overlay to prove fuse-overlayfs works here.
 /// The error is a human-readable reason.
 pub fn probe_fuse_overlayfs() -> std::result::Result<(), String> {
@@ -44,57 +28,15 @@ pub fn probe_fuse_overlayfs() -> std::result::Result<(), String> {
             .map_err(|e| format!("cannot create probe directory {}: {e}", path.display()))?;
     }
 
-    let result = mount_overlay(&lower, &upper, &work, &merged, &OverlayOpts::default())
+    let result = mount_overlay(&lower, &upper, &work, &merged)
         .map_err(|e| e.to_string())
         .and_then(|()| unmount_overlay(&merged).map_err(|e| e.to_string()));
     let _ = fs::remove_dir_all(&root);
     result
 }
 
-/// The error for `--tmpfs`, which overlay workspaces do not support yet.
-pub(crate) fn tmpfs_not_implemented() -> ForkspaceError {
-    ForkspaceError::CapabilityUnsupported {
-        diagnosis: "--tmpfs is not implemented".to_string(),
-        remedy: "omit --tmpfs to use disk-backed workspace storage".to_string(),
-    }
-}
-
-fn mount_tmpfs(_path: &Path, _size: &str) -> Result {
-    Err(tmpfs_not_implemented())
-}
-
-/// Best-effort teardown of a tmpfs-backed layer directory; failures are only warned about.
-pub(crate) fn unmount_tmpfs(path: &Path) -> Result {
-    if let Err(e) = fuse_unmount(path) {
-        eprintln!("warning: failed to unmount {}: {e}", path.display());
-    }
-    if path.exists() {
-        if let Err(e) = fs::remove_dir_all(path) {
-            eprintln!(
-                "warning: failed to remove directory {}: {e}",
-                path.display()
-            );
-        }
-    }
-    Ok(())
-}
-
 /// Mounts `base` (lower) + `upper` at `merged`.
-pub(crate) fn mount_overlay(
-    base: &Path,
-    upper: &Path,
-    work: &Path,
-    merged: &Path,
-    opts: &OverlayOpts,
-) -> Result {
-    if opts.tmpfs {
-        mount_tmpfs(upper, &opts.tmpfs_size)?;
-        if let Err(e) = mount_tmpfs(work, &opts.tmpfs_size) {
-            let _ = unmount_tmpfs(upper);
-            return Err(e);
-        }
-    }
-
+pub(crate) fn mount_overlay(base: &Path, upper: &Path, work: &Path, merged: &Path) -> Result {
     let options = format!(
         "lowerdir={},upperdir={},workdir={}",
         base.display(),
@@ -106,21 +48,21 @@ pub(crate) fn mount_overlay(
         .arg(&options)
         .arg(merged.as_os_str())
         .status();
-    let error = match status {
-        Ok(status) if status.success() => return Ok(()),
-        Ok(_) => ForkspaceError::MountFailed(diagnose_mount_failure(merged)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => ForkspaceError::BackendUnavailable {
-            diagnosis: "fuse-overlayfs was not found".to_string(),
-            remedy: "install the fuse-overlayfs package for your Linux distribution".to_string(),
-        },
-        Err(e) => ForkspaceError::MountFailed(format!("failed to run fuse-overlayfs: {}", e)),
-    };
-
-    if opts.tmpfs {
-        let _ = unmount_tmpfs(work);
-        let _ = unmount_tmpfs(upper);
+    match status {
+        Ok(status) if status.success() => Ok(()),
+        Ok(_) => Err(ForkspaceError::MountFailed(diagnose_mount_failure(merged))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(ForkspaceError::BackendUnavailable {
+                diagnosis: "fuse-overlayfs was not found".to_string(),
+                remedy: "install the fuse-overlayfs package for your Linux distribution"
+                    .to_string(),
+            })
+        }
+        Err(e) => Err(ForkspaceError::MountFailed(format!(
+            "failed to run fuse-overlayfs: {}",
+            e
+        ))),
     }
-    Err(error)
 }
 
 /// Unmounts the overlay at `merged`. Succeeds when it is not mounted (or cannot be unmounted

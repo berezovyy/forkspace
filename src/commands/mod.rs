@@ -17,6 +17,12 @@ pub(crate) mod switch;
 use crate::cli::{Cli, Commands};
 use crate::error::Result;
 
+/// Print `value` as pretty JSON on stdout (the `--json` output of every command).
+fn print_json(value: &impl serde::Serialize) -> Result {
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
 /// Run the parsed subcommand.
 pub fn dispatch(cli: Cli) -> Result {
     match cli.command {

@@ -160,7 +160,9 @@ fn reflink_probe_is_ioctl_based_and_override_is_sticky() {
         base.path(),
         &forkspace::paths::forkspace_home().join("workspaces"),
     );
-    let source = fs::read_to_string("src/backend/probe.rs").unwrap();
+    // The reflink probe must try a real FICLONE rather than guess from the filesystem type.
+    let source = fs::read_to_string("src/backend/snapshot/reflink.rs").unwrap();
+    assert!(source.contains("libc::ioctl"));
     assert!(source.contains("FICLONE"));
     assert!(!source.contains("f_type"));
 

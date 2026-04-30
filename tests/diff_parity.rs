@@ -299,7 +299,19 @@ fn cross_platform_mutation_script_has_one_normalized_json_truth() {
     fs::write(view.join("binary"), [0, 1, 2, 3]).unwrap();
     fs::write(view.join("empty"), b"").unwrap();
     fs::write(view.join("cafe\u{301}"), b"nfd\n").unwrap();
-    fs::write(view.join(".wh.literal"), b"ordinary\n").unwrap();
+    // fuse-overlayfs reserves the `.wh.` prefix for its deletion markers and refuses to
+    // create such names in a view; every other backend stores them as ordinary files.
+    let overlay = workspace.backend_kind == forkspace::backend::BackendKind::Overlay;
+    let reserved = fs::write(view.join(".wh.literal"), b"ordinary\n");
+    if overlay {
+        assert_eq!(
+            reserved.unwrap_err().raw_os_error(),
+            Some(libc::EINVAL),
+            "fuse-overlayfs accepted a .wh. name"
+        );
+    } else {
+        reserved.unwrap();
+    }
     fs::write(view.join("Cargo.lock"), b"lock\n").unwrap();
     fs::write(view.join(".git/index"), b"refreshed\n").unwrap();
     fs::write(view.join(".DS_Store"), b"finder\n").unwrap();
@@ -343,7 +355,6 @@ fn cross_platform_mutation_script_has_one_normalized_json_truth() {
     let mut expected = vec![
         (".DS_Store", "modified", "runtime"),
         (".git/index", "modified", "internal"),
-        (".wh.literal", "added", "source"),
         ("Cargo.lock", "modified", "dependency"),
         ("binary", "modified", "source"),
         ("cafe\u{301}", "modified", "source"),
@@ -369,6 +380,13 @@ fn cross_platform_mutation_script_has_one_normalized_json_truth() {
             "source".to_string(),
         )
     }));
+    if !overlay {
+        expected.push((
+            ".wh.literal".to_string(),
+            "added".to_string(),
+            "source".to_string(),
+        ));
+    }
     expected.sort();
     assert_eq!(actual, expected);
 

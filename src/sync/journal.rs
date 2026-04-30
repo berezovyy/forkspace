@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::paths;
+use crate::util::fs::{rename_exchange, rename_noreplace, same_contents, FlaggedRename};
 use crate::util::{ensure_parent_dir, IoContext};
 
 /// Upper bound on journal files inspected by one opportunistic sweep.
@@ -94,15 +95,16 @@ pub fn path(op: OperationKind, workspace: &str, fork_time_ns: u128) -> PathBuf {
 
 /// Durably write a journal: temp file, fsync, rename, fsync directory.
 pub fn save(path: &Path, journal: &OperationJournal) -> Result {
-    let bytes = serde_json::to_vec_pretty(journal)
-        .map_err(|error| ForkspaceError::Serialization(error.to_string()))?;
+    let bytes = serde_json::to_vec_pretty(journal)?;
     crate::util::write_atomic(path, &bytes)
 }
 
 /// Read and parse the journal at `path`.
 pub fn load(path: &Path) -> Result<OperationJournal> {
     serde_json::from_slice(&fs::read(path).io_context(|| format!("read {}", path.display()))?)
-        .map_err(|error| ForkspaceError::StateCorrupted(format!("invalid operation journal: {error}")))
+        .map_err(|error| {
+            ForkspaceError::StateCorrupted(format!("invalid operation journal: {error}"))
+        })
 }
 
 /// Record a new operation and apply all of its steps.
@@ -253,11 +255,81 @@ pub(crate) fn apply_change(
     }
     let temporary = target.with_extension(format!("forkspace-{operation}-{index}.tmp"));
     stage_entry(&source, &metadata, &temporary)?;
-    // A rename cannot replace a directory with a non-directory.
-    if fs::symlink_metadata(&target).is_ok_and(|existing| existing.is_dir()) {
-        remove_existing(&target)?;
+    let existing = fs::symlink_metadata(&target).ok();
+    if existing.as_ref().is_some_and(fs::Metadata::is_dir) {
+        return replace_directory(&temporary, &target);
+    }
+    if change.kind == ChangeKind::Added {
+        return install_new(&temporary, &target, change, operation);
     }
     fs::rename(&temporary, &target).io_context(|| format!("install {}", target.display()))
+}
+
+/// Put the staged entry where a directory is. A plain rename cannot replace a directory with
+/// a non-directory, so the two are swapped atomically and the old tree is deleted from the
+/// staging name; the path is never missing. Without swap support the directory is removed
+/// first, as before.
+fn replace_directory(temporary: &Path, target: &Path) -> Result {
+    match rename_exchange(temporary, target)
+        .io_context(|| format!("swap {} into place", target.display()))?
+    {
+        FlaggedRename::Done => remove_existing(temporary),
+        _ => {
+            remove_existing(target)?;
+            fs::rename(temporary, target).io_context(|| format!("install {}", target.display()))
+        }
+    }
+}
+
+/// Install an entry the plan expected to be new without clobbering one that appeared since
+/// planning. An identical entry is a step that already ran before a crash, so resuming
+/// succeeds; anything else is a conflict to resolve before `--resume`.
+fn install_new(temporary: &Path, target: &Path, change: &FileChange, operation: &str) -> Result {
+    let outcome = rename_noreplace(temporary, target)
+        .io_context(|| format!("install {}", target.display()))?;
+    match outcome {
+        FlaggedRename::Done => Ok(()),
+        FlaggedRename::Unsupported => {
+            if fs::symlink_metadata(target).is_err() {
+                return fs::rename(temporary, target)
+                    .io_context(|| format!("install {}", target.display()));
+            }
+            appeared_since_planning(temporary, target, change, operation)
+        }
+        FlaggedRename::DestinationExists => {
+            appeared_since_planning(temporary, target, change, operation)
+        }
+    }
+}
+
+fn appeared_since_planning(
+    temporary: &Path,
+    target: &Path,
+    change: &FileChange,
+    operation: &str,
+) -> Result {
+    let identical = same_entry(temporary, target);
+    remove_existing(temporary)?;
+    if identical {
+        return Ok(());
+    }
+    let paths = vec![change.path.display().to_string()];
+    Err(if operation == "pull" {
+        ForkspaceError::PullConflict { paths }
+    } else {
+        ForkspaceError::MergeConflict { paths }
+    })
+}
+
+/// Whether two entries are the same symlink or the same file contents.
+fn same_entry(a: &Path, b: &Path) -> bool {
+    match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
+        (Ok(a_meta), Ok(b_meta)) if a_meta.file_type().is_symlink() => {
+            b_meta.file_type().is_symlink() && fs::read_link(a).ok() == fs::read_link(b).ok()
+        }
+        (Ok(a_meta), Ok(b_meta)) if a_meta.is_file() && b_meta.is_file() => same_contents(a, b),
+        _ => false,
+    }
 }
 
 /// Directories are created in place (their entries are separate steps), then given the
@@ -316,5 +388,73 @@ fn remove_existing(path: &Path) -> Result {
         fs::remove_dir_all(path).io_context(|| format!("remove {}", path.display()))
     } else {
         fs::remove_file(path).io_context(|| format!("remove {}", path.display()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::apply_change;
+    use crate::changes::{ChangeKind, FileChange};
+    use crate::error::ForkspaceError;
+
+    fn dirs() -> (tempfile::TempDir, tempfile::TempDir) {
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap())
+    }
+
+    #[test]
+    fn added_file_does_not_clobber_one_created_after_planning() {
+        let (source, target) = dirs();
+        fs::write(source.path().join("new.txt"), "from workspace\n").unwrap();
+        fs::write(target.path().join("new.txt"), "created in base meanwhile\n").unwrap();
+        let change = FileChange::new(PathBuf::from("new.txt"), ChangeKind::Added);
+
+        let error = apply_change(source.path(), target.path(), &change, 0, "merge").unwrap_err();
+        assert!(
+            matches!(error, ForkspaceError::MergeConflict { .. }),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(target.path().join("new.txt")).unwrap(),
+            "created in base meanwhile\n"
+        );
+        assert_eq!(
+            fs::read_dir(target.path()).unwrap().count(),
+            1,
+            "staging file left behind"
+        );
+    }
+
+    #[test]
+    fn added_file_already_installed_by_an_interrupted_run_is_accepted() {
+        let (source, target) = dirs();
+        fs::write(source.path().join("new.txt"), "same\n").unwrap();
+        fs::write(target.path().join("new.txt"), "same\n").unwrap();
+        let change = FileChange::new(PathBuf::from("new.txt"), ChangeKind::Added);
+
+        apply_change(source.path(), target.path(), &change, 0, "pull").unwrap();
+        assert_eq!(fs::read_dir(target.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn file_replaces_a_directory_in_one_step() {
+        let (source, target) = dirs();
+        fs::write(source.path().join("thing"), "now a file\n").unwrap();
+        fs::create_dir_all(target.path().join("thing/nested")).unwrap();
+        fs::write(target.path().join("thing/nested/old"), "old\n").unwrap();
+        let change = FileChange::new(PathBuf::from("thing"), ChangeKind::Modified);
+
+        apply_change(source.path(), target.path(), &change, 3, "merge").unwrap();
+        assert_eq!(
+            fs::read_to_string(target.path().join("thing")).unwrap(),
+            "now a file\n"
+        );
+        assert_eq!(
+            fs::read_dir(target.path()).unwrap().count(),
+            1,
+            "old tree left behind"
+        );
     }
 }

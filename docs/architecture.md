@@ -29,3 +29,35 @@ killed from stale state.
 preserves history. `pull` reconciles the moving origin and installs a new ancestor manifest.
 `compare` and review signals are pure fact extraction over the same backend changes used by
 `diff`; they never score or choose an attempt.
+
+## Source layout
+
+Dependencies point downward: commands use the domain modules, which use the backend and
+infrastructure layers. Nothing below `commands/` prints user-facing results.
+
+```
+src/
+├── main.rs, cli.rs        entry point and clap definitions
+├── commands/              one thin handler per subcommand: validate args, call the domain, print
+├── workspace/             the Workspace record; create, remove, and pre-command guards
+├── state/                 state.json store and flock (mod), v1 migration, crash recovery sweeps
+├── backend/               WorkspaceBackend trait, kind selection, capability probes
+│   ├── overlay/           fuse-overlayfs view: mount, whiteouts
+│   └── snapshot/          directory snapshots via a ForkPrimitive: copy, reflink, clonefile
+├── changes/               change detection: FileChange model, filter, fork manifest,
+│                          overlay/snapshot/cumulative scans, rendering
+├── sync/                  moving changes: merge plan, resumable journal, merge, pull, install
+├── review/                read-only facts: dependency/test signals, multi-workspace compare
+├── process/               PID identity, detached spawning, dev servers, proxy
+├── git.rs                 git subprocess helpers
+├── paths.rs               every location under FORKSPACE_HOME
+├── util/                  fs helpers (atomic write, timestamps, byte compare), glob
+└── error.rs               ForkspaceError and exit codes
+```
+
+Where to start for common changes:
+
+- **New subcommand:** args in `cli.rs`, handler in `commands/`, logic in the matching domain module.
+- **New backend:** implement `WorkspaceBackend`, or a `ForkPrimitive` for a directory snapshot,
+  and register it in `backend/mod.rs`.
+- **New on-disk location:** add it to `paths.rs`; recovery sweeps live in `state/recovery.rs`.

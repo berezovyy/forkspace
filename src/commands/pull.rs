@@ -53,13 +53,11 @@ fn workspace_name(name: Option<String>) -> Result<String> {
 
 fn print_plan(plan: &pull::PullPlan, json: bool) -> Result {
     if json {
-        let rendered = serde_json::to_string_pretty(plan)
-            .map_err(|error| ForkspaceError::Serialization(error.to_string()))?;
-        println!("{rendered}");
+        super::print_json(plan)
     } else {
         println!("{}", pull::render(plan));
+        Ok(())
     }
-    Ok(())
 }
 
 fn install_in_workspace(workspace: &Workspace) -> Result {

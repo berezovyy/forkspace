@@ -110,7 +110,9 @@ pub fn status(directory: &Path, include_untracked: bool) -> Result<String> {
 pub fn fetch_refspec(base: &Path, view: &Path, source_branch: &str, staging: &str) -> Result {
     let refspec = format!("+refs/heads/{source_branch}:{staging}");
     let view = view.to_str().ok_or_else(|| {
-        ForkspaceError::InvalidArgument("workspace path is not valid UTF-8 for git fetch".to_string())
+        ForkspaceError::InvalidArgument(
+            "workspace path is not valid UTF-8 for git fetch".to_string(),
+        )
     })?;
     run_git(base, &["fetch", "--no-tags", "--quiet", view, &refspec])
 }
@@ -128,7 +130,11 @@ pub fn delete_ref(directory: &Path, reference: &str) {
 pub fn prune_staging_refs(directory: &Path) {
     let Ok(refs) = capture_git(
         directory,
-        &["for-each-ref", "--format=%(refname)", "refs/forkspace/land/"],
+        &[
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/forkspace/land/",
+        ],
     ) else {
         return;
     };

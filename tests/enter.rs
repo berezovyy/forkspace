@@ -38,7 +38,11 @@ fn test_enter_command_passthrough() {
         "expected 'hello' in stdout, got: {}",
         stdout
     );
-    assert!(output.status.success(), "forkspace enter failed: {:?}", output);
+    assert!(
+        output.status.success(),
+        "forkspace enter failed: {:?}",
+        output
+    );
 
     common::cleanup_workspace(&ws);
 }

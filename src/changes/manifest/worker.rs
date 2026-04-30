@@ -17,11 +17,14 @@ const WORKER_NAME: &str = "FORKSPACE_INTERNAL_MANIFEST_NAME";
 #[cfg(target_os = "macos")]
 const WORKER_VIEW: &str = "FORKSPACE_INTERNAL_MANIFEST_VIEW";
 #[cfg(target_os = "macos")]
+const WORKER_BASE: &str = "FORKSPACE_INTERNAL_MANIFEST_BASE";
+#[cfg(target_os = "macos")]
 const WORKER_FORK_NS: &str = "FORKSPACE_INTERNAL_MANIFEST_FORK_NS";
 
-/// Start a detached process that builds workspace `name`'s manifest from `view`.
+/// Start a detached process that builds workspace `name`'s manifest from `view`, recovering
+/// entries deleted before the walk from `base` (see [`super::build_after_fork`]).
 #[cfg(target_os = "macos")]
-pub fn spawn(name: String, view: PathBuf, fork_time_ns: u128) -> Result {
+pub fn spawn(name: String, view: PathBuf, base: PathBuf, fork_time_ns: u128) -> Result {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
 
@@ -34,6 +37,7 @@ pub fn spawn(name: String, view: PathBuf, fork_time_ns: u128) -> Result {
         .env(WORKER_FLAG, "1")
         .env(WORKER_NAME, name)
         .env(WORKER_VIEW, view)
+        .env(WORKER_BASE, base)
         .env(WORKER_FORK_NS, fork_time_ns.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -56,7 +60,12 @@ pub fn spawn(name: String, view: PathBuf, fork_time_ns: u128) -> Result {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn spawn(_name: String, _view: std::path::PathBuf, _fork_time_ns: u128) -> Result {
+pub fn spawn(
+    _name: String,
+    _view: std::path::PathBuf,
+    _base: std::path::PathBuf,
+    _fork_time_ns: u128,
+) -> Result {
     Err(ForkspaceError::CapabilityUnsupported {
         diagnosis: "background clone manifests are macOS-only".to_string(),
         remedy: "use the selected Linux backend".to_string(),
@@ -68,10 +77,9 @@ pub fn spawn(_name: String, _view: std::path::PathBuf, _fork_time_ns: u128) -> R
 #[cfg(target_os = "macos")]
 pub fn run_worker_from_env() -> Option<Result> {
     std::env::var_os(WORKER_FLAG)?;
-    Some(
-        job_from_env()
-            .map(|(name, view, fork_time_ns)| build_in_background(&name, &view, fork_time_ns)),
-    )
+    Some(job_from_env().map(|(name, view, base, fork_time_ns)| {
+        build_in_background(&name, &view, &base, fork_time_ns)
+    }))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -80,7 +88,7 @@ pub fn run_worker_from_env() -> Option<Result> {
 }
 
 #[cfg(target_os = "macos")]
-fn job_from_env() -> Result<(String, PathBuf, u128)> {
+fn job_from_env() -> Result<(String, PathBuf, PathBuf, u128)> {
     let name = std::env::var(WORKER_NAME).map_err(|_| {
         ForkspaceError::StateFailed("manifest worker is missing its workspace name".to_string())
     })?;
@@ -89,23 +97,33 @@ fn job_from_env() -> Result<(String, PathBuf, u128)> {
         .ok_or_else(|| {
             ForkspaceError::StateFailed("manifest worker is missing its view path".to_string())
         })?;
+    let base = std::env::var_os(WORKER_BASE)
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            ForkspaceError::StateFailed("manifest worker is missing its base path".to_string())
+        })?;
     let fork_time_ns = std::env::var(WORKER_FORK_NS)
         .ok()
         .and_then(|value| value.parse().ok())
         .ok_or_else(|| {
             ForkspaceError::StateFailed("manifest worker has an invalid fork time".to_string())
         })?;
-    Ok((name, view, fork_time_ns))
+    Ok((name, view, base, fork_time_ns))
 }
 
 /// Build the manifest and record the outcome. Failures are recorded as `Degraded` rather
 /// than reported, since nobody is waiting on this process.
 #[cfg(target_os = "macos")]
-fn build_in_background(name: &str, view: &std::path::Path, fork_time_ns: u128) {
+fn build_in_background(
+    name: &str,
+    view: &std::path::Path,
+    base: &std::path::Path,
+    fork_time_ns: u128,
+) {
     if !wait_for_workspace(name) {
         return;
     }
-    let status = if super::build(name, view, fork_time_ns).is_ok() {
+    let status = if super::build_after_fork(name, view, base, fork_time_ns).is_ok() {
         super::ManifestStatus::Ready
     } else {
         super::ManifestStatus::Degraded

@@ -20,9 +20,8 @@ const MAX_FORK_DEPTH: usize = 32;
 #[derive(Debug, Clone, Default)]
 pub struct CreateOptions {
     pub session: Option<String>,
-    /// Reserved; every backend currently rejects it.
+    /// Keep the writable layers in RAM; only the overlay backend supports it.
     pub tmpfs: bool,
-    pub tmpfs_size: Option<String>,
     /// Skip capability probing and use the portable full-copy backend.
     pub force_copy: bool,
 }
@@ -56,7 +55,6 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         name: name.to_string(),
         base: origin.clone(),
         tmpfs: options.tmpfs,
-        tmpfs_size: options.tmpfs_size,
     };
     let view = match backend.create(&request) {
         Ok(view) => view,

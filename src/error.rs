@@ -123,6 +123,12 @@ pub enum ForkspaceError {
     },
 }
 
+impl From<serde_json::Error> for ForkspaceError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Serialization(error.to_string())
+    }
+}
+
 impl ForkspaceError {
     /// The process exit status for this error.
     ///

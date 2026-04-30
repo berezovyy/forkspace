@@ -60,7 +60,10 @@ fn test_fork_duplicate_name() {
 #[serial]
 fn test_fork_nonexistent_base() {
     let _dir = common::setup_test_env();
-    let result = common::fork_helper(PathBuf::from("/tmp/does-not-exist-forkspace-test"), "bad-ws");
+    let result = common::fork_helper(
+        PathBuf::from("/tmp/does-not-exist-forkspace-test"),
+        "bad-ws",
+    );
     assert!(result.is_err());
 }
 
@@ -239,15 +242,42 @@ fn test_ls_shows_workspaces() {
 
 #[test]
 #[serial]
-fn test_fork_tmpfs_with_overlay() {
+fn test_fork_tmpfs_keeps_overlay_layers_in_ram() {
+    skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
-    let result = forkspace::workspace::create(
+    let ws = forkspace::workspace::create(
         base.path().to_path_buf(),
         "tmpfs-overlay-ws",
         forkspace::workspace::CreateOptions {
             tmpfs: true,
-            tmpfs_size: Some("128m".to_string()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert!(ws.tmpfs());
+    let upper = ws.upper_path().unwrap().to_path_buf();
+    assert!(!upper.starts_with(forkspace::paths::forkspace_home()));
+    assert!(ws.view_path.join("README.md").exists());
+    std::fs::write(ws.view_path.join("note.txt"), "in ram\n").unwrap();
+    assert!(upper.join("note.txt").exists());
+
+    State::with_state(|state| forkspace::workspace::remove(state, "tmpfs-overlay-ws")).unwrap();
+    assert!(!upper.parent().unwrap().exists());
+}
+
+#[test]
+#[serial]
+fn test_fork_tmpfs_is_refused_by_copy_backend() {
+    let (_dir, base) = common::setup_with_project();
+
+    let result = forkspace::workspace::create(
+        base.path().to_path_buf(),
+        "tmpfs-copy-ws",
+        forkspace::workspace::CreateOptions {
+            tmpfs: true,
+            force_copy: true,
             ..Default::default()
         },
     );
@@ -293,11 +323,39 @@ fn test_fork_stack_depth_is_bounded() {
     }
     state.save().unwrap();
 
-    let error = forkspace::workspace::create(PathBuf::from("depth-31"), "too-deep", Default::default())
-        .unwrap_err();
+    let error =
+        forkspace::workspace::create(PathBuf::from("depth-31"), "too-deep", Default::default())
+            .unwrap_err();
     assert!(matches!(
         error,
         forkspace::error::ForkspaceError::InvalidArgument(_)
     ));
     assert!(error.to_string().contains("stack depth"));
+}
+
+#[test]
+#[serial]
+fn test_overlay_fork_refuses_base_with_whiteout_names() {
+    skip_without_overlay!();
+    let (_dir, base) = common::setup_with_project();
+    std::fs::create_dir_all(base.path().join("vendor")).unwrap();
+    std::fs::write(base.path().join("vendor/.wh.cache"), "marker-like\n").unwrap();
+    std::fs::write(base.path().join("vendor/cache"), "data\n").unwrap();
+
+    let error = forkspace::workspace::create(
+        base.path().to_path_buf(),
+        "whiteout-ws",
+        forkspace::workspace::CreateOptions::default(),
+    )
+    .unwrap_err();
+
+    match error {
+        ForkspaceError::CapabilityUnsupported { diagnosis, remedy } => {
+            assert!(diagnosis.contains("vendor/.wh.cache"), "{diagnosis}");
+            assert!(remedy.contains("--copy"), "{remedy}");
+        }
+        other => panic!("expected CapabilityUnsupported, got {other:?}"),
+    }
+    assert!(State::load().unwrap().workspaces.is_empty());
+    assert!(!forkspace::paths::overlay_root("whiteout-ws").exists());
 }

@@ -172,7 +172,8 @@ fn ready_manifest_counts_changes_and_respects_ignore_files() {
     fs::write(view.path().join(".gitignore"), b"ignored\n").unwrap();
     manifest::build("count", view.path(), u128::MAX).unwrap();
 
-    let mut workspace = forkspace::workspace::Workspace::new("count", view.path().to_path_buf(), None);
+    let mut workspace =
+        forkspace::workspace::Workspace::new("count", view.path().to_path_buf(), None);
     workspace.view_path = view.path().to_path_buf();
     workspace.fork_time_ns = now_unix_ns();
     workspace.manifest_status = ManifestStatus::Ready;
@@ -228,4 +229,54 @@ fn corrupt_manifest_before_writes_returns_to_building() {
 #[test]
 fn malformed_non_ascii_escape_is_rejected_without_panicking() {
     assert!(manifest::decode_path("%aé").is_err());
+}
+
+#[test]
+#[serial]
+fn late_manifest_recovers_entries_deleted_before_the_walk() {
+    let _home = common::setup_test_env();
+    let base = tempfile::tempdir().unwrap();
+    let view = tempfile::tempdir().unwrap();
+    for root in [base.path(), view.path()] {
+        std::fs::create_dir_all(root.join("dir/nested")).unwrap();
+        std::fs::write(root.join("deleted"), "gone\n").unwrap();
+        std::fs::write(root.join("renamed-old"), "moved\n").unwrap();
+        std::fs::write(root.join("dir/nested/file"), "deep\n").unwrap();
+        std::fs::write(root.join("kept"), "kept\n").unwrap();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let fork_time_ns = forkspace::util::now_unix_ns();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    // The user works in the view before the background builder walks it.
+    std::fs::remove_file(view.path().join("deleted")).unwrap();
+    std::fs::remove_dir_all(view.path().join("dir")).unwrap();
+    std::fs::rename(
+        view.path().join("renamed-old"),
+        view.path().join("renamed-new"),
+    )
+    .unwrap();
+    // A base entry created after the fork never existed in the workspace.
+    std::fs::write(base.path().join("base-only-new"), "later\n").unwrap();
+
+    forkspace::changes::manifest::build_after_fork("late", view.path(), base.path(), fork_time_ns)
+        .unwrap();
+    let rows = forkspace::changes::manifest::read("late").unwrap();
+    let mut paths: Vec<(String, bool)> = rows
+        .iter()
+        .map(|row| (row.path.clone(), row.dirty))
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![
+            ("deleted".to_string(), false),
+            ("dir".to_string(), false),
+            ("dir/nested".to_string(), false),
+            ("dir/nested/file".to_string(), false),
+            ("kept".to_string(), false),
+            ("renamed-new".to_string(), true),
+            ("renamed-old".to_string(), false),
+        ]
+    );
 }

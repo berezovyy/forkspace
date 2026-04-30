@@ -93,19 +93,11 @@ impl Workspace {
     /// A fresh overlay record laid out under [`paths::overlay_root`], with nothing created
     /// on disk. Used to build records directly, e.g. in tests.
     pub fn new(name: &str, base: PathBuf, parent: Option<String>) -> Self {
-        let root = paths::overlay_root(name);
-        let merged = root.join("merged");
+        let layers = OverlayState::at(&paths::overlay_root(name));
         let view = ViewInfo {
-            view_path: merged.clone(),
+            view_path: layers.merged.clone(),
             fork_time_ns: now_unix_ns(),
-            backend_state: BackendState::Overlay(OverlayState {
-                upper: root.join("upper"),
-                work: root.join("work"),
-                merged,
-                tmpfs: false,
-                tmpfs_size: None,
-                unknown_fields: Map::new(),
-            }),
+            backend_state: BackendState::Overlay(layers),
             manifest_status: ManifestStatus::Absent,
             degraded: false,
             probe_reason: None,

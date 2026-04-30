@@ -118,8 +118,9 @@ pub(super) fn recover_interrupted(path: &Path) -> Result {
 
 /// Parse a version-1 state file and persist it as the current version.
 pub(super) fn migrate_v1(path: &Path, content: &str, value: Value) -> Result<State> {
-    let legacy: LegacyState = serde_json::from_value(value)
-        .map_err(|e| ForkspaceError::StateCorrupted(format!("invalid version 1 state file: {e}")))?;
+    let legacy: LegacyState = serde_json::from_value(value).map_err(|e| {
+        ForkspaceError::StateCorrupted(format!("invalid version 1 state file: {e}"))
+    })?;
     let (backup, marker) = migration_paths(path);
     fs::write(&marker, b"1 -> 2\n")
         .io_context(|| format!("create migration marker {}", marker.display()))?;

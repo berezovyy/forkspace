@@ -95,10 +95,6 @@ impl ForkPrimitive for ClonefilePrimitive {
         Ok(ForkStats::default())
     }
 
-    fn fork_time_ns(&self, started_ns: u128, _stats: &ForkStats) -> u128 {
-        started_ns
-    }
-
     fn summarize(&self, _stats: &ForkStats, _elapsed_ms: u128) -> ForkSummary {
         ForkSummary::default()
     }

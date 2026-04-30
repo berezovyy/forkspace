@@ -9,10 +9,11 @@ use serde::Serialize;
 use crate::backend::select_backend;
 use crate::changes::filter::ChangeClass;
 use crate::changes::manifest::ManifestStatus;
+use crate::changes::ChangeCounts;
 use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::review::signals::{self, Signals};
-use crate::sync::{join_paths, ChangeCounts};
+use crate::sync::join_paths;
 use crate::workspace::{guard, Workspace};
 
 /// One workspace's source-change summary.

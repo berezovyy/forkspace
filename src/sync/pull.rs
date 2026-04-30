@@ -5,7 +5,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -13,13 +12,13 @@ use walkdir::WalkDir;
 
 use crate::backend::select_backend;
 use crate::changes::filter::ChangeFilter;
-use crate::changes::manifest::{self, ManifestStatus};
-use crate::changes::{ChangeKind, FileChange, OldContent};
+use crate::changes::manifest::{self, ManifestKind, ManifestStatus};
+use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::sync::journal::{self, OperationKind, OperationPhase};
 use crate::sync::plan::matches_ancestor;
-use crate::sync::{display_paths, is_transferable, manifest_kind, render_plan};
-use crate::util::fs::mode_bits;
+use crate::sync::{display_paths, is_transferable, render_plan};
+use crate::util::fs::{mode_bits, same_contents};
 use crate::util::{now_rfc3339, now_unix_ns, WalkDirExt};
 use crate::workspace::Workspace;
 
@@ -80,14 +79,14 @@ pub fn base_changes(workspace: &Workspace) -> Result<Vec<FileChange>> {
         }
         match rows.get(&relative) {
             Some(row) if !row.dirty && matches_ancestor(entry.path(), row) => {}
-            Some(_) => changes.push(base_change(relative, ChangeKind::Modified)),
-            None => changes.push(base_change(relative, ChangeKind::Added)),
+            Some(_) => changes.push(FileChange::new(relative, ChangeKind::Modified)),
+            None => changes.push(FileChange::new(relative, ChangeKind::Added)),
         }
     }
     changes.extend(
         rows.into_keys()
             .filter(|path| !present.contains(path) && is_transferable(ChangeFilter::class(path)))
-            .map(|path| base_change(path, ChangeKind::Deleted)),
+            .map(|path| FileChange::new(path, ChangeKind::Deleted)),
     );
     // Raw byte order rather than `Path`'s component-wise order.
     changes.sort_by(|a, b| {
@@ -236,47 +235,16 @@ pub fn find_open_journal(workspace: &str) -> Result<Option<PathBuf>> {
     journal::find_open(OperationKind::Pull, workspace)
 }
 
-fn base_change(path: PathBuf, kind: ChangeKind) -> FileChange {
-    FileChange {
-        class: ChangeFilter::class(&path),
-        path,
-        kind,
-        additions: None,
-        deletions: None,
-        is_binary: false,
-        old_content: OldContent::Available,
-    }
-}
-
 /// Whether both entries have the same kind, permissions, and content (or are both missing).
 fn equivalent(left: &Path, right: &Path) -> bool {
     let (Ok(a), Ok(b)) = (fs::symlink_metadata(left), fs::symlink_metadata(right)) else {
         return fs::symlink_metadata(left).is_err() && fs::symlink_metadata(right).is_err();
     };
-    if manifest_kind(&a) != manifest_kind(&b) || mode_bits(&a) != mode_bits(&b) {
+    if ManifestKind::of(&a) != ManifestKind::of(&b) || mode_bits(&a) != mode_bits(&b) {
         return false;
     }
     if a.file_type().is_symlink() {
         return fs::read_link(left).ok() == fs::read_link(right).ok();
     }
-    a.is_dir() || (a.len() == b.len() && same_bytes(left, right))
-}
-
-fn same_bytes(left: &Path, right: &Path) -> bool {
-    let (Ok(mut a), Ok(mut b)) = (fs::File::open(left), fs::File::open(right)) else {
-        return false;
-    };
-    let mut a_buffer = [0; 8192];
-    let mut b_buffer = [0; 8192];
-    loop {
-        let (Ok(a_read), Ok(b_read)) = (a.read(&mut a_buffer), b.read(&mut b_buffer)) else {
-            return false;
-        };
-        if a_buffer[..a_read] != b_buffer[..b_read] {
-            return false;
-        }
-        if a_read == 0 {
-            return true;
-        }
-    }
+    a.is_dir() || (a.len() == b.len() && same_contents(left, right))
 }

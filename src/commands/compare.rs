@@ -1,7 +1,7 @@
 //! `forkspace compare`: side-by-side facts about sibling workspaces of one base.
 
 use crate::cli::CompareArgs;
-use crate::error::{ForkspaceError, Result};
+use crate::error::Result;
 use crate::review::compare;
 use crate::state::State;
 
@@ -14,11 +14,7 @@ pub fn exec(args: CompareArgs) -> Result {
         .collect::<Result<Vec<_>>>()?;
     let output = compare::build(&workspaces)?;
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&output)
-                .map_err(|error| ForkspaceError::Serialization(error.to_string()))?
-        );
+        super::print_json(&output)?;
     } else if args.files {
         println!("{}", compare::render_files(&output));
     } else {

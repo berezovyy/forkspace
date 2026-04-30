@@ -102,7 +102,6 @@ fn fake_backend_passes_workspace_contract() {
         name: "view".into(),
         base: root.path().to_path_buf(),
         tmpfs: false,
-        tmpfs_size: None,
     };
 
     backend.preflight(root.path()).unwrap();
@@ -219,8 +218,7 @@ fn command_layer_has_no_linux_layout_or_platform_diagnostics() {
     }
 
     for file in ["src/backend/overlay/mod.rs", "src/backend/overlay/mount.rs"] {
-        let overlay =
-            fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(file)).unwrap();
+        let overlay = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(file)).unwrap();
         assert!(!overlay.contains("brew install"), "{file} mentions brew");
         assert!(!overlay.contains("APFS"), "{file} mentions APFS");
     }

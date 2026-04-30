@@ -135,6 +135,8 @@ fn golden_cli_contract() {
         "the CLI contract must cover about 30 invocations"
     );
 
+    // Collect every mismatch so one broken case cannot hide the rest.
+    let mut failures = Vec::new();
     for case in cases {
         let home = tempfile::tempdir().unwrap();
         if let Some(fixture) = &case.state_fixture {
@@ -165,12 +167,13 @@ fn golden_cli_contract() {
         } else {
             output.stdout
         };
-        assert_eq!(
-            stdout,
-            fs::read(prefix.with_extension("stdout")).unwrap(),
-            "stdout changed for {}",
-            case.name
-        );
+        if stdout != fs::read(prefix.with_extension("stdout")).unwrap() {
+            failures.push(format!(
+                "stdout changed for {}:\n{}",
+                case.name,
+                String::from_utf8_lossy(&stdout)
+            ));
+        }
         let stderr = if case.setup.as_deref() == Some("copy-small") {
             let value = String::from_utf8(output.stderr).unwrap();
             let value =
@@ -187,24 +190,27 @@ fn golden_cli_contract() {
         } else {
             output.stderr
         };
-        assert_eq!(
-            stderr,
-            fs::read(prefix.with_extension("stderr")).unwrap(),
-            "stderr changed for {}",
-            case.name
-        );
+        if stderr != fs::read(prefix.with_extension("stderr")).unwrap() {
+            failures.push(format!(
+                "stderr changed for {}:\n{}",
+                case.name,
+                String::from_utf8_lossy(&stderr)
+            ));
+        }
         let expected_code: i32 = fs::read_to_string(prefix.with_extension("code"))
             .unwrap()
             .trim()
             .parse()
             .unwrap();
-        assert_eq!(
-            output.status.code(),
-            Some(expected_code),
-            "exit code changed for {}",
-            case.name
-        );
+        if output.status.code() != Some(expected_code) {
+            failures.push(format!(
+                "exit code changed for {}: {:?} (expected {expected_code})",
+                case.name,
+                output.status.code()
+            ));
+        }
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
 #[test]

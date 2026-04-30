@@ -39,7 +39,10 @@ mod macos {
 
     fn fork(base: &std::path::Path, name: &str) -> forkspace::workspace::Workspace {
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
+            .env(
+                "FORKSPACE_HOME",
+                std::env::var_os("FORKSPACE_HOME").unwrap(),
+            )
             .args(["fork", base.to_str().unwrap(), "--name", name])
             .output()
             .unwrap();
@@ -49,6 +52,66 @@ mod macos {
             String::from_utf8_lossy(&output.stderr)
         );
         State::load().unwrap().workspaces.get(name).unwrap().clone()
+    }
+
+    /// Settles whether change tracking depends on APFS keeping ctimes across `clonefile`:
+    /// a fresh fork must be clean, its manifest rows must not be dirty, and a file deleted
+    /// right after `new` returns (before the background manifest walks it) must still be
+    /// reported as deleted.
+    #[test]
+    #[serial]
+    fn fresh_clone_is_clean_and_early_deletions_are_tracked() {
+        let (_home, base) = setup();
+        fs::create_dir_all(base.path().join("src/nested")).unwrap();
+        for index in 0..200 {
+            fs::write(base.path().join(format!("src/nested/file-{index}")), "x\n").unwrap();
+        }
+        fs::write(base.path().join("gone-early"), "delete me\n").unwrap();
+
+        let clean = fork(base.path(), "clean-clone");
+        let clean = wait_for_manifest(&clean.name);
+        let dirty_rows = manifest::read(&clean.name)
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.dirty)
+            .map(|row| row.path)
+            .collect::<Vec<_>>();
+        assert!(
+            dirty_rows.is_empty(),
+            "rows marked dirty at fork: {dirty_rows:?}"
+        );
+        let diff = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env(
+                "FORKSPACE_HOME",
+                std::env::var_os("FORKSPACE_HOME").unwrap(),
+            )
+            .args(["diff", "clean-clone", "--files"])
+            .output()
+            .unwrap();
+        assert!(diff.status.success());
+        let stdout = String::from_utf8_lossy(&diff.stdout);
+        assert!(
+            stdout.starts_with("clean"),
+            "fresh clone reports changes:\n{stdout}"
+        );
+
+        let early = fork(base.path(), "early-delete");
+        fs::remove_file(early.view_path.join("gone-early")).unwrap();
+        wait_for_manifest(&early.name);
+        let diff = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env(
+                "FORKSPACE_HOME",
+                std::env::var_os("FORKSPACE_HOME").unwrap(),
+            )
+            .args(["diff", "early-delete", "--files"])
+            .output()
+            .unwrap();
+        assert!(diff.status.success());
+        assert!(
+            String::from_utf8_lossy(&diff.stdout).contains("gone-early"),
+            "{}",
+            String::from_utf8_lossy(&diff.stdout)
+        );
     }
 
     fn wait_for_manifest(name: &str) -> forkspace::workspace::Workspace {
@@ -341,7 +404,10 @@ mod macos {
             1
         );
         let merged = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
+            .env(
+                "FORKSPACE_HOME",
+                std::env::var_os("FORKSPACE_HOME").unwrap(),
+            )
             .args(["merge", "names", "--no-install", "--quiet"])
             .output()
             .unwrap();
@@ -511,7 +577,10 @@ mod macos {
             },
         )
         .unwrap_err();
-        assert!(matches!(error, ForkspaceError::CapabilityUnsupported { .. }));
+        assert!(matches!(
+            error,
+            ForkspaceError::CapabilityUnsupported { .. }
+        ));
 
         let workspace = fork(base.path(), "again");
         let old_view = workspace.view_path.clone();
@@ -555,7 +624,10 @@ mod macos {
                 thread::spawn(move || {
                     barrier.wait();
                     Command::new(env!("CARGO_BIN_EXE_forkspace"))
-                        .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
+                        .env(
+                            "FORKSPACE_HOME",
+                            std::env::var_os("FORKSPACE_HOME").unwrap(),
+                        )
                         .args(["fork", base_path.to_str().unwrap(), "--name", "winner"])
                         .output()
                         .unwrap()
@@ -583,7 +655,10 @@ mod macos {
         );
 
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env("FORKSPACE_HOME", std::env::var_os("FORKSPACE_HOME").unwrap())
+            .env(
+                "FORKSPACE_HOME",
+                std::env::var_os("FORKSPACE_HOME").unwrap(),
+            )
             .args([
                 "enter",
                 "ephemeral-mac",

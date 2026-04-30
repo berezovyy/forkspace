@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use similar::{ChangeTag, TextDiff};
 
 use super::{ChangeKind, FileChange};
-use crate::util::fs::mode_bits;
+use crate::util::fs::{mode_bits, same_contents};
 
 const SNIFF_LEN: usize = 8192;
 
@@ -64,26 +64,7 @@ pub(super) fn files_differ(a: &Path, b: &Path) -> bool {
     {
         return true;
     }
-    !same_bytes(a, b)
-}
-
-fn same_bytes(a: &Path, b: &Path) -> bool {
-    let (Ok(mut file_a), Ok(mut file_b)) = (fs::File::open(a), fs::File::open(b)) else {
-        return false;
-    };
-    let mut buf_a = [0u8; SNIFF_LEN];
-    let mut buf_b = [0u8; SNIFF_LEN];
-    loop {
-        let (Ok(n_a), Ok(n_b)) = (file_a.read(&mut buf_a), file_b.read(&mut buf_b)) else {
-            return false;
-        };
-        if buf_a[..n_a] != buf_b[..n_b] {
-            return false;
-        }
-        if n_a == 0 {
-            return true;
-        }
-    }
+    !same_contents(a, b)
 }
 
 /// Classify `upper_path` (the new content) against `base_path`: `Added` when the base has no

@@ -134,10 +134,16 @@ impl<P: ForkPrimitive> SnapshotBackend<P> {
         &self,
         name: &str,
         view: &Path,
+        base: &Path,
         fork_time_ns: u128,
     ) -> Result<ManifestStatus> {
         if self.primitive.manifest_in_background() {
-            manifest::spawn(name.to_string(), view.to_path_buf(), fork_time_ns)?;
+            manifest::spawn(
+                name.to_string(),
+                view.to_path_buf(),
+                base.to_path_buf(),
+                fork_time_ns,
+            )?;
             Ok(ManifestStatus::Building)
         } else {
             manifest::build(name, view, fork_time_ns)?;
@@ -156,12 +162,7 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
     }
 
     fn preflight(&self, base: &Path) -> Result {
-        if !base.is_dir() {
-            return Err(ForkspaceError::InvalidArgument(format!(
-                "base path {} is not a directory",
-                base.display()
-            )));
-        }
+        super::require_directory(base)?;
         let root = paths::snapshot_root();
         fs::create_dir_all(&root).io_context(|| format!("create {}", root.display()))?;
         let base = base
@@ -197,7 +198,7 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
                 let _ = fs::remove_dir_all(&destination);
             })?;
         let fork_time_ns = self.primitive.fork_time_ns(started_ns, &stats);
-        let manifest = self.start_manifest(&req.name, &destination, fork_time_ns);
+        let manifest = self.start_manifest(&req.name, &destination, &req.base, fork_time_ns);
 
         let mut summary = self
             .primitive
@@ -249,6 +250,9 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
     }
 
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {
-        vec![("FORKSPACE_VIEW".to_string(), ws.view_path.display().to_string())]
+        vec![(
+            "FORKSPACE_VIEW".to_string(),
+            ws.view_path.display().to_string(),
+        )]
     }
 }

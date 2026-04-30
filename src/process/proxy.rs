@@ -5,7 +5,7 @@
 //! so `forkspace switch` takes effect without restarting it.
 
 use std::io;
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -20,17 +20,30 @@ use crate::state::{ProxyConfig, State};
 /// Port the proxy daemon listens on.
 const LISTEN_PORT: u16 = 4000;
 
-/// Serve forever on `listen_port`; the body of the hidden `proxy-daemon` subcommand.
+/// Serve forever on `listen_port` on both loopback addresses; the body of the hidden
+/// `proxy-daemon` subcommand. `127.0.0.1` is required; `::1` is added when the host has IPv6
+/// loopback, since browsers and Node may resolve `localhost` to either.
 pub fn run_proxy(listen_port: u16) -> Result {
-    let listener = TcpListener::bind(("127.0.0.1", listen_port))
-        .map_err(|e| ForkspaceError::ProxyFailed(format!("failed to bind :{}: {}", listen_port, e)))?;
-
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, listen_port)).map_err(|e| {
+        ForkspaceError::ProxyFailed(format!("failed to bind :{}: {}", listen_port, e))
+    })?;
     eprintln!("proxy: listening on http://127.0.0.1:{}", listen_port);
 
+    match TcpListener::bind((Ipv6Addr::LOCALHOST, listen_port)) {
+        Ok(ipv6) => {
+            eprintln!("proxy: listening on http://[::1]:{}", listen_port);
+            thread::spawn(move || serve(ipv6));
+        }
+        Err(e) => eprintln!("proxy: not listening on [::1]:{listen_port}: {e}"),
+    }
+    serve(listener);
+    Ok(())
+}
+
+fn serve(listener: TcpListener) {
     for client in listener.incoming().flatten() {
         thread::spawn(move || forward_to_active(client));
     }
-    Ok(())
 }
 
 /// Connect `client` to the active dev server; drop it if there is none or it is unreachable.
@@ -38,7 +51,12 @@ fn forward_to_active(client: TcpStream) {
     let Some(target_port) = active_target_port() else {
         return;
     };
-    let Ok(upstream) = TcpStream::connect(("127.0.0.1", target_port)) else {
+    // The dev server may listen on either loopback address; try IPv4 first, then IPv6.
+    let upstream_addresses = [
+        SocketAddr::from((Ipv4Addr::LOCALHOST, target_port)),
+        SocketAddr::from((Ipv6Addr::LOCALHOST, target_port)),
+    ];
+    let Ok(upstream) = TcpStream::connect(&upstream_addresses[..]) else {
         return;
     };
     pipe(client, upstream);
