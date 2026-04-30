@@ -1,56 +1,39 @@
 //! Change scan for overlay workspaces: the upper directory is the change set.
+//!
+//! Every regular entry in the upper dir is an add or a modification of the base; a whiteout
+//! (a 0:0 character device, or a zero-length `.wh.` file) marks a deletion of the base entry
+//! it names.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use walkdir::WalkDir;
 
 use super::content::classify_file;
 use super::FileChange;
-use crate::backend::overlay::Whiteout;
+use crate::backend::overlay::{is_device_whiteout, Whiteout};
 use crate::error::{ForkspaceError, Result};
 use crate::util::WalkDirExt;
 use crate::workspace::Workspace;
 
-fn whiteout_target_path(rel: &Path, original_name: &str) -> PathBuf {
-    if let Some(parent) = rel.parent() {
-        parent.join(original_name)
-    } else {
-        PathBuf::from(original_name)
-    }
-}
-
-fn valid_whiteout(rel: &Path, file_name: &str, base: &Path) -> Option<Whiteout> {
-    match Whiteout::parse(file_name)? {
-        Whiteout::Opaque => Some(Whiteout::Opaque),
-        Whiteout::Deletion(original_name) => {
-            let target = whiteout_target_path(rel, &original_name);
-            fs::symlink_metadata(base.join(target))
-                .is_ok()
-                .then_some(Whiteout::Deletion(original_name))
-        }
-    }
-}
-
 pub fn collect_changes(workspace: &Workspace) -> Result<Vec<FileChange>> {
-    collect_changes_inner(workspace, true)
+    collect(workspace, true)
 }
 
+/// Like [`collect_changes`], without line counts or binary detection.
 pub fn collect_changes_fast(workspace: &Workspace) -> Result<Vec<FileChange>> {
-    collect_changes_inner(workspace, false)
+    collect(workspace, false)
 }
 
-fn collect_changes_inner(workspace: &Workspace, need_line_counts: bool) -> Result<Vec<FileChange>> {
+fn collect(workspace: &Workspace, need_line_counts: bool) -> Result<Vec<FileChange>> {
     let upper = workspace.upper_path()?;
     if !upper.exists() {
         return Ok(Vec::new());
     }
 
     let mut changes = Vec::new();
-
     for entry in WalkDir::new(upper).min_depth(1) {
         let entry = entry.walk_context(upper)?;
-
         let rel = entry
             .path()
             .strip_prefix(upper)
@@ -62,40 +45,56 @@ fn collect_changes_inner(workspace: &Workspace, need_line_counts: bool) -> Resul
                 ),
                 source: std::io::Error::other("prefix mismatch"),
             })?;
-
-        let file_name = match entry.file_name().to_str() {
-            Some(n) => n,
-            None => continue,
+        let Some(file_name) = entry.file_name().to_str() else {
+            continue;
         };
 
-        if entry.metadata().is_ok_and(|metadata| metadata.len() == 0) {
-            if let Some(whiteout) = valid_whiteout(rel, file_name, &workspace.base) {
-                match whiteout {
-                    Whiteout::Opaque => continue,
-                    Whiteout::Deletion(original_name) => {
-                        changes.push(FileChange::deletion(whiteout_target_path(
-                            rel,
-                            &original_name,
-                        )));
-                        continue;
-                    }
+        let metadata = entry.metadata().ok();
+        if metadata.as_ref().is_some_and(is_device_whiteout) {
+            if fs::symlink_metadata(workspace.base.join(rel)).is_ok() {
+                changes.push(FileChange::deletion(rel.to_path_buf()));
+            }
+            continue;
+        }
+        if metadata.is_some_and(|metadata| metadata.len() == 0) {
+            match valid_whiteout(rel, file_name, &workspace.base) {
+                Some(Whiteout::Opaque) => continue,
+                Some(Whiteout::Deletion(original_name)) => {
+                    changes.push(FileChange::deletion(rel.with_file_name(original_name)));
+                    continue;
                 }
+                None => {}
             }
         }
-
         if entry.file_type().is_dir() {
             continue;
         }
 
-        let rel_path = rel.to_path_buf();
-        let base_path = workspace.base.join(&rel_path);
-        let upper_path = entry.path().to_path_buf();
-
-        if let Some(change) = classify_file(rel_path, &upper_path, &base_path, need_line_counts) {
+        let base_path = workspace.base.join(rel);
+        if let Some(change) = classify_file(
+            rel.to_path_buf(),
+            entry.path(),
+            &base_path,
+            need_line_counts,
+        ) {
             changes.push(change);
         }
     }
 
     changes.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(changes)
+}
+
+/// Parse `file_name` as a whiteout. A deletion whiteout only counts when the base still
+/// has the entry it hides; otherwise it is an add-then-delete with nothing to report.
+fn valid_whiteout(rel: &Path, file_name: &str, base: &Path) -> Option<Whiteout> {
+    match Whiteout::parse(file_name)? {
+        Whiteout::Opaque => Some(Whiteout::Opaque),
+        Whiteout::Deletion(original_name) => {
+            let target = rel.with_file_name(&original_name);
+            fs::symlink_metadata(base.join(target))
+                .is_ok()
+                .then_some(Whiteout::Deletion(original_name))
+        }
+    }
 }

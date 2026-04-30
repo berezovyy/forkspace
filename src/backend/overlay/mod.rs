@@ -5,7 +5,7 @@
 pub mod mount;
 mod whiteout;
 
-pub(crate) use whiteout::Whiteout;
+pub(crate) use whiteout::{is_device_whiteout, Whiteout};
 
 use std::fs;
 use std::io::BufRead;

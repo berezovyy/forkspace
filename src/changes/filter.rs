@@ -1,3 +1,10 @@
+//! Which changes are worth showing: path classification and ignore rules.
+//!
+//! Every change gets a [`ChangeClass`]. By default only source and dependency changes are
+//! shown, and source paths are further filtered by `.gitignore`, `.forkspaceignore`, and a
+//! built-in `node_modules/` rule.
+
+use std::ffi::OsStr;
 use std::path::Path;
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -9,14 +16,17 @@ use crate::changes::FileChange;
 )]
 #[serde(rename_all = "lowercase")]
 pub enum ChangeClass {
+    /// Project files; subject to ignore rules.
     Source,
+    /// Manifests and lockfiles (`package.json`, `Cargo.lock`, ...); always shown.
     Dependency,
+    /// Installed or OS-generated files (`node_modules/`, `.DS_Store`); never shown.
     Runtime,
+    /// Version-control internals under `.git/`; never shown.
     Internal,
 }
 
-pub type Class = ChangeClass;
-
+/// Ignore rules of a base directory.
 pub struct ChangeFilter {
     gitignore: Gitignore,
 }
@@ -25,21 +35,17 @@ impl ChangeFilter {
     pub fn build(base: &Path) -> Self {
         let mut builder = GitignoreBuilder::new(base);
         let _ = builder.add_line(None, "node_modules/");
-
-        let gitignore_path = base.join(".gitignore");
-        if gitignore_path.exists() {
-            let _ = builder.add(&gitignore_path);
+        for name in [".gitignore", ".forkspaceignore"] {
+            let path = base.join(name);
+            if path.exists() {
+                let _ = builder.add(&path);
+            }
         }
-
-        let forkspaceignore_path = base.join(".forkspaceignore");
-        if forkspaceignore_path.exists() {
-            let _ = builder.add(&forkspaceignore_path);
-        }
-
-        let gitignore = builder
-            .build()
-            .unwrap_or_else(|_| GitignoreBuilder::new(base).build().unwrap());
-
+        let gitignore = builder.build().unwrap_or_else(|_| {
+            GitignoreBuilder::new(base)
+                .build()
+                .expect("an empty gitignore builds")
+        });
         Self { gitignore }
     }
 
@@ -50,16 +56,14 @@ impl ChangeFilter {
     }
 
     pub fn class(path: &Path) -> ChangeClass {
-        if path
-            .components()
-            .any(|component| component.as_os_str() == ".git")
-        {
+        let has_component = |name: &str| {
+            path.components()
+                .any(|component| component.as_os_str() == name)
+        };
+        if has_component(".git") {
             return ChangeClass::Internal;
         }
-        if path
-            .components()
-            .any(|component| component.as_os_str() == "node_modules")
-            || path.file_name().is_some_and(|name| name == ".DS_Store")
+        if has_component("node_modules") || path.file_name().is_some_and(|name| name == ".DS_Store")
         {
             return ChangeClass::Runtime;
         }
@@ -85,7 +89,7 @@ impl ChangeFilter {
     }
 }
 
-fn is_dependency_name(name: &std::ffi::OsStr) -> bool {
+fn is_dependency_name(name: &OsStr) -> bool {
     let Some(name) = name.to_str() else {
         return false;
     };

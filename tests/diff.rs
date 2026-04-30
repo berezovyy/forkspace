@@ -83,6 +83,22 @@ fn test_diff_deleted_file() {
 }
 
 #[test]
+#[serial]
+fn test_diff_reports_deletion_through_a_mounted_overlay() {
+    skip_without_overlay!();
+    let (_dir, base) = common::setup_with_project();
+    let ws = common::fork_helper(base.path().to_path_buf(), "delete-ws").unwrap();
+
+    fs::remove_file(ws.view_path.join("README.md")).unwrap();
+
+    let changes = collect_changes(&ws).unwrap();
+    common::cleanup_workspace(&ws);
+    assert_eq!(changes.len(), 1, "unexpected changes: {changes:?}");
+    assert!(matches!(changes[0].kind, ChangeKind::Deleted));
+    assert_eq!(changes[0].path, PathBuf::from("README.md"));
+}
+
+#[test]
 fn test_diff_files_mode() {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().join("base");

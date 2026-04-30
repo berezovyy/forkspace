@@ -1,11 +1,19 @@
-use std::collections::{BTreeMap, BTreeSet};
+//! Fork manifests: a JSONL record of every entry in a snapshot view at fork time.
+//!
+//! Directory-snapshot backends have no upper dir, so the manifest is their change baseline:
+//! one [`ManifestRow`] per entry, written to `<manifest_dir>/<name>.jsonl`. Paths are
+//! percent-encoded ([`encode_path`]) so non-UTF-8 names survive the round trip. On macOS the
+//! manifest is built in a detached background process ([`spawn`]).
+
+mod worker;
+
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Lines, Write};
+use std::iter::Enumerate;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "macos")]
-use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -14,9 +22,13 @@ use crate::backend::ChangeCount;
 use crate::changes::filter::ChangeFilter;
 use crate::error::{ForkspaceError, Result};
 use crate::state::State;
-use crate::util::WalkDirExt;
+use crate::util::fs::{ctime_ns, mode_bits, mtime_ns};
+use crate::util::{IoContext, WalkDirExt};
 use crate::workspace::Workspace;
 
+pub use worker::{run_worker_from_env, spawn};
+
+/// Lifecycle of a workspace's fork manifest, persisted in `state.json`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ManifestStatus {
@@ -24,6 +36,7 @@ pub enum ManifestStatus {
     Absent,
     Building,
     Ready,
+    /// The manifest was lost after post-fork writes, so deletions can no longer be tracked.
     Degraded,
 }
 
@@ -35,16 +48,35 @@ pub enum ManifestKind {
     Symlink,
 }
 
+impl ManifestKind {
+    /// The kind of entry described by `symlink_metadata` output.
+    pub fn of(metadata: &fs::Metadata) -> Self {
+        if metadata.file_type().is_symlink() {
+            Self::Symlink
+        } else if metadata.is_dir() {
+            Self::Dir
+        } else {
+            Self::File
+        }
+    }
+}
+
+/// One manifest line: an entry's identity at fork time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestRow {
+    /// Path relative to the view, encoded with [`encode_path`].
     pub path: String,
     pub kind: ManifestKind,
     pub size: u64,
     pub mtime_ns: i128,
-    #[serde(default, skip_serializing_if = "is_zero_mode")]
+    /// Permission bits; `0` in manifests written before modes were recorded.
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub mode: u32,
+    /// Encoded symlink target, for symlinks only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    /// The entry was already written after the fork instant when the row was recorded, so
+    /// the row may not describe the fork-time content.
     #[serde(default, skip_serializing_if = "is_false")]
     pub dirty: bool,
 }
@@ -53,76 +85,85 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-fn is_zero_mode(value: &u32) -> bool {
+fn is_zero(value: &u32) -> bool {
     *value == 0
+}
+
+impl ManifestRow {
+    /// Whether the entry at `path`, with `metadata` from `symlink_metadata`, still looks like
+    /// this row: same kind, size, mode (when recorded), symlink target, and mtime. Symlink
+    /// mtimes are not compared because snapshot copies do not preserve them.
+    pub(crate) fn matches(&self, path: &Path, metadata: &fs::Metadata) -> bool {
+        if ManifestKind::of(metadata) != self.kind
+            || metadata.len() != self.size
+            || (self.kind != ManifestKind::Symlink && mtime_ns(metadata) != self.mtime_ns)
+            || (self.mode != 0 && mode_bits(metadata) != self.mode)
+        {
+            return false;
+        }
+        if self.kind != ManifestKind::Symlink {
+            return true;
+        }
+        fs::read_link(path)
+            .ok()
+            .is_some_and(|target| Some(encode_path(&target)) == self.target)
+    }
+}
+
+/// Whether `metadata` shows a write after the fork instant (`ctime > fork_time_ns`).
+pub(crate) fn written_after_fork(metadata: &fs::Metadata, fork_time_ns: u128) -> bool {
+    ctime_ns(metadata) > i128::try_from(fork_time_ns).unwrap_or(i128::MAX)
 }
 
 pub fn manifest_path(name: &str) -> PathBuf {
     crate::paths::manifest_dir().join(format!("{name}.jsonl"))
 }
 
+/// Percent-encode every byte outside `[A-Za-z0-9/._-]`, keeping the path lossless and the
+/// JSON plain ASCII.
 pub fn encode_path(path: &Path) -> String {
-    let mut encoded = String::with_capacity(path.as_os_str().as_bytes().len());
-    for byte in path.as_os_str().as_bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(*byte, b'/' | b'-' | b'_' | b'.') {
-            encoded.push(char::from(*byte));
+    let bytes = path.as_os_str().as_bytes();
+    let mut encoded = String::with_capacity(bytes.len());
+    for &byte in bytes {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.') {
+            encoded.push(char::from(byte));
         } else {
-            encoded.push_str(&format!("%{byte:02X}"));
+            write!(encoded, "%{byte:02X}").expect("writing to a string cannot fail");
         }
     }
     encoded
 }
 
+/// Inverse of [`encode_path`]; accepts either hex case.
 pub fn decode_path(encoded: &str) -> Result<PathBuf> {
-    let bytes = encoded.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            if index + 2 >= bytes.len() {
-                return Err(ForkspaceError::StateCorrupted(format!(
-                    "invalid manifest path escape in '{encoded}'"
-                )));
-            }
-            let high = hex_value(bytes[index + 1]);
-            let low = hex_value(bytes[index + 2]);
-            let value = high
-                .zip(low)
-                .map(|(high, low)| (high << 4) | low)
-                .ok_or_else(|| {
-                    ForkspaceError::StateCorrupted(format!(
-                        "invalid manifest path escape in '{encoded}'"
-                    ))
-                })?;
-            decoded.push(value);
-            index += 3;
-        } else {
-            decoded.push(bytes[index]);
-            index += 1;
+    let invalid_escape =
+        || ForkspaceError::StateCorrupted(format!("invalid manifest path escape in '{encoded}'"));
+    let mut bytes = encoded.bytes();
+    let mut decoded = Vec::with_capacity(encoded.len());
+    while let Some(byte) = bytes.next() {
+        if byte != b'%' {
+            decoded.push(byte);
+            continue;
         }
+        let high = bytes.next().ok_or_else(invalid_escape)?;
+        let low = bytes.next().ok_or_else(invalid_escape)?;
+        let value = hex_value(high)
+            .zip(hex_value(low))
+            .map(|(high, low)| (high << 4) | low)
+            .ok_or_else(invalid_escape)?;
+        decoded.push(value);
     }
     Ok(PathBuf::from(std::ffi::OsString::from_vec(decoded)))
 }
 
 fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn timestamp_ns(seconds: i64, nanos: i64) -> i128 {
-    i128::from(seconds) * 1_000_000_000 + i128::from(nanos)
+    char::from(byte).to_digit(16).map(|digit| digit as u8)
 }
 
 fn row(root: &Path, entry: &walkdir::DirEntry, fork_time_ns: u128) -> Result<ManifestRow> {
     let path = entry.path();
-    let metadata = fs::symlink_metadata(path).map_err(|source| ForkspaceError::Io {
-        context: format!("read manifest metadata for {}", path.display()),
-        source,
-    })?;
+    let metadata = fs::symlink_metadata(path)
+        .io_context(|| format!("read manifest metadata for {}", path.display()))?;
     let relative = path.strip_prefix(root).map_err(|_| {
         ForkspaceError::StateFailed(format!(
             "manifest entry {} escaped workspace {}",
@@ -130,84 +171,76 @@ fn row(root: &Path, entry: &walkdir::DirEntry, fork_time_ns: u128) -> Result<Man
             root.display()
         ))
     })?;
-    let kind = if metadata.file_type().is_symlink() {
-        ManifestKind::Symlink
-    } else if metadata.is_dir() {
-        ManifestKind::Dir
-    } else {
-        ManifestKind::File
-    };
+    let kind = ManifestKind::of(&metadata);
     let target = if kind == ManifestKind::Symlink {
-        Some(encode_path(&fs::read_link(path).map_err(|source| {
-            ForkspaceError::Io {
-                context: format!("read symlink {}", path.display()),
-                source,
-            }
-        })?))
+        let target =
+            fs::read_link(path).io_context(|| format!("read symlink {}", path.display()))?;
+        Some(encode_path(&target))
     } else {
         None
     };
-    let ctime_ns = timestamp_ns(metadata.ctime(), metadata.ctime_nsec());
     Ok(ManifestRow {
         path: encode_path(relative),
         kind,
         size: metadata.len(),
-        mtime_ns: timestamp_ns(metadata.mtime(), metadata.mtime_nsec()),
-        mode: metadata.mode() & 0o7777,
+        mtime_ns: mtime_ns(&metadata),
+        mode: mode_bits(&metadata),
         target,
-        dirty: ctime_ns > i128::try_from(fork_time_ns).unwrap_or(i128::MAX),
+        dirty: written_after_fork(&metadata, fork_time_ns),
     })
 }
 
+/// Walk `view` and durably install its manifest for workspace `name`. Returns the row count.
 pub fn build(name: &str, view: &Path, fork_time_ns: u128) -> Result<usize> {
     let path = manifest_path(name);
     let directory = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(directory).map_err(|source| ForkspaceError::Io {
-        context: format!("create manifest directory {}", directory.display()),
-        source,
-    })?;
+    fs::create_dir_all(directory)
+        .io_context(|| format!("create manifest directory {}", directory.display()))?;
+    // State recovery deletes `.<name>.jsonl.tmp-<pid>` leftovers once `<pid>` has exited, so
+    // an interrupted build is cleaned up later. Keep this exact name.
     let temporary = directory.join(format!(".{name}.jsonl.tmp-{}", std::process::id()));
-    let file = fs::File::create(&temporary).map_err(|source| ForkspaceError::Io {
-        context: format!("create manifest {}", temporary.display()),
-        source,
-    })?;
+    let file = fs::File::create(&temporary)
+        .io_context(|| format!("create manifest {}", temporary.display()))?;
+
     let mut writer = BufWriter::new(file);
-    let mut count = 0;
-    for entry in WalkDir::new(view).min_depth(1).follow_links(false) {
-        let entry = entry.walk_context(view)?;
-        let row = row(view, &entry, fork_time_ns)?;
-        serde_json::to_writer(&mut writer, &row)
-            .map_err(|error| ForkspaceError::Serialization(error.to_string()))?;
-        writer.write_all(b"\n").map_err(|source| ForkspaceError::Io {
-            context: format!("write manifest {}", temporary.display()),
-            source,
-        })?;
-        count += 1;
-    }
+    let count = write_rows(&mut writer, view, fork_time_ns, &temporary)?;
     let file = writer.into_inner().map_err(|error| ForkspaceError::Io {
         context: format!("flush manifest {}", temporary.display()),
         source: error.into_error(),
     })?;
-    file.sync_all().map_err(|source| ForkspaceError::Io {
-        context: format!("sync manifest {}", temporary.display()),
-        source,
-    })?;
-    fs::rename(&temporary, &path).map_err(|source| ForkspaceError::Io {
-        context: format!("install manifest {}", path.display()),
-        source,
-    })?;
+
+    file.sync_all()
+        .io_context(|| format!("sync manifest {}", temporary.display()))?;
+    fs::rename(&temporary, &path).io_context(|| format!("install manifest {}", path.display()))?;
     fs::File::open(directory)
-        .and_then(|file| file.sync_all())
-        .map_err(|source| ForkspaceError::Io {
-            context: format!("sync manifest directory {}", directory.display()),
-            source,
-        })?;
+        .and_then(|directory| directory.sync_all())
+        .io_context(|| format!("sync manifest directory {}", directory.display()))?;
     Ok(count)
 }
 
+fn write_rows(
+    writer: &mut impl Write,
+    view: &Path,
+    fork_time_ns: u128,
+    temporary: &Path,
+) -> Result<usize> {
+    let mut count = 0;
+    for entry in WalkDir::new(view).min_depth(1).follow_links(false) {
+        let entry = entry.walk_context(view)?;
+        serde_json::to_writer(&mut *writer, &row(view, &entry, fork_time_ns)?)
+            .map_err(|error| ForkspaceError::Serialization(error.to_string()))?;
+        writer
+            .write_all(b"\n")
+            .io_context(|| format!("write manifest {}", temporary.display()))?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// Streaming reader over a manifest's rows; see [`stream`].
 pub struct ManifestReader {
     path: PathBuf,
-    lines: std::iter::Enumerate<std::io::Lines<BufReader<fs::File>>>,
+    lines: Enumerate<Lines<BufReader<fs::File>>>,
 }
 
 impl Iterator for ManifestReader {
@@ -215,30 +248,26 @@ impl Iterator for ManifestReader {
 
     fn next(&mut self) -> Option<Self::Item> {
         let (index, line) = self.lines.next()?;
-        Some(
-            line.map_err(|source| ForkspaceError::Io {
-                context: format!("read manifest {} line {}", self.path.display(), index + 1),
-                source,
-            })
+        let line_number = index + 1;
+        let path = &self.path;
+        let row = line
+            .io_context(|| format!("read manifest {} line {line_number}", path.display()))
             .and_then(|line| {
                 serde_json::from_str(&line).map_err(|error| {
                     ForkspaceError::StateCorrupted(format!(
-                        "invalid manifest {} line {}: {error}",
-                        self.path.display(),
-                        index + 1
+                        "invalid manifest {} line {line_number}: {error}",
+                        path.display()
                     ))
                 })
-            }),
-        )
+            });
+        Some(row)
     }
 }
 
+/// Open workspace `name`'s manifest for row-by-row reading.
 pub fn stream(name: &str) -> Result<ManifestReader> {
     let path = manifest_path(name);
-    let file = fs::File::open(&path).map_err(|source| ForkspaceError::Io {
-        context: format!("open manifest {}", path.display()),
-        source,
-    })?;
+    let file = fs::File::open(&path).io_context(|| format!("open manifest {}", path.display()))?;
     Ok(ManifestReader {
         path,
         lines: BufReader::new(file).lines().enumerate(),
@@ -249,105 +278,16 @@ pub fn read(name: &str) -> Result<Vec<ManifestRow>> {
     stream(name)?.collect()
 }
 
-fn current_rows(workspace: &Workspace) -> Result<BTreeMap<PathBuf, ManifestRow>> {
-    let mut rows = BTreeMap::new();
-    for entry in WalkDir::new(&workspace.view_path)
-        .min_depth(1)
-        .follow_links(false)
-    {
-        let entry = entry.walk_context(&workspace.view_path)?;
-        let value = row(&workspace.view_path, &entry, workspace.fork_time_ns)?;
-        rows.insert(decode_path(&value.path)?, value);
-    }
-    Ok(rows)
-}
-
-fn has_post_fork_writes(workspace: &Workspace) -> Result<bool> {
-    for entry in WalkDir::new(&workspace.view_path).follow_links(false) {
-        let entry = entry.walk_context(&workspace.view_path)?;
-        let metadata = fs::symlink_metadata(entry.path()).map_err(|source| ForkspaceError::Io {
-            context: format!("inspect {} for manifest recovery", entry.path().display()),
-            source,
-        })?;
-        if timestamp_ns(metadata.ctime(), metadata.ctime_nsec())
-            > i128::try_from(workspace.fork_time_ns).unwrap_or(i128::MAX)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn visible(filter: Option<&ChangeFilter>, path: &Path) -> bool {
-    filter.is_none_or(|filter| filter.is_visible(path, false))
-}
-
-pub fn change_count(workspace: &Workspace, include_ignored: bool) -> Result<ChangeCount> {
-    match workspace.manifest_status {
-        ManifestStatus::Absent | ManifestStatus::Building => return Ok(ChangeCount::Pending),
-        ManifestStatus::Degraded => return Ok(ChangeCount::Degraded),
-        ManifestStatus::Ready => {}
-    }
-
-    let baseline = match read(&workspace.name) {
-        Ok(rows) => rows,
-        Err(_) if has_post_fork_writes(workspace)? => {
-            let _ = mark(&workspace.name, ManifestStatus::Degraded);
-            return Ok(ChangeCount::Degraded);
-        }
-        Err(_) => {
-            let _ = mark(&workspace.name, ManifestStatus::Building);
-            let _ = remove(&workspace.name);
-            let _ = spawn(
-                workspace.name.clone(),
-                workspace.view_path.clone(),
-                workspace.fork_time_ns,
-            );
-            return Ok(ChangeCount::Pending);
-        }
-    };
-    let mut baseline_map = BTreeMap::new();
-    for row in baseline {
-        baseline_map.insert(decode_path(&row.path)?, row);
-    }
-    let current = current_rows(workspace)?;
-    let filter = (!include_ignored).then(|| ChangeFilter::build(&workspace.base));
-    let mut changed = BTreeSet::new();
-
-    for (path, current_row) in &current {
-        if current_row.kind == ManifestKind::Dir || !visible(filter.as_ref(), path) {
-            continue;
-        }
-        match baseline_map.get(path) {
-            Some(baseline_row) if baseline_row == current_row && !baseline_row.dirty => {}
-            _ => {
-                changed.insert(path.clone());
-            }
-        }
-    }
-    for (path, baseline_row) in &baseline_map {
-        if baseline_row.kind != ManifestKind::Dir
-            && !current.contains_key(path)
-            && visible(filter.as_ref(), path)
-        {
-            changed.insert(path.clone());
-        }
-    }
-    Ok(ChangeCount::Ready(changed.len()))
-}
-
+/// Delete workspace `name`'s manifest; a missing manifest is not an error.
 pub fn remove(name: &str) -> Result {
     let path = manifest_path(name);
     match fs::remove_file(&path) {
-        Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(ForkspaceError::Io {
-            context: format!("remove manifest {}", path.display()),
-            source,
-        }),
+        result => result.io_context(|| format!("remove manifest {}", path.display())),
     }
 }
 
+/// Persist a new manifest status. Returns `false` if the workspace no longer exists.
 fn mark(name: &str, status: ManifestStatus) -> Result<bool> {
     State::with_state(|state| {
         let Some(workspace) = state.workspaces.get_mut(name) else {
@@ -358,93 +298,86 @@ fn mark(name: &str, status: ManifestStatus) -> Result<bool> {
     })
 }
 
-#[cfg(target_os = "macos")]
-fn run_background(name: String, view: PathBuf, fork_time_ns: u128) {
-    for _ in 0..500 {
-        match State::load() {
-            Ok(state) if state.workspaces.contains_key(&name) => break,
-            Ok(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
-            Err(_) => return,
+/// Count changed non-directory paths in a snapshot view by comparing a fresh walk against
+/// the manifest. An unreadable manifest triggers recovery (see [`recover_unreadable`]).
+pub fn change_count(workspace: &Workspace, include_ignored: bool) -> Result<ChangeCount> {
+    match workspace.manifest_status {
+        ManifestStatus::Absent | ManifestStatus::Building => return Ok(ChangeCount::Pending),
+        ManifestStatus::Degraded => return Ok(ChangeCount::Degraded),
+        ManifestStatus::Ready => {}
+    }
+
+    let Ok(rows) = read(&workspace.name) else {
+        return recover_unreadable(workspace);
+    };
+    let mut baseline = BTreeMap::new();
+    for row in rows {
+        baseline.insert(decode_path(&row.path)?, row);
+    }
+    let current = current_rows(workspace)?;
+    let filter = (!include_ignored).then(|| ChangeFilter::build(&workspace.base));
+    let counted = |path: &Path, row: &ManifestRow| {
+        row.kind != ManifestKind::Dir
+            && filter
+                .as_ref()
+                .is_none_or(|filter| filter.is_visible(path, false))
+    };
+
+    let added_or_modified = current
+        .iter()
+        .filter(|(path, row)| counted(path, row))
+        .filter(|(path, row)| {
+            baseline
+                .get(*path)
+                .is_none_or(|base| base != *row || base.dirty)
+        })
+        .count();
+    let deleted = baseline
+        .iter()
+        .filter(|(path, row)| counted(path, row) && !current.contains_key(*path))
+        .count();
+    Ok(ChangeCount::Ready(added_or_modified + deleted))
+}
+
+/// A `Ready` manifest that cannot be read. If the view has been written since the fork, the
+/// fork-time baseline is gone for good and tracking degrades; otherwise the view still *is*
+/// the baseline, so the manifest is rebuilt in the background.
+fn recover_unreadable(workspace: &Workspace) -> Result<ChangeCount> {
+    if has_post_fork_writes(workspace)? {
+        let _ = mark(&workspace.name, ManifestStatus::Degraded);
+        return Ok(ChangeCount::Degraded);
+    }
+    let _ = mark(&workspace.name, ManifestStatus::Building);
+    let _ = remove(&workspace.name);
+    let _ = spawn(
+        workspace.name.clone(),
+        workspace.view_path.clone(),
+        workspace.fork_time_ns,
+    );
+    Ok(ChangeCount::Pending)
+}
+
+/// Manifest rows describing the view as it is now, keyed by decoded path.
+fn current_rows(workspace: &Workspace) -> Result<BTreeMap<PathBuf, ManifestRow>> {
+    let view = &workspace.view_path;
+    let mut rows = BTreeMap::new();
+    for entry in WalkDir::new(view).min_depth(1).follow_links(false) {
+        let entry = entry.walk_context(view)?;
+        let row = row(view, &entry, workspace.fork_time_ns)?;
+        rows.insert(decode_path(&row.path)?, row);
+    }
+    Ok(rows)
+}
+
+fn has_post_fork_writes(workspace: &Workspace) -> Result<bool> {
+    let view = &workspace.view_path;
+    for entry in WalkDir::new(view).follow_links(false) {
+        let entry = entry.walk_context(view)?;
+        let metadata = fs::symlink_metadata(entry.path())
+            .io_context(|| format!("inspect {} for manifest recovery", entry.path().display()))?;
+        if written_after_fork(&metadata, workspace.fork_time_ns) {
+            return Ok(true);
         }
     }
-    if !State::load().is_ok_and(|state| state.workspaces.contains_key(&name)) {
-        return;
-    }
-    let status = if build(&name, &view, fork_time_ns).is_ok() {
-        ManifestStatus::Ready
-    } else {
-        ManifestStatus::Degraded
-    };
-    if !mark(&name, status).unwrap_or(false) {
-        let _ = remove(&name);
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub fn spawn(name: String, view: PathBuf, fork_time_ns: u128) -> Result {
-    use std::os::unix::process::CommandExt;
-
-    let executable = std::env::current_exe().map_err(|source| ForkspaceError::Io {
-        context: "locate forkspace executable for manifest builder".to_string(),
-        source,
-    })?;
-    let mut command = Command::new(executable);
-    command
-        .env("FORKSPACE_INTERNAL_MANIFEST_WORKER", "1")
-        .env("FORKSPACE_INTERNAL_MANIFEST_NAME", name)
-        .env("FORKSPACE_INTERNAL_MANIFEST_VIEW", view)
-        .env("FORKSPACE_INTERNAL_MANIFEST_FORK_NS", fork_time_ns.to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-    command.spawn().map_err(|source| ForkspaceError::Io {
-        context: "start background manifest builder".to_string(),
-        source,
-    })?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn spawn(_name: String, _view: PathBuf, _fork_time_ns: u128) -> Result {
-    Err(ForkspaceError::CapabilityUnsupported {
-        diagnosis: "background clone manifests are macOS-only".to_string(),
-        remedy: "use the selected Linux backend".to_string(),
-    })
-}
-
-#[cfg(target_os = "macos")]
-pub fn run_worker_from_env() -> Option<Result> {
-    std::env::var_os("FORKSPACE_INTERNAL_MANIFEST_WORKER")?;
-    let result = (|| {
-        let name = std::env::var("FORKSPACE_INTERNAL_MANIFEST_NAME").map_err(|_| {
-            ForkspaceError::StateFailed("manifest worker is missing its workspace name".to_string())
-        })?;
-        let view = std::env::var_os("FORKSPACE_INTERNAL_MANIFEST_VIEW")
-            .map(PathBuf::from)
-            .ok_or_else(|| {
-                ForkspaceError::StateFailed("manifest worker is missing its view path".to_string())
-            })?;
-        let fork_time_ns = std::env::var("FORKSPACE_INTERNAL_MANIFEST_FORK_NS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .ok_or_else(|| {
-                ForkspaceError::StateFailed("manifest worker has an invalid fork time".to_string())
-            })?;
-        run_background(name, view, fork_time_ns);
-        Ok(())
-    })();
-    Some(result)
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn run_worker_from_env() -> Option<Result> {
-    None
+    Ok(false)
 }
