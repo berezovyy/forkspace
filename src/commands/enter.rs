@@ -28,7 +28,7 @@ pub fn exec(args: EnterArgs) -> Result {
 
     let state = State::load()?;
     let workspace = state.require_workspace(&name)?;
-    guard::require_view(workspace)?;
+    guard::require_live_view(&state, workspace)?;
     guard::ensure_idle(&name)?;
     let backend = select_backend(Some(workspace.backend_kind))?;
 

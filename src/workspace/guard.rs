@@ -1,6 +1,8 @@
 //! Preconditions checked before a command touches a workspace.
 
+use crate::backend::select_backend;
 use crate::error::{ForkspaceError, Result};
+use crate::state::State;
 use crate::sync::journal::{self, OperationKind};
 use crate::workspace::Workspace;
 
@@ -40,4 +42,23 @@ pub fn require_view(workspace: &Workspace) -> Result {
         kind: "view".to_string(),
         path: workspace.view_path.display().to_string(),
     })
+}
+
+/// The view must exist and be usable through the backend, along with every ancestor view it
+/// reads from. Overlay views unmounted by a reboot or a dead fuse-overlayfs are remounted here,
+/// so commands never run in (or read from) an empty mount point.
+pub fn require_live_view(state: &State, workspace: &Workspace) -> Result {
+    if let Some(parent) = workspace
+        .parent
+        .as_deref()
+        .and_then(|parent| state.workspaces.get(parent))
+    {
+        require_live_view(state, parent)?;
+    }
+    require_view(workspace)?;
+    // A backend this build cannot open has nothing to prepare; whatever needs it reports that.
+    match select_backend(Some(workspace.backend_kind)) {
+        Ok(backend) => backend.ensure_view(workspace),
+        Err(_) => Ok(()),
+    }
 }

@@ -4,7 +4,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 use forkspace::changes;
-use forkspace::sync::merge;
+use forkspace::sync::{install, merge};
 
 #[test]
 fn test_merge_copies_added_files() {
@@ -140,12 +140,12 @@ fn test_detect_package_manager() {
 
     // No package.json → no PM even with lockfile
     fs::write(ws.upper_path().unwrap().join("bun.lockb"), "").unwrap();
-    assert!(merge::detect_package_manager(&ws).is_none());
+    assert!(install::detect_package_manager(&ws).is_none());
 
     fs::write(ws.upper_path().unwrap().join("package.json"), "{}").unwrap();
     assert!(matches!(
-        merge::detect_package_manager(&ws),
-        Some(merge::PackageManager::Bun)
+        install::detect_package_manager(&ws),
+        Some(install::PackageManager::Bun)
     ));
 }
 
@@ -166,7 +166,7 @@ fn test_detect_package_manager_variants() {
         fs::write(ws.upper_path().unwrap().join("package.json"), "{}").unwrap();
         fs::write(ws.upper_path().unwrap().join(lockfile), "").unwrap();
         assert!(
-            merge::detect_package_manager(&ws).is_some(),
+            install::detect_package_manager(&ws).is_some(),
             "expected PM for {lockfile}"
         );
     }
@@ -185,8 +185,8 @@ fn test_package_manager_field_takes_precedence() {
     .unwrap();
     fs::write(ws.upper_path().unwrap().join("package-lock.json"), "{}").unwrap();
     assert!(matches!(
-        merge::detect_package_manager(&ws),
-        Some(merge::PackageManager::Pnpm)
+        install::detect_package_manager(&ws),
+        Some(install::PackageManager::Pnpm)
     ));
 }
 

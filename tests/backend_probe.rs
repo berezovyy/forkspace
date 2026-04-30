@@ -136,7 +136,7 @@ fn plain_copy_is_a_privilege_free_fidelity_floor() {
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].path, Path::new("edit"));
     let plan = forkspace::sync::plan::build(&workspace, false).unwrap();
-    let journal = forkspace::sync::plan::execute(&plan).unwrap();
+    let journal = forkspace::sync::merge::execute(&plan).unwrap();
     forkspace::sync::journal::remove(&journal).unwrap();
     assert_eq!(fs::read(base.path().join("edit")).unwrap(), b"changed\n");
 

@@ -166,6 +166,12 @@ pub trait WorkspaceBackend {
     }
     /// Environment variables exported to processes run inside the workspace.
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)>;
+    /// Make the view usable before a command reads or writes through it, for example by
+    /// remounting an overlay that a reboot unmounted. A view that is already usable is left
+    /// alone.
+    fn ensure_view(&self, _ws: &Workspace) -> Result {
+        Ok(())
+    }
 }
 
 /// Opens the backend for the `recorded` kind, falling back to the `FORKSPACE_BACKEND` override and

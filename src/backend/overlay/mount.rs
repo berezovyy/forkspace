@@ -139,11 +139,80 @@ pub fn unmount_overlay(merged: &Path) -> Result {
 fn is_mounted(path: &Path) -> Option<bool> {
     let mountinfo = fs::read_to_string("/proc/self/mountinfo").ok()?;
     let path = path.to_string_lossy();
-    Some(
-        mountinfo
-            .lines()
-            .any(|line| line.split_whitespace().nth(4) == Some(path.as_ref())),
-    )
+    Some(mountinfo.lines().any(|line| {
+        line.split_whitespace()
+            .nth(4)
+            .is_some_and(|mount_point| unescape_mount_point(mount_point) == path)
+    }))
+}
+
+/// Undo mountinfo's octal escapes (`\040` for a space, and so on).
+fn unescape_mount_point(field: &str) -> String {
+    let bytes = field.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let escape = bytes.get(index + 1..index + 4).filter(|digits| {
+            bytes[index] == b'\\' && digits.iter().all(|digit| (b'0'..=b'7').contains(digit))
+        });
+        match escape {
+            Some(digits) => {
+                let value = digits
+                    .iter()
+                    .fold(0u32, |value, digit| value * 8 + u32::from(digit - b'0'));
+                decoded.push(value as u8);
+                index += 4;
+            }
+            None => {
+                decoded.push(bytes[index]);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+/// Whether an overlay view is usable right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ViewHealth {
+    Mounted,
+    /// Mounted, but the fuse-overlayfs process behind it is gone (`ENOTCONN`).
+    Disconnected,
+    /// A plain directory: never mounted since boot, or unmounted underneath forkspace.
+    Unmounted,
+    /// `/proc/self/mountinfo` is unreadable, so mount state cannot be checked.
+    Unknown,
+}
+
+pub(crate) fn view_health(merged: &Path) -> ViewHealth {
+    match is_mounted(merged) {
+        None => ViewHealth::Unknown,
+        Some(false) => ViewHealth::Unmounted,
+        Some(true) => match fs::read_dir(merged) {
+            Err(error) if error.raw_os_error() == Some(libc::ENOTCONN) => ViewHealth::Disconnected,
+            _ => ViewHealth::Mounted,
+        },
+    }
+}
+
+/// Detach a dead FUSE mount (`fusermount -u -z`) so the mount point can be reused.
+pub(crate) fn detach_dead_mount(merged: &Path) -> Result {
+    let fusermount = find_fusermount();
+    let output = Command::new(fusermount)
+        .arg("-u")
+        .arg("-z")
+        .arg(merged.as_os_str())
+        .output()
+        .map_err(|e| ForkspaceError::UnmountFailed(format!("failed to run {fusermount}: {e}")))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(ForkspaceError::UnmountFailed(format!(
+        "{} -u -z {} failed: {}",
+        fusermount,
+        merged.display(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    )))
 }
 
 fn is_not_mounted_or_missing(error: &ForkspaceError) -> bool {
@@ -282,4 +351,21 @@ fn read_sysctl(path: &str) -> Option<String> {
     fs::read_to_string(path)
         .ok()
         .map(|value| value.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unescape_mount_point;
+
+    #[test]
+    fn mountinfo_escapes_are_decoded() {
+        assert_eq!(
+            unescape_mount_point(r"/home/a\040b/merged"),
+            "/home/a b/merged"
+        );
+        assert_eq!(unescape_mount_point(r"/tab\011x"), "/tab\tx");
+        assert_eq!(unescape_mount_point(r"/back\134slash"), "/back\\slash");
+        assert_eq!(unescape_mount_point(r"/not\08escape"), r"/not\08escape");
+        assert_eq!(unescape_mount_point("/plain"), "/plain");
+    }
 }

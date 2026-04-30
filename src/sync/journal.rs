@@ -34,17 +34,23 @@ impl OperationKind {
     }
 }
 
+/// Progress of a journaled operation, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum OperationPhase {
+    /// Recorded; no step applied yet.
     #[default]
     Planned,
     Applying,
+    /// Every step applied; post-transfer work (install, commit, re-baseline) may remain.
     Applied,
+    /// A pull is rebuilding the workspace's fork-time manifest.
     Rebaselining,
+    /// Terminal; the journal is only waiting to be removed.
     Done,
 }
 
+/// The durable record of one merge or pull.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OperationJournal {
     pub op: OperationKind,
@@ -52,6 +58,7 @@ pub struct OperationJournal {
     pub source: PathBuf,
     pub target: PathBuf,
     pub changes: Vec<FileChange>,
+    /// Index of the first step in `changes` not yet applied.
     pub next: usize,
     #[serde(default)]
     pub phase: OperationPhase,
@@ -92,6 +99,7 @@ pub fn save(path: &Path, journal: &OperationJournal) -> Result {
     crate::util::write_atomic(path, &bytes)
 }
 
+/// Read and parse the journal at `path`.
 pub fn load(path: &Path) -> Result<OperationJournal> {
     serde_json::from_slice(&fs::read(path).io_context(|| format!("read {}", path.display()))?)
         .map_err(|error| ForkspaceError::StateCorrupted(format!("invalid operation journal: {error}")))
@@ -134,6 +142,7 @@ pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
     Ok(journal)
 }
 
+/// Durably record that the operation at `path` has reached `phase`.
 pub fn set_phase(path: &Path, phase: OperationPhase) -> Result {
     let mut journal = load(path)?;
     journal.phase = phase;
@@ -222,17 +231,8 @@ fn is_terminal(value: &serde_json::Value) -> bool {
     }
 }
 
-fn remove_existing(path: &Path) -> Result {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return Ok(());
-    };
-    if metadata.is_dir() && !metadata.file_type().is_symlink() {
-        fs::remove_dir_all(path).io_context(|| format!("remove {}", path.display()))
-    } else {
-        fs::remove_file(path).io_context(|| format!("remove {}", path.display()))
-    }
-}
-
+/// Apply one step: delete the target, or stage the source entry beside it and rename it into
+/// place so the target is never observed half-written.
 pub(crate) fn apply_change(
     source_root: &Path,
     target_root: &Path,
@@ -242,57 +242,79 @@ pub(crate) fn apply_change(
 ) -> Result {
     let source = source_root.join(&change.path);
     let target = target_root.join(&change.path);
-    if matches!(change.kind, ChangeKind::Deleted) {
+    if change.kind == ChangeKind::Deleted {
         return remove_existing(&target);
     }
     ensure_parent_dir(&target)?;
-    let temporary = target.with_extension(format!("forkspace-{operation}-{index}.tmp"));
     let metadata =
         fs::symlink_metadata(&source).io_context(|| format!("inspect {}", source.display()))?;
-    if metadata.is_dir() && !metadata.file_type().is_symlink() {
-        if fs::symlink_metadata(&target)
-            .is_ok_and(|value| !value.is_dir() || value.file_type().is_symlink())
-        {
-            remove_existing(&target)?;
-        }
-        fs::create_dir_all(&target).io_context(|| format!("create {}", target.display()))?;
-        fs::set_permissions(&target, metadata.permissions())
-            .io_context(|| format!("set permissions on {}", target.display()))?;
-        let modified = metadata
-            .modified()
-            .io_context(|| format!("read time from {}", source.display()))?;
-        fs::OpenOptions::new()
-            .read(true)
-            .open(&target)
-            .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(modified)))
-            .io_context(|| format!("set time on {}", target.display()))?;
-        return Ok(());
+    if metadata.is_dir() {
+        return install_dir(&source, &metadata, &target);
     }
-    let _ = remove_existing(&temporary);
-    if metadata.file_type().is_symlink() {
-        std::os::unix::fs::symlink(
-            fs::read_link(&source).io_context(|| format!("read {}", source.display()))?,
-            &temporary,
-        )
-        .io_context(|| format!("create {}", temporary.display()))?;
-    } else if metadata.is_dir() {
-        fs::create_dir_all(&temporary).io_context(|| format!("create {}", temporary.display()))?;
-    } else {
-        fs::copy(&source, &temporary)
-            .io_context(|| format!("copy {} -> {}", source.display(), temporary.display()))?;
-        let modified = metadata
-            .modified()
-            .io_context(|| format!("read time from {}", source.display()))?;
-        fs::OpenOptions::new()
-            .write(true)
-            .open(&temporary)
-            .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(modified)))
-            .io_context(|| format!("set time on {}", temporary.display()))?;
-    }
-    if fs::symlink_metadata(&target)
-        .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
-    {
+    let temporary = target.with_extension(format!("forkspace-{operation}-{index}.tmp"));
+    stage_entry(&source, &metadata, &temporary)?;
+    // A rename cannot replace a directory with a non-directory.
+    if fs::symlink_metadata(&target).is_ok_and(|existing| existing.is_dir()) {
         remove_existing(&target)?;
     }
     fs::rename(&temporary, &target).io_context(|| format!("install {}", target.display()))
+}
+
+/// Directories are created in place (their entries are separate steps), then given the
+/// source's permissions and modification time.
+fn install_dir(source: &Path, metadata: &fs::Metadata, target: &Path) -> Result {
+    if fs::symlink_metadata(target).is_ok_and(|existing| !existing.is_dir()) {
+        remove_existing(target)?;
+    }
+    fs::create_dir_all(target).io_context(|| format!("create {}", target.display()))?;
+    fs::set_permissions(target, metadata.permissions())
+        .io_context(|| format!("set permissions on {}", target.display()))?;
+    copy_modified_time(source, metadata, target, fs::OpenOptions::new().read(true))
+}
+
+/// Recreate a symlink, or copy a file with its permissions and modification time, at
+/// `temporary`.
+fn stage_entry(source: &Path, metadata: &fs::Metadata, temporary: &Path) -> Result {
+    let _ = remove_existing(temporary);
+    if metadata.file_type().is_symlink() {
+        let link = fs::read_link(source).io_context(|| format!("read {}", source.display()))?;
+        return std::os::unix::fs::symlink(link, temporary)
+            .io_context(|| format!("create {}", temporary.display()));
+    }
+    fs::copy(source, temporary)
+        .io_context(|| format!("copy {} -> {}", source.display(), temporary.display()))?;
+    copy_modified_time(
+        source,
+        metadata,
+        temporary,
+        fs::OpenOptions::new().write(true),
+    )
+}
+
+fn copy_modified_time(
+    source: &Path,
+    metadata: &fs::Metadata,
+    target: &Path,
+    open: &fs::OpenOptions,
+) -> Result {
+    let modified = metadata
+        .modified()
+        .io_context(|| format!("read time from {}", source.display()))?;
+    open.open(target)
+        .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(modified)))
+        .io_context(|| format!("set time on {}", target.display()))
+}
+
+/// Remove whatever is at `path`, recursively for a directory; a missing path is not an error.
+///
+/// Metadata comes from `symlink_metadata`, so a symlink to a directory is removed as a link.
+fn remove_existing(path: &Path) -> Result {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if metadata.is_dir() {
+        fs::remove_dir_all(path).io_context(|| format!("remove {}", path.display()))
+    } else {
+        fs::remove_file(path).io_context(|| format!("remove {}", path.display()))
+    }
 }

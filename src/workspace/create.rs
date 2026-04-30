@@ -104,6 +104,7 @@ fn resolve_origin(base: PathBuf, name: &str, force_copy: bool) -> Result<Origin>
             "workspace stack depth is limited to {MAX_FORK_DEPTH}; merge or fork from an earlier ancestor"
         )));
     }
+    guard::require_live_view(&state, parent)?;
     let path = select_backend(Some(parent.backend_kind))?.view_path(parent);
     let backend = if force_copy {
         select_backend_for_create(&path, true)?

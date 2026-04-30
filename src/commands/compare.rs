@@ -1,3 +1,5 @@
+//! `forkspace compare`: side-by-side facts about sibling workspaces of one base.
+
 use crate::cli::CompareArgs;
 use crate::error::{ForkspaceError, Result};
 use crate::review::compare;

@@ -1,153 +1,105 @@
-use std::fs;
-use std::path::Path;
-use std::process::Command;
+//! Applying a [`MergePlan`] to the base, resuming an interrupted merge, and the merge-adjacent
+//! outputs (unified patch, Git commit).
+
+use std::path::{Path, PathBuf};
 
 use crate::backend::select_backend;
-use crate::changes::{self, ChangeKind, FileChange};
+use crate::changes::manifest::ManifestStatus;
+use crate::changes::{self, FileChange};
 use crate::error::{ForkspaceError, Result};
+use crate::sync::journal::{self, OperationKind};
+use crate::sync::plan::{self, MergePlan};
+use crate::sync::ChangeCounts;
 use crate::workspace::Workspace;
 
+/// What a completed [`merge_workspace`] transferred.
 pub struct MergeResult {
     pub added: usize,
     pub modified: usize,
     pub deleted: usize,
+    /// Changes left out because they are ignored, runtime, or internal.
     pub skipped: usize,
 }
 
-pub enum PackageManager {
-    Bun,
-    Pnpm,
-    Npm,
-    Yarn,
-}
-
-impl PackageManager {
-    fn command(&self) -> &str {
-        match self {
-            PackageManager::Bun => "bun",
-            PackageManager::Pnpm => "pnpm",
-            PackageManager::Npm => "npm",
-            PackageManager::Yarn => "yarn",
+/// Plan and apply a conflict-free merge of `workspace` into its base in one step.
+pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
+    let plan = plan::build(workspace, false)?;
+    let counts = ChangeCounts::of(&plan.changes);
+    if !plan.changes.is_empty() {
+        if workspace.manifest_status == ManifestStatus::Absent {
+            apply_without_journal(&plan)?;
+        } else {
+            journal::remove(&execute(&plan)?)?;
         }
     }
-}
-
-pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
-    let plan = crate::sync::plan::build(workspace, false)?;
-    let added = plan
-        .changes
-        .iter()
-        .filter(|change| matches!(change.kind, ChangeKind::Added))
-        .count();
-    let modified = plan
-        .changes
-        .iter()
-        .filter(|change| matches!(change.kind, ChangeKind::Modified))
-        .count();
-    let deleted = plan
-        .changes
-        .iter()
-        .filter(|change| matches!(change.kind, ChangeKind::Deleted))
-        .count();
-    if plan.changes.is_empty() {
-        return Ok(MergeResult {
-            added,
-            modified,
-            deleted,
-            skipped: plan.skipped,
-        });
-    }
-    if workspace.manifest_status == crate::changes::manifest::ManifestStatus::Absent {
-        crate::sync::plan::execute_without_journal(&plan)?;
-    } else {
-        let journal = crate::sync::plan::execute(&plan)?;
-        crate::sync::journal::remove(&journal)?;
-    }
-
     Ok(MergeResult {
-        added,
-        modified,
-        deleted,
+        added: counts.added,
+        modified: counts.modified,
+        deleted: counts.deleted,
         skipped: plan.skipped,
     })
 }
 
-pub fn detect_package_manager(workspace: &Workspace) -> Option<PackageManager> {
-    let view = if workspace.manifest_status == crate::changes::manifest::ManifestStatus::Absent {
-        workspace.upper_path().ok()?.to_path_buf()
-    } else {
-        select_backend(Some(workspace.backend_kind))
-            .ok()?
-            .view_path(workspace)
-    };
-
-    let package_json = view.join("package.json");
-    if !package_json.exists() {
-        return None;
-    }
-
-    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&fs::read(&package_json).ok()?) {
-        if let Some(manager) = value["packageManager"].as_str() {
-            let name = manager.split('@').next().unwrap_or(manager);
-            return match name {
-                "bun" => Some(PackageManager::Bun),
-                "pnpm" => Some(PackageManager::Pnpm),
-                "npm" => Some(PackageManager::Npm),
-                "yarn" => Some(PackageManager::Yarn),
-                _ => None,
-            };
-        }
-    }
-
-    if view.join("bun.lockb").exists() || view.join("bun.lock").exists() {
-        return Some(PackageManager::Bun);
-    }
-    if view.join("pnpm-lock.yaml").exists() {
-        return Some(PackageManager::Pnpm);
-    }
-    if view.join("package-lock.json").exists() {
-        return Some(PackageManager::Npm);
-    }
-    if view.join("yarn.lock").exists() {
-        return Some(PackageManager::Yarn);
-    }
-
-    None
+/// Apply `plan` under a merge journal and return the journal's path.
+///
+/// The journal is left in the `applied` phase; the caller finishes any post-merge steps and
+/// then removes it, so a crash in between is still visible as an interrupted merge.
+pub fn execute(plan: &MergePlan) -> Result<PathBuf> {
+    journal::start(
+        OperationKind::Merge,
+        &plan.workspace,
+        plan.source.clone(),
+        plan.target.clone(),
+        plan.changes.clone(),
+        plan.fork_time_ns,
+    )
 }
 
-pub(crate) fn run_install(base: &Path, pm: &PackageManager) -> Result {
-    let cmd = pm.command();
-    let status = Command::new(cmd)
-        .arg("install")
-        .current_dir(base)
-        .status()
-        .map_err(|e| {
-            ForkspaceError::PackageManagerFailed(format!(
-                "failed to run '{cmd} install': {e}. Is {cmd} installed and on your PATH?"
-            ))
-        })?;
-
-    if !status.success() {
-        return Err(ForkspaceError::PackageManagerFailed(format!(
-            "'{cmd} install' exited with status {status}"
+/// Finish the interrupted merge journal of `workspace` and return its path.
+pub fn resume(workspace: &Workspace) -> Result<PathBuf> {
+    let path = journal::path(
+        OperationKind::Merge,
+        &workspace.name,
+        workspace.fork_time_ns,
+    );
+    if !path.exists() {
+        return Err(ForkspaceError::InvalidArgument(format!(
+            "no interrupted merge journal for '{}'",
+            workspace.name
         )));
     }
+    if journal::load(&path)?.op != OperationKind::Merge {
+        return Err(ForkspaceError::StateCorrupted(format!(
+            "{} is not a merge journal",
+            path.display()
+        )));
+    }
+    journal::apply_remaining(&path)?;
+    Ok(path)
+}
 
+/// Apply `plan` step by step without recording a journal (workspaces without a fork manifest).
+fn apply_without_journal(plan: &MergePlan) -> Result {
+    for (index, change) in plan.changes.iter().enumerate() {
+        journal::apply_change(&plan.source, &plan.target, change, index, "merge")?;
+    }
     Ok(())
 }
 
+/// Concatenated unified diffs for `changes`, each ending in a newline.
 pub fn generate_patch(workspace: &Workspace, changes: &[FileChange]) -> Result<String> {
     let mut patch = String::new();
     for change in changes {
-        let diff_text = changes::generate_unified_diff(workspace, change);
-        patch.push_str(&diff_text);
-        if !diff_text.ends_with('\n') {
+        let diff = changes::generate_unified_diff(workspace, change);
+        patch.push_str(&diff);
+        if !diff.ends_with('\n') {
             patch.push('\n');
         }
     }
     Ok(patch)
 }
 
+/// Whether the workspace moved its Git `HEAD`, i.e. made commits a file-level merge would flatten.
 pub fn workspace_head_changed(workspace: &Workspace) -> Result<bool> {
     Ok(select_backend(Some(workspace.backend_kind))?
         .changes(workspace, true, false)?
@@ -155,15 +107,13 @@ pub fn workspace_head_changed(workspace: &Workspace) -> Result<bool> {
         .any(|change| change.path == Path::new(".git/HEAD")))
 }
 
+/// Stage everything in `base` and commit it with `message`.
 pub fn git_commit(base: &Path, message: &str) -> Result {
     if !crate::git::is_repo(base) {
         return Err(ForkspaceError::GitFailed(
             "base directory is not a git repository".to_string(),
         ));
     }
-
     crate::git::run_git(base, &["add", "-A"])?;
-    crate::git::run_git(base, &["commit", "-m", message])?;
-
-    Ok(())
+    crate::git::run_git(base, &["commit", "-m", message])
 }

@@ -393,7 +393,7 @@ fn merge_after_pull_pushes_only_remaining_workspace_edits() {
             .collect::<Vec<_>>(),
         [Path::new("ours-a"), Path::new("ours-b")]
     );
-    let journal = forkspace::sync::plan::execute(&plan).unwrap();
+    let journal = forkspace::sync::merge::execute(&plan).unwrap();
     forkspace::sync::journal::remove(&journal).unwrap();
     assert_eq!(fs::read(base.path().join("advanced")).unwrap(), b"base\n");
 }

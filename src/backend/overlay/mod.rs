@@ -26,7 +26,7 @@ use crate::paths;
 use crate::util::IoContext;
 use crate::workspace::Workspace;
 use mount::{
-    mount_overlay, tmpfs_not_implemented, unmount_overlay, unmount_tmpfs, OverlayOpts,
+    mount_overlay, tmpfs_not_implemented, unmount_overlay, unmount_tmpfs, OverlayOpts, ViewHealth,
     DEFAULT_TMPFS_SIZE,
 };
 
@@ -217,4 +217,57 @@ impl WorkspaceBackend for OverlayBackend {
         }
         env
     }
+
+    fn ensure_view(&self, ws: &Workspace) -> Result {
+        let state = ws.linux_state()?;
+        match mount::view_health(&state.merged) {
+            ViewHealth::Mounted | ViewHealth::Unknown => return Ok(()),
+            ViewHealth::Disconnected => mount::detach_dead_mount(&state.merged)?,
+            ViewHealth::Unmounted => {}
+        }
+        remount(ws, state)
+    }
+}
+
+/// Mount an existing workspace's layers again, after a reboot or a dead fuse-overlayfs.
+///
+/// Refuses when the layers are gone (a `--tmpfs` workspace after a reboot) or when the bare
+/// mount point holds files: those were written while the view was unmounted, so they are not
+/// part of the workspace and mounting over them would hide them.
+fn remount(ws: &Workspace, state: &OverlayState) -> Result {
+    for (kind, path) in [("upper", &state.upper), ("work", &state.work)] {
+        if !path.is_dir() {
+            let kind = if state.tmpfs {
+                format!("{kind} layer (on tmpfs, so lost at reboot; drop the workspace)")
+            } else {
+                kind.to_string()
+            };
+            return Err(crate::error::ForkspaceError::RecordedPathMissing {
+                workspace: ws.name.clone(),
+                kind,
+                path: path.display().to_string(),
+            });
+        }
+    }
+    let stray = fs::read_dir(&state.merged)
+        .io_context(|| format!("inspect {}", state.merged.display()))?
+        .next()
+        .is_some();
+    if stray {
+        return Err(crate::error::ForkspaceError::MountFailed(format!(
+            "workspace '{}' is not mounted, and {} holds files written while it was unmounted; \
+             move them out (they are not part of the workspace) and retry",
+            ws.name,
+            state.merged.display()
+        )));
+    }
+    mount_overlay(
+        &ws.base,
+        &state.upper,
+        &state.work,
+        &state.merged,
+        &OverlayOpts::default(),
+    )?;
+    eprintln!("note: remounted workspace '{}'", ws.name);
+    Ok(())
 }

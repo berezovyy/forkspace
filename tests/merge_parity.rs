@@ -9,7 +9,7 @@ use forkspace::backend::{BackendKind, BackendState};
 use forkspace::changes::collect_clone_changes;
 use forkspace::changes::manifest::{self, ManifestStatus};
 use forkspace::error::ForkspaceError;
-use forkspace::sync::plan;
+use forkspace::sync::{merge, plan};
 use forkspace::util::now_unix_ns;
 use forkspace::workspace::Workspace;
 use serial_test::serial;
@@ -73,7 +73,7 @@ fn conflicts_refuse_before_apply_and_overwrite_is_explicit() {
     assert_eq!(plan.conflicts, vec![std::path::PathBuf::from("conflict")]);
     assert!(plan::render(&plan).contains("conflicts: conflict"));
     assert_eq!(fs::read(base.path().join("unrelated")).unwrap(), b"old\n");
-    let journal = plan::execute(&plan).unwrap();
+    let journal = merge::execute(&plan).unwrap();
     forkspace::sync::journal::remove(&journal).unwrap();
     assert_eq!(
         fs::read(base.path().join("conflict")).unwrap(),
@@ -110,7 +110,7 @@ fn journal_resume_converges_for_files_deletes_modes_and_symlinks() {
     std::os::unix::fs::symlink("added", view.path().join("link")).unwrap();
 
     let plan = plan(&workspace, false).unwrap();
-    let journal = plan::execute(&plan).unwrap();
+    let journal = merge::execute(&plan).unwrap();
     let expected = tree_facts(base.path());
 
     fs::write(base.path().join("modified"), b"interrupted\n").unwrap();
@@ -121,7 +121,7 @@ fn journal_resume_converges_for_files_deletes_modes_and_symlinks() {
     value["next"] = serde_json::json!(0);
     fs::write(&journal, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
 
-    plan::resume(&workspace).unwrap();
+    merge::resume(&workspace).unwrap();
     assert_eq!(tree_facts(base.path()), expected);
     forkspace::sync::journal::remove(&journal).unwrap();
 }

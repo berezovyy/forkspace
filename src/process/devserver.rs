@@ -39,7 +39,7 @@ pub(crate) fn start(
     requested_port: u16,
 ) -> Result<Started> {
     let workspace = state.require_workspace(name)?;
-    guard::require_view(workspace)?;
+    guard::require_live_view(state, workspace)?;
     if workspace
         .process
         .as_ref()

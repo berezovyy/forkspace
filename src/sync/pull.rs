@@ -1,84 +1,41 @@
+//! Pull: bring base-side changes made since the fork into a workspace, then re-baseline.
+//!
+//! The lifecycle is [`build`] → [`start`] (journaled apply) → [`finish`] (new fork-time
+//! manifest) → [`complete`] (journal removed). [`resume_apply`] picks up an interrupted apply.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use walkdir::WalkDir;
 
-use crate::changes::filter::{ChangeClass, ChangeFilter};
-use crate::changes::manifest::{self, ManifestKind, ManifestStatus};
+use crate::backend::select_backend;
+use crate::changes::filter::ChangeFilter;
+use crate::changes::manifest::{self, ManifestStatus};
 use crate::changes::{ChangeKind, FileChange, OldContent};
 use crate::error::{ForkspaceError, Result};
 use crate::sync::journal::{self, OperationKind, OperationPhase};
+use crate::sync::plan::matches_ancestor;
+use crate::sync::{display_paths, is_transferable, manifest_kind, render_plan};
+use crate::util::fs::mode_bits;
 use crate::util::{now_rfc3339, now_unix_ns, WalkDirExt};
 use crate::workspace::Workspace;
 
+/// The base-side changes a pull would copy into a workspace.
 #[derive(Debug, Clone, Serialize)]
 pub struct PullPlan {
     pub workspace: String,
+    /// The base directory changes are copied from.
     pub source: PathBuf,
+    /// The workspace view changes land in.
     pub target: PathBuf,
     pub changes: Vec<FileChange>,
+    /// Paths both sides changed differently.
     pub conflicts: Vec<PathBuf>,
+    /// Paths both sides changed to the same result; nothing to copy.
     pub convergent: Vec<PathBuf>,
-}
-
-fn kind(metadata: &fs::Metadata) -> ManifestKind {
-    if metadata.file_type().is_symlink() {
-        ManifestKind::Symlink
-    } else if metadata.is_dir() {
-        ManifestKind::Dir
-    } else {
-        ManifestKind::File
-    }
-}
-
-fn equivalent(left: &Path, right: &Path) -> bool {
-    let (Ok(a), Ok(b)) = (fs::symlink_metadata(left), fs::symlink_metadata(right)) else {
-        return fs::symlink_metadata(left).is_err() && fs::symlink_metadata(right).is_err();
-    };
-    if kind(&a) != kind(&b) || a.mode() & 0o7777 != b.mode() & 0o7777 {
-        return false;
-    }
-    if a.file_type().is_symlink() {
-        return fs::read_link(left).ok() == fs::read_link(right).ok();
-    }
-    if a.is_dir() {
-        return true;
-    }
-    if a.len() != b.len() {
-        return false;
-    }
-    let (Ok(mut a), Ok(mut b)) = (fs::File::open(left), fs::File::open(right)) else {
-        return false;
-    };
-    let mut ab = [0; 8192];
-    let mut bb = [0; 8192];
-    loop {
-        let (Ok(an), Ok(bn)) = (a.read(&mut ab), b.read(&mut bb)) else {
-            return false;
-        };
-        if an != bn || ab[..an] != bb[..bn] {
-            return false;
-        }
-        if an == 0 {
-            return true;
-        }
-    }
-}
-
-fn file_change(path: PathBuf, change: ChangeKind) -> FileChange {
-    FileChange {
-        class: ChangeFilter::class(&path),
-        path,
-        kind: change,
-        additions: None,
-        deletions: None,
-        is_binary: false,
-        old_content: OldContent::Available,
-    }
 }
 
 /// Compute the base-side delta against the fork-time manifest.
@@ -102,7 +59,8 @@ pub fn base_changes(workspace: &Workspace) -> Result<Vec<FileChange>> {
         let row = row?;
         rows.insert(manifest::decode_path(&row.path)?, row);
     }
-    let mut current = BTreeSet::new();
+
+    let mut present = BTreeSet::new();
     let mut changes = Vec::new();
     for entry in WalkDir::new(&workspace.base)
         .min_depth(1)
@@ -116,28 +74,22 @@ pub fn base_changes(workspace: &Workspace) -> Result<Vec<FileChange>> {
                 ForkspaceError::StateFailed("base scan escaped the workspace origin".to_string())
             })?
             .to_path_buf();
-        current.insert(relative.clone());
-        let class = ChangeFilter::class(&relative);
-        if matches!(class, ChangeClass::Runtime | ChangeClass::Internal) {
+        present.insert(relative.clone());
+        if !is_transferable(ChangeFilter::class(&relative)) {
             continue;
         }
         match rows.get(&relative) {
-            Some(row) if !row.dirty && crate::sync::plan::matches_ancestor(entry.path(), row) => {}
-            Some(_) => changes.push(file_change(relative, ChangeKind::Modified)),
-            None => changes.push(file_change(relative, ChangeKind::Added)),
+            Some(row) if !row.dirty && matches_ancestor(entry.path(), row) => {}
+            Some(_) => changes.push(base_change(relative, ChangeKind::Modified)),
+            None => changes.push(base_change(relative, ChangeKind::Added)),
         }
     }
-    for (path, row) in rows {
-        if !current.contains(&path)
-            && !matches!(
-                ChangeFilter::class(&path),
-                ChangeClass::Runtime | ChangeClass::Internal
-            )
-        {
-            let _ = row;
-            changes.push(file_change(path, ChangeKind::Deleted));
-        }
-    }
+    changes.extend(
+        rows.into_keys()
+            .filter(|path| !present.contains(path) && is_transferable(ChangeFilter::class(path)))
+            .map(|path| base_change(path, ChangeKind::Deleted)),
+    );
+    // Raw byte order rather than `Path`'s component-wise order.
     changes.sort_by(|a, b| {
         a.path
             .as_os_str()
@@ -147,13 +99,17 @@ pub fn base_changes(workspace: &Workspace) -> Result<Vec<FileChange>> {
     Ok(changes)
 }
 
+/// Plan a pull into `workspace`. With `theirs`, conflicting paths take the base version;
+/// without it, any conflict is an error.
 pub fn build(workspace: &Workspace, theirs: bool) -> Result<PullPlan> {
-    let backend = crate::backend::select_backend(Some(workspace.backend_kind))?;
+    let backend = select_backend(Some(workspace.backend_kind))?;
     let theirs_delta = backend.base_changes(workspace)?;
     let ours_delta = backend.changes(workspace, true, false)?;
     build_from_changes(workspace, theirs_delta, ours_delta, theirs)
 }
 
+/// Plan a pull from already-collected base-side (`theirs_delta`) and workspace-side
+/// (`ours_delta`) changes.
 pub fn build_from_changes(
     workspace: &Workspace,
     theirs_delta: Vec<FileChange>,
@@ -162,37 +118,32 @@ pub fn build_from_changes(
 ) -> Result<PullPlan> {
     let ours: BTreeSet<_> = ours_delta
         .into_iter()
-        .filter(|change| !matches!(change.class, ChangeClass::Runtime | ChangeClass::Internal))
+        .filter(|change| is_transferable(change.class))
         .map(|change| change.path)
         .collect();
     let mut changes = Vec::new();
     let mut conflicts = Vec::new();
     let mut convergent = Vec::new();
     for change in theirs_delta {
-        if ours.contains(&change.path) {
-            if equivalent(
-                &workspace.base.join(&change.path),
-                &workspace.view_path.join(&change.path),
-            ) {
-                convergent.push(change.path);
-            } else if theirs {
-                conflicts.push(change.path.clone());
-                changes.push(change);
-            } else {
-                conflicts.push(change.path);
-            }
-        } else {
+        if !ours.contains(&change.path) {
             changes.push(change);
+        } else if equivalent(
+            &workspace.base.join(&change.path),
+            &workspace.view_path.join(&change.path),
+        ) {
+            convergent.push(change.path);
+        } else {
+            conflicts.push(change.path.clone());
+            if theirs {
+                changes.push(change);
+            }
         }
     }
     conflicts.sort();
     convergent.sort();
     if !conflicts.is_empty() && !theirs {
         return Err(ForkspaceError::PullConflict {
-            paths: conflicts
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect(),
+            paths: display_paths(&conflicts),
         });
     }
     Ok(PullPlan {
@@ -205,33 +156,25 @@ pub fn build_from_changes(
     })
 }
 
+/// Human-readable plan, one line per change plus the conflicts resolved toward the base.
 pub fn render(plan: &PullPlan) -> String {
-    let mut lines = vec![format!(
-        "pull plan for '{}': {} files",
-        plan.workspace,
-        plan.changes.len()
-    )];
-    for change in &plan.changes {
-        let action = match change.kind {
+    render_plan(
+        format!(
+            "pull plan for '{}': {} files",
+            plan.workspace,
+            plan.changes.len()
+        ),
+        &plan.changes,
+        |kind| match kind {
             ChangeKind::Added => "add",
             ChangeKind::Modified => "update",
             ChangeKind::Deleted => "delete",
-        };
-        lines.push(format!("  {action} {}", change.path.display()));
-    }
-    if !plan.conflicts.is_empty() {
-        lines.push(format!(
-            "taking base for conflicts: {}",
-            plan.conflicts
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    lines.join("\n")
+        },
+        &[("taking base for conflicts", &plan.conflicts)],
+    )
 }
 
+/// Journal and apply `plan`, returning the journal path for [`finish`] and [`complete`].
 pub fn start(workspace: &Workspace, plan: &PullPlan) -> Result<PathBuf> {
     journal::start(
         OperationKind::Pull,
@@ -243,6 +186,7 @@ pub fn start(workspace: &Workspace, plan: &PullPlan) -> Result<PathBuf> {
     )
 }
 
+/// Finish applying the interrupted pull of `workspace`, if its steps are not all applied yet.
 pub fn resume_apply(workspace: &Workspace) -> Result<PathBuf> {
     let path = find_open_journal(&workspace.name)?.ok_or_else(|| {
         ForkspaceError::InvalidArgument(format!(
@@ -266,6 +210,8 @@ pub fn resume_apply(workspace: &Workspace) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Re-baseline `workspace` on the current base. The caller must persist state before
+/// [`complete`] removes the journal.
 pub fn finish(workspace: &mut Workspace, path: &Path) -> Result {
     journal::set_phase(path, OperationPhase::Rebaselining)?;
     let fork_time_ns = now_unix_ns();
@@ -279,11 +225,58 @@ pub fn finish(workspace: &mut Workspace, path: &Path) -> Result {
     Ok(())
 }
 
+/// Mark the pull journal at `path` done and remove it.
 pub fn complete(path: &Path) -> Result {
     journal::set_phase(path, OperationPhase::Done)?;
     journal::remove(path)
 }
 
+/// The interrupted pull journal of `workspace`, if any.
 pub fn find_open_journal(workspace: &str) -> Result<Option<PathBuf>> {
     journal::find_open(OperationKind::Pull, workspace)
+}
+
+fn base_change(path: PathBuf, kind: ChangeKind) -> FileChange {
+    FileChange {
+        class: ChangeFilter::class(&path),
+        path,
+        kind,
+        additions: None,
+        deletions: None,
+        is_binary: false,
+        old_content: OldContent::Available,
+    }
+}
+
+/// Whether both entries have the same kind, permissions, and content (or are both missing).
+fn equivalent(left: &Path, right: &Path) -> bool {
+    let (Ok(a), Ok(b)) = (fs::symlink_metadata(left), fs::symlink_metadata(right)) else {
+        return fs::symlink_metadata(left).is_err() && fs::symlink_metadata(right).is_err();
+    };
+    if manifest_kind(&a) != manifest_kind(&b) || mode_bits(&a) != mode_bits(&b) {
+        return false;
+    }
+    if a.file_type().is_symlink() {
+        return fs::read_link(left).ok() == fs::read_link(right).ok();
+    }
+    a.is_dir() || (a.len() == b.len() && same_bytes(left, right))
+}
+
+fn same_bytes(left: &Path, right: &Path) -> bool {
+    let (Ok(mut a), Ok(mut b)) = (fs::File::open(left), fs::File::open(right)) else {
+        return false;
+    };
+    let mut a_buffer = [0; 8192];
+    let mut b_buffer = [0; 8192];
+    loop {
+        let (Ok(a_read), Ok(b_read)) = (a.read(&mut a_buffer), b.read(&mut b_buffer)) else {
+            return false;
+        };
+        if a_buffer[..a_read] != b_buffer[..b_read] {
+            return false;
+        }
+        if a_read == 0 {
+            return true;
+        }
+    }
 }
