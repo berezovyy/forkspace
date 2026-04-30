@@ -1,58 +1,39 @@
+//! Mounting and unmounting fuse-overlayfs views, with actionable diagnostics when the host
+//! cannot mount FUSE filesystems.
+
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process::Command;
 
 use crate::error::{ForkspaceError, Result};
+use crate::util::now_unix_ns;
 
-pub(crate) enum Whiteout {
-    Opaque,
-    Deletion(String),
+pub(crate) const DEFAULT_TMPFS_SIZE: &str = "256m";
+
+pub(crate) struct OverlayOpts {
+    pub tmpfs: bool,
+    pub tmpfs_size: String,
 }
 
-impl Whiteout {
-    pub(crate) fn parse(filename: &str) -> Option<Whiteout> {
-        if filename == ".wh..wh..opq" {
-            Some(Whiteout::Opaque)
-        } else {
-            filename
-                .strip_prefix(".wh.")
-                .map(|name| Whiteout::Deletion(name.to_string()))
+impl Default for OverlayOpts {
+    fn default() -> Self {
+        Self {
+            tmpfs: false,
+            tmpfs_size: DEFAULT_TMPFS_SIZE.to_string(),
         }
     }
 }
 
-pub fn find_fuse_overlayfs() -> &'static str {
-    if Path::new("/usr/bin/fuse-overlayfs").exists() {
-        "/usr/bin/fuse-overlayfs"
-    } else {
-        "fuse-overlayfs"
-    }
-}
-
-pub fn find_fusermount() -> &'static str {
-    if Path::new("/usr/bin/fusermount3").exists() {
-        "/usr/bin/fusermount3"
-    } else if Path::new("/usr/bin/fusermount").exists() {
-        "/usr/bin/fusermount"
-    } else {
-        "fusermount3"
-    }
-}
-
+/// Mounts and immediately unmounts a scratch overlay to prove fuse-overlayfs works here.
+/// The error is a human-readable reason.
 pub fn probe_fuse_overlayfs() -> std::result::Result<(), String> {
-    fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/fuse")
-        .map_err(|e| format!("cannot open /dev/fuse: {e}"))?;
+    open_fuse_device().map_err(|e| format!("cannot open /dev/fuse: {e}"))?;
 
     let root = std::env::temp_dir().join(format!(
         "forkspace-fuse-probe-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
+        now_unix_ns()
     ));
     let lower = root.join("lower");
     let upper = root.join("upper");
@@ -70,28 +51,19 @@ pub fn probe_fuse_overlayfs() -> std::result::Result<(), String> {
     result
 }
 
-pub(crate) struct OverlayOpts {
-    pub tmpfs: bool,
-    pub tmpfs_size: String,
-}
-
-impl Default for OverlayOpts {
-    fn default() -> Self {
-        Self {
-            tmpfs: false,
-            tmpfs_size: "256m".to_string(),
-        }
+/// The error for `--tmpfs`, which overlay workspaces do not support yet.
+pub(crate) fn tmpfs_not_implemented() -> ForkspaceError {
+    ForkspaceError::CapabilityUnsupported {
+        diagnosis: "--tmpfs is not implemented".to_string(),
+        remedy: "omit --tmpfs to use disk-backed workspace storage".to_string(),
     }
 }
 
-pub(crate) fn mount_tmpfs(path: &Path, size: &str) -> Result {
-    let _ = (path, size);
-    Err(ForkspaceError::CapabilityUnsupported {
-        diagnosis: "--tmpfs is not implemented".to_string(),
-        remedy: "omit --tmpfs to use disk-backed workspace storage".to_string(),
-    })
+fn mount_tmpfs(_path: &Path, _size: &str) -> Result {
+    Err(tmpfs_not_implemented())
 }
 
+/// Best-effort teardown of a tmpfs-backed layer directory; failures are only warned about.
 pub(crate) fn unmount_tmpfs(path: &Path) -> Result {
     if let Err(e) = fuse_unmount(path) {
         eprintln!("warning: failed to unmount {}: {e}", path.display());
@@ -107,6 +79,7 @@ pub(crate) fn unmount_tmpfs(path: &Path) -> Result {
     Ok(())
 }
 
+/// Mounts `base` (lower) + `upper` at `merged`.
 pub(crate) fn mount_overlay(
     base: &Path,
     upper: &Path,
@@ -122,22 +95,20 @@ pub(crate) fn mount_overlay(
         }
     }
 
-    let opts_str = format!(
+    let options = format!(
         "lowerdir={},upperdir={},workdir={}",
         base.display(),
         upper.display(),
         work.display()
     );
-
-    let result = Command::new(find_fuse_overlayfs())
+    let status = Command::new(find_fuse_overlayfs())
         .arg("-o")
-        .arg(&opts_str)
+        .arg(&options)
         .arg(merged.as_os_str())
         .status();
-
-    let err = match result {
+    let error = match status {
         Ok(status) if status.success() => return Ok(()),
-        Ok(_status) => ForkspaceError::MountFailed(diagnose_mount_failure(merged)),
+        Ok(_) => ForkspaceError::MountFailed(diagnose_mount_failure(merged)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => ForkspaceError::BackendUnavailable {
             diagnosis: "fuse-overlayfs was not found".to_string(),
             remedy: "install the fuse-overlayfs package for your Linux distribution".to_string(),
@@ -149,120 +120,45 @@ pub(crate) fn mount_overlay(
         let _ = unmount_tmpfs(work);
         let _ = unmount_tmpfs(upper);
     }
-
-    Err(err)
+    Err(error)
 }
 
-fn diagnose_mount_failure(merged: &Path) -> String {
-    let mut hints = vec![format!(
-        "fuse-overlayfs failed to mount overlay at {}",
-        merged.display()
-    )];
-
-    if !Path::new("/dev/fuse").exists() {
-        hints.push(
-            "  /dev/fuse not found. Load the FUSE kernel module:\n    sudo modprobe fuse"
-                .to_string(),
-        );
-        return hints.join("\n");
-    }
-    if fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/fuse")
-        .is_err()
-    {
-        hints.push(
-            "  /dev/fuse is not accessible. Fix permissions:\n    \
-             sudo chmod 666 /dev/fuse\n  \
-             or add yourself to the 'fuse' group:\n    \
-             sudo usermod -aG fuse $USER && newgrp fuse"
-                .to_string(),
-        );
-        return hints.join("\n");
-    }
-
-    let fm = find_fusermount();
-    if let Ok(meta) = fs::metadata(fm) {
-        use std::os::unix::fs::MetadataExt;
-        let has_setuid = meta.mode() & 0o4000 != 0;
-        if !has_setuid {
-            hints.push(format!(
-                "  {} is not setuid root (required for FUSE mounts).\n  \
-                 Fix: use the system fusermount3 instead:\n    \
-                 sudo apt install fuse3   # installs setuid /usr/bin/fusermount3",
-                fm
-            ));
-            return hints.join("\n");
-        }
-    }
-
-    if let Ok(val) = fs::read_to_string("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") {
-        if val.trim() == "1" {
-            hints.push(
-                "  AppArmor is blocking unprivileged user namespaces.\n  \
-                 Fix:\n    \
-                 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
-                    .to_string(),
-            );
-            return hints.join("\n");
-        }
-    }
-
-    if let Ok(val) = fs::read_to_string("/proc/sys/kernel/unprivileged_userns_clone") {
-        if val.trim() == "0" {
-            hints.push(
-                "  Unprivileged user namespaces are disabled.\n  \
-                 Fix:\n    \
-                 sudo sysctl -w kernel.unprivileged_userns_clone=1"
-                    .to_string(),
-            );
-            return hints.join("\n");
-        }
-    }
-
-    hints.push(
-        "  Run with RUST_LOG=debug for more details, or try:\n    \
-         fuse-overlayfs -o lowerdir=/tmp/test,upperdir=/tmp/test2,workdir=/tmp/test3 /tmp/test4\n  \
-         to test manually."
-            .to_string(),
-    );
-    hints.join("\n")
-}
-
+/// Unmounts the overlay at `merged`. Succeeds when it is not mounted (or cannot be unmounted
+/// because fusermount is missing).
 pub fn unmount_overlay(merged: &Path) -> Result {
-    if let Ok(mountinfo) = fs::read_to_string("/proc/self/mountinfo") {
-        let mounted = mountinfo.lines().any(|line| {
-            line.split_whitespace()
-                .nth(4)
-                .is_some_and(|field| field == merged.to_string_lossy())
-        });
-        if !mounted {
-            return Ok(());
-        }
+    if is_mounted(merged) == Some(false) {
+        return Ok(());
     }
-
     match fuse_unmount(merged) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("not mounted") || msg.contains("not found") {
-                Ok(())
-            } else {
-                Err(e)
-            }
-        }
+        Err(e) if is_not_mounted_or_missing(&e) => Ok(()),
+        result => result,
     }
+}
+
+/// Whether `path` is a mount point, per `/proc/self/mountinfo`; `None` if that is unreadable.
+fn is_mounted(path: &Path) -> Option<bool> {
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo").ok()?;
+    let path = path.to_string_lossy();
+    Some(
+        mountinfo
+            .lines()
+            .any(|line| line.split_whitespace().nth(4) == Some(path.as_ref())),
+    )
+}
+
+fn is_not_mounted_or_missing(error: &ForkspaceError) -> bool {
+    let message = error.to_string();
+    message.contains("not mounted") || message.contains("not found")
 }
 
 fn fuse_unmount(path: &Path) -> Result {
     let fusermount = find_fusermount();
-    let result = Command::new(fusermount)
+    let output = Command::new(fusermount)
         .arg("-u")
         .arg(path.as_os_str())
         .output();
 
-    match result {
+    match output {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -284,4 +180,106 @@ fn fuse_unmount(path: &Path) -> Result {
             fusermount, e
         ))),
     }
+}
+
+fn find_fuse_overlayfs() -> &'static str {
+    if Path::new("/usr/bin/fuse-overlayfs").exists() {
+        "/usr/bin/fuse-overlayfs"
+    } else {
+        "fuse-overlayfs"
+    }
+}
+
+fn find_fusermount() -> &'static str {
+    if Path::new("/usr/bin/fusermount3").exists() {
+        "/usr/bin/fusermount3"
+    } else if Path::new("/usr/bin/fusermount").exists() {
+        "/usr/bin/fusermount"
+    } else {
+        "fusermount3"
+    }
+}
+
+fn open_fuse_device() -> std::io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/fuse")
+}
+
+/// Explains a failed mount with the first host misconfiguration found, or a manual-test hint.
+fn diagnose_mount_failure(merged: &Path) -> String {
+    let hint = fuse_device_hint()
+        .or_else(fusermount_setuid_hint)
+        .or_else(user_namespace_hint)
+        .unwrap_or_else(|| {
+            "  Run with RUST_LOG=debug for more details, or try:\n    \
+             fuse-overlayfs -o lowerdir=/tmp/test,upperdir=/tmp/test2,workdir=/tmp/test3 /tmp/test4\n  \
+             to test manually."
+                .to_string()
+        });
+    format!(
+        "fuse-overlayfs failed to mount overlay at {}\n{hint}",
+        merged.display()
+    )
+}
+
+fn fuse_device_hint() -> Option<String> {
+    if !Path::new("/dev/fuse").exists() {
+        return Some(
+            "  /dev/fuse not found. Load the FUSE kernel module:\n    sudo modprobe fuse"
+                .to_string(),
+        );
+    }
+    if open_fuse_device().is_err() {
+        return Some(
+            "  /dev/fuse is not accessible. Fix permissions:\n    \
+             sudo chmod 666 /dev/fuse\n  \
+             or add yourself to the 'fuse' group:\n    \
+             sudo usermod -aG fuse $USER && newgrp fuse"
+                .to_string(),
+        );
+    }
+    None
+}
+
+fn fusermount_setuid_hint() -> Option<String> {
+    let fusermount = find_fusermount();
+    let metadata = fs::metadata(fusermount).ok()?;
+    if metadata.mode() & 0o4000 != 0 {
+        return None;
+    }
+    Some(format!(
+        "  {} is not setuid root (required for FUSE mounts).\n  \
+         Fix: use the system fusermount3 instead:\n    \
+         sudo apt install fuse3   # installs setuid /usr/bin/fusermount3",
+        fusermount
+    ))
+}
+
+fn user_namespace_hint() -> Option<String> {
+    if read_sysctl("/proc/sys/kernel/apparmor_restrict_unprivileged_userns").as_deref() == Some("1")
+    {
+        return Some(
+            "  AppArmor is blocking unprivileged user namespaces.\n  \
+             Fix:\n    \
+             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
+                .to_string(),
+        );
+    }
+    if read_sysctl("/proc/sys/kernel/unprivileged_userns_clone").as_deref() == Some("0") {
+        return Some(
+            "  Unprivileged user namespaces are disabled.\n  \
+             Fix:\n    \
+             sudo sysctl -w kernel.unprivileged_userns_clone=1"
+                .to_string(),
+        );
+    }
+    None
+}
+
+fn read_sysctl(path: &str) -> Option<String> {
+    fs::read_to_string(path)
+        .ok()
+        .map(|value| value.trim().to_string())
 }

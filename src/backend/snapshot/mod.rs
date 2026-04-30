@@ -1,128 +1,148 @@
 //! Directory-snapshot backends: the workspace is an ordinary directory materialized by a
 //! [`ForkPrimitive`] (APFS clone, per-file reflink, or plain copy). Changes are found by
 //! comparing the view against the fork manifest.
+//!
+//! [`SnapshotBackend`] is primitive-agnostic; everything that differs between primitives
+//! (capabilities, availability, how the fork is reported) lives behind [`ForkPrimitive`].
 
 #[cfg(target_os = "macos")]
 mod clonefile;
 mod copy;
 #[cfg(target_os = "linux")]
 mod reflink;
+mod xattr;
 
 #[cfg(target_os = "macos")]
-pub use clonefile::ClonefilePrimitive;
-pub use copy::CopyPrimitive;
+pub(crate) use clonefile::ClonefilePrimitive;
+pub(crate) use copy::CopyPrimitive;
 #[cfg(target_os = "linux")]
-pub use reflink::ReflinkPrimitive;
+pub(crate) use reflink::{probe as reflink_probe, ReflinkPrimitive};
 
 use std::fs;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde_json::Map;
 
 use super::{
-    BackendKind, BackendState, ChangeCount, CreateReq, DestroyMode, ViewInfo, WorkspaceBackend,
+    BackendKind, BackendState, Capabilities, ChangeCount, CreateReq, DestroyMode, ViewInfo,
+    WorkspaceBackend,
 };
-use crate::backend::Capabilities;
 use crate::changes::manifest::{self, ManifestStatus};
 use crate::changes::FileChange;
 use crate::error::{ForkspaceError, Result};
+use crate::paths;
+use crate::util::fs::ctime_ns;
 use crate::util::{now_unix_ns, IoContext};
 use crate::workspace::Workspace;
 
-const REFLINK_CAPABILITIES: Capabilities = Capabilities {
+/// Capabilities shared by the per-file primitives (reflink and plain copy).
+const DIRECTORY_COPY_CAPABILITIES: Capabilities = Capabilities {
     tmpfs_backing: false,
     network_namespace: true,
     instant_fork: false,
     sealed_parent: false,
 };
-const COPY_CAPABILITIES: Capabilities = Capabilities {
-    tmpfs_backing: false,
-    network_namespace: true,
-    instant_fork: false,
-    sealed_parent: false,
-};
-const CLONE_CAPABILITIES: Capabilities = Capabilities {
-    tmpfs_backing: false,
-    network_namespace: false,
-    instant_fork: false,
-    sealed_parent: false,
-};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ForkTimePolicy {
-    Before,
-    AfterMaterialize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Degradation {
-    pub diagnosis: String,
-    pub remedy: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProbeResult {
-    pub available: bool,
-    pub reason: String,
-}
-
-impl ProbeResult {
-    pub fn available(reason: impl Into<String>) -> Self {
-        Self {
-            available: true,
-            reason: reason.into(),
-        }
-    }
-
-    pub fn unavailable(reason: impl Into<String>) -> Self {
-        Self {
-            available: false,
-            reason: reason.into(),
-        }
-    }
-}
-
+/// Counters gathered while materializing a view.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ForkStats {
+pub(crate) struct ForkStats {
     pub reflinked_files: u64,
     pub copied_files: u64,
     pub copied_bytes: u64,
+    /// Latest ctime among materialized entries.
     pub max_ctime_ns: u128,
 }
 
 impl ForkStats {
     pub(crate) fn observe(&mut self, metadata: &fs::Metadata) {
-        let ctime = (metadata.ctime().max(0) as u128) * 1_000_000_000
-            + metadata.ctime_nsec().max(0) as u128;
+        let ctime = u128::try_from(ctime_ns(metadata)).unwrap_or(0);
         self.max_ctime_ns = self.max_ctime_ns.max(ctime);
     }
 }
 
-pub trait ForkPrimitive: Send + Sync + 'static {
-    fn kind(&self) -> BackendKind;
-    fn probe(&self, base: &Path, dest_parent: &Path) -> ProbeResult;
-    fn materialize(&self, base: &Path, dest: &Path) -> Result<ForkStats>;
-    fn fork_time_policy(&self) -> ForkTimePolicy;
-    fn degradation(&self) -> Option<Degradation>;
+/// How a finished fork is reported to the user.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ForkSummary {
+    pub degraded: bool,
+    pub note: Option<String>,
 }
 
-pub struct SnapshotBackend<P: ForkPrimitive> {
+impl ForkSummary {
+    fn record_manifest_failure(&mut self, error: &ForkspaceError) {
+        self.degraded = true;
+        let tracking = format!(
+            "change tracking is degraded because the fork manifest could not be written: {error}"
+        );
+        self.note = Some(match self.note.take() {
+            Some(note) => format!("{note}; {tracking}"),
+            None => tracking,
+        });
+    }
+}
+
+/// A way of turning a base directory into an independent workspace directory.
+pub(crate) trait ForkPrimitive: Send + Sync + 'static {
+    fn kind(&self) -> BackendKind;
+    fn capabilities(&self) -> &'static Capabilities;
+    /// Fails with a user-facing diagnosis when `base` cannot be forked into `dest_parent`.
+    fn check_available(&self, base: &Path, dest_parent: &Path) -> Result;
+    /// Creates `dest` as a copy of `base`. On error the caller removes `dest`.
+    fn materialize(&self, base: &Path, dest: &Path) -> Result<ForkStats>;
+    fn summarize(&self, stats: &ForkStats, elapsed_ms: u128) -> ForkSummary;
+
+    /// The instant changes are measured from, given when materializing `started_ns` and what
+    /// it produced. Per-file copies stamp every entry with a fresh ctime, so by default the
+    /// baseline is placed after the copy and after every ctime it produced.
+    fn fork_time_ns(&self, _started_ns: u128, stats: &ForkStats) -> u128 {
+        now_unix_ns().max(stats.max_ctime_ns).saturating_add(1)
+    }
+
+    /// Whether the fork manifest is built by a background worker instead of inline.
+    fn manifest_in_background(&self) -> bool {
+        false
+    }
+
+    fn backend_state(&self, stats: &ForkStats) -> BackendState {
+        BackendState::CowDir {
+            reflinked_files: stats.reflinked_files,
+            copied_files: stats.copied_files,
+            unknown_fields: Map::new(),
+        }
+    }
+
+    /// The error for a `--tmpfs` request, which no directory primitive supports.
+    fn tmpfs_unsupported(&self) -> ForkspaceError {
+        ForkspaceError::CapabilityUnsupported {
+            diagnosis: "--tmpfs is unavailable for directory-copy backends".to_string(),
+            remedy: "omit --tmpfs or install fuse-overlayfs".to_string(),
+        }
+    }
+}
+
+pub(crate) struct SnapshotBackend<P: ForkPrimitive> {
     primitive: P,
 }
 
 impl<P: ForkPrimitive> SnapshotBackend<P> {
-    pub fn new(primitive: P) -> Self {
+    pub(crate) fn new(primitive: P) -> Self {
         Self { primitive }
     }
 
-    fn workspace_root() -> PathBuf {
-        crate::paths::snapshot_root()
-    }
-
-    fn destination(name: &str) -> PathBuf {
-        Self::workspace_root().join(name)
+    /// Records the fork manifest, inline or in the background as the primitive prefers.
+    fn start_manifest(
+        &self,
+        name: &str,
+        view: &Path,
+        fork_time_ns: u128,
+    ) -> Result<ManifestStatus> {
+        if self.primitive.manifest_in_background() {
+            manifest::spawn(name.to_string(), view.to_path_buf(), fork_time_ns)?;
+            Ok(ManifestStatus::Building)
+        } else {
+            manifest::build(name, view, fork_time_ns)?;
+            Ok(ManifestStatus::Ready)
+        }
     }
 }
 
@@ -132,12 +152,7 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
     }
 
     fn capabilities(&self) -> &Capabilities {
-        match self.kind() {
-            BackendKind::MacClone => &CLONE_CAPABILITIES,
-            BackendKind::LinuxReflink => &REFLINK_CAPABILITIES,
-            BackendKind::PlainCopy => &COPY_CAPABILITIES,
-            BackendKind::Overlay => unreachable!("overlay is not a directory primitive"),
-        }
+        self.primitive.capabilities()
     }
 
     fn preflight(&self, base: &Path) -> Result {
@@ -147,7 +162,7 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
                 base.display()
             )));
         }
-        let root = Self::workspace_root();
+        let root = paths::snapshot_root();
         fs::create_dir_all(&root).io_context(|| format!("create {}", root.display()))?;
         let base = base
             .canonicalize()
@@ -161,137 +176,49 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
                 remedy: "set FORKSPACE_HOME outside the project and retry".to_string(),
             });
         }
-        let probe = self.primitive.probe(&base, &root);
-        if !probe.available {
-            let remedy = self.primitive.degradation().map_or_else(
-                || {
-                    "move the project and FORKSPACE_HOME to the same APFS volume, or pass --copy to accept a full copy"
-                        .to_string()
-                },
-                |value| value.remedy,
-            );
-            if self.kind() == BackendKind::MacClone && probe.reason.contains("different volumes") {
-                return Err(ForkspaceError::CapabilityUnsupported {
-                    diagnosis: probe.reason,
-                    remedy,
-                });
-            }
-            return Err(ForkspaceError::BackendUnavailable {
-                diagnosis: probe.reason,
-                remedy,
-            });
-        }
-        Ok(())
+        self.primitive.check_available(&base, &root)
     }
 
     fn create(&self, req: &CreateReq) -> Result<ViewInfo> {
         if req.tmpfs {
-            return Err(ForkspaceError::CapabilityUnsupported {
-                diagnosis: if self.kind() == BackendKind::MacClone {
-                    "--tmpfs is unavailable with APFS clones".to_string()
-                } else {
-                    "--tmpfs is unavailable for directory-copy backends".to_string()
-                },
-                remedy: if self.kind() == BackendKind::MacClone {
-                    "omit --tmpfs and use --ephemeral for automatic cleanup".to_string()
-                } else {
-                    "omit --tmpfs or install fuse-overlayfs".to_string()
-                },
-            });
+            return Err(self.primitive.tmpfs_unsupported());
         }
-        let destination = Self::destination(&req.name);
+        let destination = paths::snapshot_dir(&req.name);
         if destination.exists() {
             return Err(ForkspaceError::WorkspaceExists(req.name.clone()));
         }
+
         let started = Instant::now();
-        let before = now_unix_ns();
-        let stats = match self.primitive.materialize(&req.base, &destination) {
-            Ok(stats) => stats,
-            Err(error) => {
+        let started_ns = now_unix_ns();
+        let stats = self
+            .primitive
+            .materialize(&req.base, &destination)
+            .inspect_err(|_| {
                 let _ = fs::remove_dir_all(&destination);
-                return Err(error);
-            }
-        };
-        let fork_time_ns = match self.primitive.fork_time_policy() {
-            ForkTimePolicy::Before => before,
-            ForkTimePolicy::AfterMaterialize => {
-                now_unix_ns().max(stats.max_ctime_ns).saturating_add(1)
-            }
-        };
-        let mut manifest_failure = None;
-        let manifest_status = if self.kind() == BackendKind::MacClone {
-            match manifest::spawn(req.name.clone(), destination.clone(), fork_time_ns) {
-                Ok(()) => ManifestStatus::Building,
-                Err(error) => {
-                    manifest_failure = Some(error.to_string());
-                    ManifestStatus::Degraded
-                }
-            }
-        } else {
-            match manifest::build(&req.name, &destination, fork_time_ns) {
-                Ok(_) => ManifestStatus::Ready,
-                Err(error) => {
-                    manifest_failure = Some(error.to_string());
-                    ManifestStatus::Degraded
-                }
-            }
-        };
-        let elapsed_ms = started.elapsed().as_millis();
-        let (mut degraded, mut probe_reason) = match self.kind() {
-            BackendKind::PlainCopy => (
-                true,
-                Some(format!(
-                    "used a full copy ({} bytes in {elapsed_ms} ms); {}",
-                    stats.copied_bytes,
-                    self.primitive.degradation().map_or_else(
-                        || "use a copy-on-write filesystem for faster forks".to_string(),
-                        |value| value.remedy
-                    )
-                )),
-            ),
-            BackendKind::LinuxReflink => (
-                false,
-                Some(format!(
-                    "used reflinks for {} files ({} files required copying)",
-                    stats.reflinked_files, stats.copied_files
-                )),
-            ),
-            BackendKind::MacClone => (false, None),
-            BackendKind::Overlay => unreachable!("overlay is not a directory primitive"),
-        };
-        if let Some(error) = manifest_failure {
-            degraded = true;
-            let tracking = format!(
-                "change tracking is degraded because the fork manifest could not be written: {error}"
-            );
-            probe_reason = Some(match probe_reason {
-                Some(reason) => format!("{reason}; {tracking}"),
-                None => tracking,
-            });
-        }
-        let backend_state = if self.kind() == BackendKind::MacClone {
-            BackendState::MacClone {
-                unknown_fields: Map::new(),
-            }
-        } else {
-            BackendState::CowDir {
-                reflinked_files: stats.reflinked_files,
-                copied_files: stats.copied_files,
-                unknown_fields: Map::new(),
-            }
-        };
+            })?;
+        let fork_time_ns = self.primitive.fork_time_ns(started_ns, &stats);
+        let manifest = self.start_manifest(&req.name, &destination, fork_time_ns);
+
+        let mut summary = self
+            .primitive
+            .summarize(&stats, started.elapsed().as_millis());
+        let manifest_status = manifest.unwrap_or_else(|error| {
+            summary.record_manifest_failure(&error);
+            ManifestStatus::Degraded
+        });
         Ok(ViewInfo {
             view_path: destination,
             fork_time_ns,
-            backend_state,
+            backend_state: self.primitive.backend_state(&stats),
             manifest_status,
-            degraded,
-            probe_reason,
+            degraded: summary.degraded,
+            probe_reason: summary.note,
         })
     }
 
+    /// Moves the view into the trash directory; the slow delete happens asynchronously.
     fn destroy(&self, ws: &Workspace, _mode: DestroyMode) -> Result {
-        let trash_root = crate::paths::trash_dir();
+        let trash_root = paths::trash_dir();
         fs::create_dir_all(&trash_root)
             .io_context(|| format!("create {}", trash_root.display()))?;
         let trash = trash_root.join(format!(
@@ -301,8 +228,7 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
             std::process::id()
         ));
         fs::rename(&ws.view_path, &trash)
-            .io_context(|| format!("move workspace '{}' to trash", ws.name))?;
-        Ok(())
+            .io_context(|| format!("move workspace '{}' to trash", ws.name))
     }
 
     fn view_path(&self, ws: &Workspace) -> PathBuf {

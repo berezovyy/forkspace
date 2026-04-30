@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 
 use super::content::classify_file;
 use super::FileChange;
-use crate::backend::overlay::mount::Whiteout;
+use crate::backend::overlay::Whiteout;
 use crate::error::{ForkspaceError, Result};
 use crate::util::WalkDirExt;
 use crate::workspace::Workspace;

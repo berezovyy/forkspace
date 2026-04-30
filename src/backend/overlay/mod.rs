@@ -3,6 +3,9 @@
 //! The upper directory holds exactly the workspace's writes, so it doubles as the change set.
 
 pub mod mount;
+mod whiteout;
+
+pub(crate) use whiteout::Whiteout;
 
 use std::fs;
 use std::io::BufRead;
@@ -12,16 +15,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::{
-    BackendKind, BackendState, ChangeCount, CreateReq, DestroyMode, ViewInfo, WorkspaceBackend,
+    BackendKind, BackendState, Capabilities, ChangeCount, CreateReq, DestroyMode, ViewInfo,
+    WorkspaceBackend,
 };
-use crate::backend::Capabilities;
 use crate::changes::filter::ChangeFilter;
 use crate::changes::manifest::ManifestStatus;
 use crate::changes::{self, FileChange};
 use crate::error::{ForkspaceError, Result};
+use crate::paths;
 use crate::util::IoContext;
 use crate::workspace::Workspace;
-use mount::{mount_overlay, unmount_overlay, unmount_tmpfs, OverlayOpts};
+use mount::{
+    mount_overlay, tmpfs_not_implemented, unmount_overlay, unmount_tmpfs, OverlayOpts,
+    DEFAULT_TMPFS_SIZE,
+};
 
 const CAPABILITIES: Capabilities = Capabilities {
     tmpfs_backing: false,
@@ -30,6 +37,7 @@ const CAPABILITIES: Capabilities = Capabilities {
     sealed_parent: true,
 };
 
+/// Overlay layer directories, persisted in `state.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverlayState {
     pub upper: PathBuf,
@@ -57,6 +65,8 @@ impl Default for OverlayBackend {
     }
 }
 
+/// Removes the overlay-incompatible files a project lists in `.forkspaceclean` (one view-relative
+/// path per line; `#` comments) from a freshly mounted view.
 fn apply_forkspaceclean(view: &Path) {
     let Ok(file) = fs::File::open(view.join(".forkspaceclean")) else {
         return;
@@ -107,13 +117,10 @@ impl WorkspaceBackend for OverlayBackend {
 
     fn create(&self, req: &CreateReq) -> Result<ViewInfo> {
         if req.tmpfs && !self.capabilities().tmpfs_backing {
-            return Err(ForkspaceError::CapabilityUnsupported {
-                diagnosis: "--tmpfs is not implemented".to_string(),
-                remedy: "omit --tmpfs to use disk-backed workspace storage".to_string(),
-            });
+            return Err(tmpfs_not_implemented());
         }
 
-        let root = crate::paths::overlay_root(&req.name);
+        let root = paths::overlay_root(&req.name);
         let upper = root.join("upper");
         let work = root.join("work");
         let merged = root.join("merged");
@@ -124,7 +131,10 @@ impl WorkspaceBackend for OverlayBackend {
 
         let opts = OverlayOpts {
             tmpfs: req.tmpfs,
-            tmpfs_size: req.tmpfs_size.clone().unwrap_or_else(|| "256m".to_string()),
+            tmpfs_size: req
+                .tmpfs_size
+                .clone()
+                .unwrap_or_else(|| DEFAULT_TMPFS_SIZE.to_string()),
         };
         if let Err(error) = mount_overlay(&req.base, &upper, &work, &merged, &opts) {
             let _ = fs::remove_dir_all(&root);
@@ -162,13 +172,13 @@ impl WorkspaceBackend for OverlayBackend {
             unmount_tmpfs(&state.upper)?;
             unmount_tmpfs(&state.work)?;
         }
-        fs::remove_dir_all(crate::paths::overlay_root(&ws.name)).map_err(|source| ForkspaceError::Io {
-            context: format!(
+        let root = paths::overlay_root(&ws.name);
+        fs::remove_dir_all(&root).io_context(|| {
+            format!(
                 "remove workspace directory {}; retry `forkspace drop {}` after closing processes using it",
-                crate::paths::overlay_root(&ws.name).display(),
+                root.display(),
                 ws.name
-            ),
-            source,
+            )
         })
     }
 

@@ -1,140 +1,187 @@
+//! Portable fork primitive: a metadata-preserving recursive copy that keeps sparse files
+//! sparse and hard links linked. [`materialize_tree`] is shared with the reflink primitive,
+//! which only swaps how regular files are cloned.
+
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
 use std::fs;
-use std::os::unix::ffi::OsStrExt;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
-use super::{Degradation, ForkPrimitive, ForkStats, ForkTimePolicy, ProbeResult};
-use crate::backend::BackendKind;
+use super::xattr::copy_xattrs;
+use super::{ForkPrimitive, ForkStats, ForkSummary, DIRECTORY_COPY_CAPABILITIES};
+use crate::backend::{BackendKind, Capabilities};
 use crate::error::{ForkspaceError, Result};
+use crate::util::fs::mode_bits;
 use crate::util::{IoContext, WalkDirExt};
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct CopyPrimitive;
+pub(crate) struct CopyPrimitive;
 
 impl ForkPrimitive for CopyPrimitive {
     fn kind(&self) -> BackendKind {
         BackendKind::PlainCopy
     }
 
-    fn probe(&self, _base: &Path, _dest_parent: &Path) -> ProbeResult {
-        ProbeResult::available("portable directory copy is always available")
+    fn capabilities(&self) -> &'static Capabilities {
+        &DIRECTORY_COPY_CAPABILITIES
+    }
+
+    fn check_available(&self, _base: &Path, _dest_parent: &Path) -> Result {
+        Ok(())
     }
 
     fn materialize(&self, base: &Path, dest: &Path) -> Result<ForkStats> {
         materialize_tree(base, dest, |_source, _target| Ok(false))
     }
 
-    fn fork_time_policy(&self) -> ForkTimePolicy {
-        ForkTimePolicy::AfterMaterialize
-    }
-
-    fn degradation(&self) -> Option<Degradation> {
-        Some(Degradation {
-            diagnosis: "the workspace was materialized as a full copy".to_string(),
-            remedy: if cfg!(target_os = "macos") {
-                "place the project and FORKSPACE_HOME on the same APFS volume for faster clone forks"
-                    .to_string()
-            } else {
-                "install fuse-overlayfs or use a reflink-capable volume for faster forks"
-                    .to_string()
-            },
-        })
+    fn summarize(&self, stats: &ForkStats, elapsed_ms: u128) -> ForkSummary {
+        ForkSummary {
+            degraded: true,
+            note: Some(format!(
+                "used a full copy ({} bytes in {elapsed_ms} ms); {}",
+                stats.copied_bytes,
+                faster_fork_remedy()
+            )),
+        }
     }
 }
 
+fn faster_fork_remedy() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "place the project and FORKSPACE_HOME on the same APFS volume for faster clone forks"
+    } else {
+        "install fuse-overlayfs or use a reflink-capable volume for faster forks"
+    }
+}
+
+/// Recreates `source` at `target`, preserving permissions, mtimes, xattrs, symlinks, and hard
+/// links. `clone_regular` may clone a regular file in place and return `true`; when it returns
+/// `false` the file is copied byte-for-byte instead.
 pub(crate) fn materialize_tree<F>(
     source: &Path,
     target: &Path,
-    mut clone_regular: F,
+    clone_regular: F,
 ) -> Result<ForkStats>
 where
     F: FnMut(&Path, &Path) -> Result<bool>,
 {
-    let mut hardlinks: HashMap<(u64, u64), PathBuf> = HashMap::new();
-    let mut directories = Vec::new();
-    let mut stats = ForkStats::default();
     fs::create_dir_all(target).io_context(|| format!("create {}", target.display()))?;
-
+    let mut copier = TreeCopier {
+        clone_regular,
+        hardlinks: HashMap::new(),
+        directories: Vec::new(),
+        stats: ForkStats::default(),
+    };
     for entry in WalkDir::new(source).min_depth(1).follow_links(false) {
         let entry = entry.walk_context(source)?;
         let relative = entry
             .path()
             .strip_prefix(source)
             .map_err(|_| ForkspaceError::StateFailed("copy walk escaped its source".to_string()))?;
-        let destination = target.join(relative);
-        let metadata = fs::symlink_metadata(entry.path())
-            .io_context(|| format!("inspect {}", entry.path().display()))?;
+        copier.copy_entry(entry.path(), target.join(relative))?;
+    }
+    copier.finish_directories()
+}
+
+struct TreeCopier<F> {
+    clone_regular: F,
+    /// First destination of each multiply-linked source inode, keyed by `(dev, ino)`.
+    hardlinks: HashMap<(u64, u64), PathBuf>,
+    /// Directories whose metadata is applied after their contents are written.
+    directories: Vec<(PathBuf, PathBuf, fs::Metadata)>,
+    stats: ForkStats,
+}
+
+impl<F> TreeCopier<F>
+where
+    F: FnMut(&Path, &Path) -> Result<bool>,
+{
+    fn copy_entry(&mut self, source: &Path, destination: PathBuf) -> Result {
+        let metadata =
+            fs::symlink_metadata(source).io_context(|| format!("inspect {}", source.display()))?;
 
         if metadata.is_dir() {
             fs::create_dir_all(&destination)
                 .io_context(|| format!("create {}", destination.display()))?;
-            directories.push((entry.path().to_path_buf(), destination, metadata));
-            continue;
+            self.directories
+                .push((source.to_path_buf(), destination, metadata));
+            return Ok(());
         }
 
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent).io_context(|| format!("create {}", parent.display()))?;
         }
         if metadata.file_type().is_symlink() {
-            std::os::unix::fs::symlink(
-                fs::read_link(entry.path())
-                    .io_context(|| format!("read symlink {}", entry.path().display()))?,
-                &destination,
-            )
-            .io_context(|| format!("create symlink {}", destination.display()))?;
-            copy_xattrs(entry.path(), &destination, true)?;
-            stats.observe(&metadata);
-            continue;
-        }
-        if !metadata.is_file() {
+            copy_symlink(source, &destination)?;
+        } else if metadata.is_file() {
+            self.copy_file(source, destination, &metadata)?;
+        } else {
             return Err(ForkspaceError::InvalidArgument(format!(
                 "unsupported file kind at {}; only files, directories, and symlinks can be forked",
-                entry.path().display()
+                source.display()
             )));
         }
+        self.stats.observe(&metadata);
+        Ok(())
+    }
 
+    fn copy_file(
+        &mut self,
+        source: &Path,
+        destination: PathBuf,
+        metadata: &fs::Metadata,
+    ) -> Result {
         let identity = (metadata.dev(), metadata.ino());
-        if metadata.nlink() > 1 {
-            if let Some(existing) = hardlinks.get(&identity) {
-                fs::hard_link(existing, &destination)
-                    .io_context(|| format!("hard-link {}", destination.display()))?;
-                stats.observe(&metadata);
-                continue;
+        let multiply_linked = metadata.nlink() > 1;
+        if multiply_linked {
+            if let Some(existing) = self.hardlinks.get(&identity) {
+                return fs::hard_link(existing, &destination)
+                    .io_context(|| format!("hard-link {}", destination.display()));
             }
         }
 
-        if clone_regular(entry.path(), &destination)? {
-            stats.reflinked_files += 1;
+        if (self.clone_regular)(source, &destination)? {
+            self.stats.reflinked_files += 1;
         } else {
-            copy_sparse(entry.path(), &destination, metadata.len())?;
-            stats.copied_files += 1;
-            stats.copied_bytes += metadata.len();
+            copy_sparse(source, &destination, metadata.len())?;
+            self.stats.copied_files += 1;
+            self.stats.copied_bytes += metadata.len();
         }
         fs::set_permissions(&destination, metadata.permissions())
             .io_context(|| format!("set permissions on {}", destination.display()))?;
-        set_mtime(&destination, &metadata)?;
-        copy_xattrs(entry.path(), &destination, false)?;
-        if metadata.nlink() > 1 {
-            hardlinks.insert(identity, destination);
+        set_mtime(&destination, metadata)?;
+        copy_xattrs(source, &destination, false)?;
+        if multiply_linked {
+            self.hardlinks.insert(identity, destination);
         }
-        stats.observe(&metadata);
+        Ok(())
     }
 
-    for (source_dir, destination, metadata) in directories.into_iter().rev() {
-        fs::set_permissions(
-            &destination,
-            fs::Permissions::from_mode(metadata.mode() & 0o7777),
-        )
-        .io_context(|| format!("set permissions on {}", destination.display()))?;
-        set_mtime(&destination, &metadata)?;
-        copy_xattrs(&source_dir, &destination, false)?;
-        stats.observe(&metadata);
+    /// Applies directory metadata once every entry exists, deepest first, so later writes
+    /// cannot bump a finished mtime and a parent's restrictive mode cannot block its children.
+    fn finish_directories(mut self) -> Result<ForkStats> {
+        for (source, destination, metadata) in self.directories.into_iter().rev() {
+            fs::set_permissions(
+                &destination,
+                fs::Permissions::from_mode(mode_bits(&metadata)),
+            )
+            .io_context(|| format!("set permissions on {}", destination.display()))?;
+            set_mtime(&destination, &metadata)?;
+            copy_xattrs(&source, &destination, false)?;
+            self.stats.observe(&metadata);
+        }
+        Ok(self.stats)
     }
-    Ok(stats)
+}
+
+fn copy_symlink(source: &Path, destination: &Path) -> Result {
+    let link = fs::read_link(source).io_context(|| format!("read symlink {}", source.display()))?;
+    std::os::unix::fs::symlink(link, destination)
+        .io_context(|| format!("create symlink {}", destination.display()))?;
+    copy_xattrs(source, destination, true)
 }
 
 fn set_mtime(path: &Path, metadata: &fs::Metadata) -> Result {
@@ -148,6 +195,8 @@ fn set_mtime(path: &Path, metadata: &fs::Metadata) -> Result {
         .io_context(|| format!("set time on {}", path.display()))
 }
 
+/// Copies a regular file, writing only its data extents so holes stay sparse. Falls back to a
+/// plain `fs::copy` when the filesystem cannot report extents.
 fn copy_sparse(source: &Path, destination: &Path, length: u64) -> Result {
     let input = fs::File::open(source).io_context(|| format!("open {}", source.display()))?;
     let output = fs::OpenOptions::new()
@@ -163,46 +212,45 @@ fn copy_sparse(source: &Path, destination: &Path, length: u64) -> Result {
         return Ok(());
     }
 
-    let mut offset = 0_u64;
-    let mut used_extents = false;
-    while offset < length {
-        let data =
-            unsafe { libc::lseek(input.as_raw_fd(), offset as libc::off_t, libc::SEEK_DATA) };
-        if data < 0 {
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::ENXIO) {
-                used_extents = true;
-                break;
-            }
-            drop(output);
-            let _ = fs::remove_file(destination);
-            fs::copy(source, destination)
-                .io_context(|| format!("copy {} -> {}", source.display(), destination.display()))?;
-            return Ok(());
-        }
-        used_extents = true;
-        let hole = unsafe { libc::lseek(input.as_raw_fd(), data, libc::SEEK_HOLE) };
-        if hole < 0 {
-            return Err(ForkspaceError::Io {
-                context: format!("find sparse extent in {}", source.display()),
-                source: std::io::Error::last_os_error(),
-            });
-        }
-        copy_extent(&input, &output, data as u64, (hole as u64).min(length))?;
-        offset = hole as u64;
-    }
-    if !used_extents {
-        return Err(ForkspaceError::StateFailed(format!(
-            "could not copy {}",
-            source.display()
-        )));
+    if !copy_data_extents(&input, &output, source, length)? {
+        drop(output);
+        let _ = fs::remove_file(destination);
+        fs::copy(source, destination)
+            .io_context(|| format!("copy {} -> {}", source.display(), destination.display()))?;
+        return Ok(());
     }
     output
         .sync_all()
         .io_context(|| format!("sync {}", destination.display()))
 }
 
-use std::os::fd::AsRawFd;
+/// Copies each `SEEK_DATA`/`SEEK_HOLE` extent of `input` into the pre-sized `output`.
+/// Returns `false`, having possibly written a partial copy, when extent lookup is unsupported.
+fn copy_data_extents(
+    input: &fs::File,
+    output: &fs::File,
+    source: &Path,
+    length: u64,
+) -> Result<bool> {
+    let fd = input.as_raw_fd();
+    let mut offset = 0_u64;
+    while offset < length {
+        let data = unsafe { libc::lseek(fd, offset as libc::off_t, libc::SEEK_DATA) };
+        if data < 0 {
+            // ENXIO means there is no data past `offset`: the rest of the file is a hole.
+            let error = std::io::Error::last_os_error();
+            return Ok(error.raw_os_error() == Some(libc::ENXIO));
+        }
+        let hole = unsafe { libc::lseek(fd, data, libc::SEEK_HOLE) };
+        if hole < 0 {
+            return Err(std::io::Error::last_os_error())
+                .io_context(|| format!("find sparse extent in {}", source.display()));
+        }
+        copy_extent(input, output, data as u64, (hole as u64).min(length))?;
+        offset = hole as u64;
+    }
+    Ok(true)
+}
 
 fn copy_extent(input: &fs::File, output: &fs::File, start: u64, end: u64) -> Result {
     let mut offset = start;
@@ -215,167 +263,10 @@ fn copy_extent(input: &fs::File, output: &fs::File, start: u64, end: u64) -> Res
         if read == 0 {
             break;
         }
-        let mut written = 0;
-        while written < read {
-            written += output
-                .write_at(&buffer[written..read], offset + written as u64)
-                .io_context(|| "write sparse file extent".to_string())?;
-        }
+        output
+            .write_all_at(&buffer[..read], offset)
+            .io_context(|| "write sparse file extent".to_string())?;
         offset += read as u64;
     }
     Ok(())
-}
-
-fn copy_xattrs(source: &Path, destination: &Path, symlink: bool) -> Result {
-    let source = CString::new(source.as_os_str().as_bytes())
-        .map_err(|_| ForkspaceError::InvalidArgument("path contains a NUL byte".to_string()))?;
-    let destination = CString::new(destination.as_os_str().as_bytes())
-        .map_err(|_| ForkspaceError::InvalidArgument("path contains a NUL byte".to_string()))?;
-    let size = list_xattrs(&source, std::ptr::null_mut(), 0, symlink);
-    if size < 0 {
-        if xattrs_unsupported() {
-            return Ok(());
-        }
-        return xattr_error("list", &source);
-    }
-    if size == 0 {
-        return Ok(());
-    }
-    let mut names = vec![0_u8; size as usize];
-    let size = list_xattrs(&source, names.as_mut_ptr().cast(), names.len(), symlink);
-    if size < 0 {
-        if xattrs_unsupported() {
-            return Ok(());
-        }
-        return xattr_error("list", &source);
-    }
-    names.truncate(size as usize);
-    for raw_name in names
-        .split(|byte| *byte == 0)
-        .filter(|name| !name.is_empty())
-    {
-        let name = CString::new(raw_name)
-            .map_err(|_| ForkspaceError::StateFailed("xattr name contains NUL".to_string()))?;
-        let size = get_xattr(&source, &name, std::ptr::null_mut(), 0, symlink);
-        if size < 0 {
-            return xattr_error("read", &source);
-        }
-        let mut value = vec![0_u8; size as usize];
-        if size > 0
-            && get_xattr(
-                &source,
-                &name,
-                value.as_mut_ptr().cast(),
-                value.len(),
-                symlink,
-            ) < 0
-        {
-            return xattr_error("read", &source);
-        }
-        if set_xattr(
-            &destination,
-            &name,
-            value.as_ptr().cast(),
-            value.len(),
-            symlink,
-        ) < 0
-        {
-            if xattrs_unsupported() {
-                continue;
-            }
-            return xattr_error("write", &destination);
-        }
-    }
-    Ok(())
-}
-
-fn xattr_error<T>(operation: &str, path: &CStr) -> Result<T> {
-    let error = std::io::Error::last_os_error();
-    Err(ForkspaceError::Io {
-        context: format!(
-            "{operation} extended attributes on {}",
-            path.to_string_lossy()
-        ),
-        source: error,
-    })
-}
-
-fn xattrs_unsupported() -> bool {
-    let code = std::io::Error::last_os_error().raw_os_error();
-    code == Some(libc::ENOTSUP) || code == Some(libc::EOPNOTSUPP)
-}
-
-#[cfg(target_os = "linux")]
-fn list_xattrs(path: &CStr, list: *mut libc::c_char, size: usize, symlink: bool) -> isize {
-    unsafe {
-        if symlink {
-            libc::llistxattr(path.as_ptr(), list, size)
-        } else {
-            libc::listxattr(path.as_ptr(), list, size)
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn list_xattrs(path: &CStr, list: *mut libc::c_char, size: usize, symlink: bool) -> isize {
-    let options = if symlink { libc::XATTR_NOFOLLOW } else { 0 };
-    unsafe { libc::listxattr(path.as_ptr(), list, size, options) }
-}
-
-#[cfg(target_os = "linux")]
-fn get_xattr(
-    path: &CStr,
-    name: &CStr,
-    value: *mut libc::c_void,
-    size: usize,
-    symlink: bool,
-) -> isize {
-    unsafe {
-        if symlink {
-            libc::lgetxattr(path.as_ptr(), name.as_ptr(), value, size)
-        } else {
-            libc::getxattr(path.as_ptr(), name.as_ptr(), value, size)
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn get_xattr(
-    path: &CStr,
-    name: &CStr,
-    value: *mut libc::c_void,
-    size: usize,
-    symlink: bool,
-) -> isize {
-    let options = if symlink { libc::XATTR_NOFOLLOW } else { 0 };
-    unsafe { libc::getxattr(path.as_ptr(), name.as_ptr(), value, size, 0, options) }
-}
-
-#[cfg(target_os = "linux")]
-fn set_xattr(
-    path: &CStr,
-    name: &CStr,
-    value: *const libc::c_void,
-    size: usize,
-    symlink: bool,
-) -> libc::c_int {
-    unsafe {
-        if symlink {
-            libc::lsetxattr(path.as_ptr(), name.as_ptr(), value, size, 0)
-        } else {
-            libc::setxattr(path.as_ptr(), name.as_ptr(), value, size, 0)
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn set_xattr(
-    path: &CStr,
-    name: &CStr,
-    value: *const libc::c_void,
-    size: usize,
-    symlink: bool,
-) -> libc::c_int {
-    let options = if symlink { libc::XATTR_NOFOLLOW } else { 0 };
-    unsafe { libc::setxattr(path.as_ptr(), name.as_ptr(), value, size, 0, options) }
 }
