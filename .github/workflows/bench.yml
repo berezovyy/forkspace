@@ -1,0 +1,52 @@
+name: bench
+
+on:
+  # Manual only: shared runners are noisy, so results are compared within one run.
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Timed runs per backend
+        default: "5"
+
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install fuse-overlayfs
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y fuse-overlayfs
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/forkspace-bench
+          key: bench-corpus-${{ runner.os }}-${{ hashFiles('scripts/bench-corpus.sh', 'scripts/bench-corpus/*') }}
+      - run: cargo build --release
+      - name: Run the test suite on this host first
+        run: cargo test --release
+      - name: Benchmark the pinned Next.js corpus
+        run: |
+          corpus=$(scripts/bench-corpus.sh)
+          python3 scripts/bench.py --bin target/release/forkspace --corpus "$corpus" \
+            --backends auto,copy --runs "${{ inputs.runs }}" \
+            --out "bench/${{ runner.os }}-next.json"
+      - name: Benchmark synthetic trees
+        run: |
+          for entries in 1000 10000; do
+            python3 scripts/bench.py --bin target/release/forkspace --synthetic "$entries" \
+              --backends auto,copy --runs "${{ inputs.runs }}" \
+              --out "bench/${{ runner.os }}-synthetic-$entries.json"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ runner.os }}
+          path: bench/
