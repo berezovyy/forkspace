@@ -1,6 +1,6 @@
 //! Background manifest builder (macOS only).
 //!
-//! An APFS clone is near-instant, so `fork` does not wait for the manifest walk. It
+//! An APFS clone is near-instant, so `new` does not wait for the manifest walk. It
 //! re-executes the forkspace binary as a detached worker instead: [`spawn`] passes the job
 //! through `FORKSPACE_INTERNAL_MANIFEST_*` environment variables, and `main` hands control to
 //! [`run_worker_from_env`] before parsing arguments.

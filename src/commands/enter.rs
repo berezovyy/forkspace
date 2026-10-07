@@ -81,11 +81,11 @@ fn create_for_entry(args: &EnterArgs) -> Result<String> {
         })?;
     }
     println!(
-        "created workspace '{}' from {}",
+        "created workspace '{}' at {}",
         created.name,
         created.view_path.display()
     );
-    super::fork::warn_inherited_venvs(&created);
+    super::new::warn_inherited_venvs(&created);
     Ok(name)
 }
 

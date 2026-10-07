@@ -1,33 +1,36 @@
 <p align="center">
-  <img src="assets/banner.svg" width="700" alt="forkspace" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/mark-dark.svg" />
+    <img src="assets/mark-light.svg" width="64" height="64" alt="" />
+  </picture>
 </p>
 
-<p align="center">
-  <strong>Disposable, isolated workspaces with the fastest backend your filesystem supports.</strong>
-</p>
+<h1 align="center">forkspace</h1>
 
 <p align="center">
-  No Docker. No root. Overlay, APFS clone, reflink, and portable-copy backends. <br/>
-Measured backend-specific numbers are published in <a href="docs/benchmarks.md">benchmarks</a>.
+  <strong>Disposable copies of your whole project, for agents, experiments and parallel work.</strong><br />
+  Fork a directory, change anything in it, then merge the result back or throw it away.
 </p>
 
 <p align="center">
   <a href="https://crates.io/crates/forkspace"><img src="https://img.shields.io/crates/v/forkspace?style=flat-square&color=58a6ff" alt="crates.io" /></a>
-  <a href="https://github.com/berezovyy/forkspace/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-a371f7?style=flat-square" alt="license" /></a>
-  <a href="#requirements"><img src="https://img.shields.io/badge/Linux%20%7C%20macOS-supported-238636?style=flat-square" alt="Linux and macOS" /></a>
-  <a href="#install"><img src="https://img.shields.io/badge/no_root-required-238636?style=flat-square" alt="no root" /></a>
-  <a href="docs/benchmarks.md"><img src="https://img.shields.io/badge/benchmarks-measured-58a6ff?style=flat-square" alt="measured benchmarks" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-8250df?style=flat-square" alt="MIT license" /></a>
+  <a href="#platforms"><img src="https://img.shields.io/badge/Linux%20%7C%20macOS-supported-238636?style=flat-square" alt="Linux and macOS" /></a>
+  <a href="#install"><img src="https://img.shields.io/badge/root-not%20required-238636?style=flat-square" alt="no root required" /></a>
 </p>
 
-<br/>
+<p align="center">
+  <img src="assets/films/hero.webp" width="100%" alt="Three workspaces are forked from a project, each is changed independently, one is merged back and the rest are dropped." />
+</p>
 
 ## Why forkspace?
 
-`cp -r` is slow. Docker is overkill. Git worktrees omit local dependencies and build caches.
-Forkspace preserves the complete project view and chooses overlayfs, APFS clones, reflinks, or an
-honest full-copy floor automatically. Project writes are isolated; host-global caches remain shared.
+A workspace is a full view of your project, including the files Git ignores: `node_modules`,
+build caches, `.env`. Changes stay inside the workspace until you merge them, and the original
+directory is never touched in the meantime. Forkspace picks the fastest way your filesystem
+offers to make that copy: an overlay, an APFS clone, reflinks, or a plain copy as the floor.
 
-|                         |  `cp -r`  |  Docker   | Git Worktree |   **forkspace**   |
+|                         |  `cp -r`  |  Docker   | Git worktree |   **forkspace**   |
 | :---------------------- | :-------: | :-------: | :----------: | :-----------: |
 | **Speed**               |   Slow    |   Slow    |     Fast     | [**Backend-dependent**](docs/benchmarks.md) |
 | `.env` / `node_modules` |    Yes    |    No     |      No      | [**Yes**](docs/workspace-contract.md) |
@@ -36,33 +39,20 @@ honest full-copy floor automatically. Project writes are isolated; host-global c
 | **Root required**       |    No     |   Often   |      No      | [**No**](docs/platform-parity.md) |
 | **Cleanup**             |  Manual   |  Manual   |    Manual    | [`forkspace drop`](docs/cli-reference.md) |
 
-<br/>
-
 ## Quick start
 
 ```bash
-forkspace fork . --name experiment     # backend selected automatically
-forkspace enter experiment -- npm install
-forkspace enter experiment -- sh -c 'mkdir -p src && printf "experiment\n" > src/experiment.txt'
+forkspace new experiment            # an isolated workspace of this directory
+forkspace enter experiment -- sh -c 'echo "new idea" >> file.txt'
 
-forkspace diff experiment              # see what changed
-forkspace diff experiment --full       # unified diff
+forkspace diff experiment           # what changed
+forkspace diff experiment --full    # the same, as a unified diff
 
-forkspace merge experiment --no-install # happy? merge back
-forkspace drop experiment               # discard the isolated directory
+forkspace merge experiment          # apply the changes to the original
+forkspace drop experiment           # remove the workspace
 ```
 
-```
-project/                 forkspace fork . --name experiment
-├── src/
-├── node_modules/  ───►  ~/.forkspace/experiment/merged/    (looks identical)
-├── .env                   ├── src/                      (read from original)
-└── package.json           ├── node_modules/             (read from original)
-                           ├── .env                      (read from original)
-                           └── src/api.rs                ← only changed file stored
-```
-
-<br/>
+Run `forkspace enter experiment` without a command to open a shell inside the workspace.
 
 ## Install
 
@@ -71,142 +61,129 @@ project/                 forkspace fork . --name experiment
 cargo install forkspace
 ```
 
-<br/>
-
-## Workflows
-
-### Parallel experiments
-
-```bash
-forkspace fork . --name approach-a
-forkspace fork . --name approach-b
-
-forkspace enter approach-a -- sh -c 'printf "approach a\n" > approach.txt'
-forkspace enter approach-b -- sh -c 'printf "approach b\n" > approach.txt'
-
-forkspace diff approach-a --stat
-forkspace diff approach-b --stat
-
-forkspace merge approach-a --no-install
-forkspace drop approach-b
-```
-
-<details><summary><strong>Dev server hot-swap</strong></summary>
-
-Run dev servers in different workspaces and switch between them without restarting anything:
-
-<!-- notest: starts long-running host services; the proxy integration suite executes this lifecycle -->
-```bash
-forkspace fork . --name feature-a
-forkspace fork . --name feature-b
-
-forkspace run feature-a --port 3000 -- npm run dev
-forkspace run feature-b --port 3000 -- npm run dev
-
-# proxy on localhost:4000 routes to the active workspace
-forkspace switch feature-a    # localhost:4000 → feature-a
-forkspace switch feature-b    # localhost:4000 → feature-b
-```
-
-</details>
-
-<details><summary><strong>Stacking (fork-of-fork)</strong></summary>
-
-```bash
-forkspace fork . --name step-1
-# ... make data model changes in step-1 ...
-
-forkspace fork step-1 --name step-2
-# ... build API on top of step-1's changes ...
-
-# see everything that changed from root to step-2
-forkspace diff step-2 --cumulative
-```
-
-</details>
-
-<details><summary><strong>Ephemeral workspaces</strong></summary>
-
-```bash
-# auto-creates a workspace, opens a shell, destroys on exit
-forkspace enter --ephemeral
-
-# or run a single command
-forkspace enter --ephemeral -- make test
-
-# `--tmpfs` is reserved but not implemented yet; use disk-backed ephemeral workspaces.
-```
-
-</details>
-
-<br/>
-
-## Commands
-
-| Command  | Description                                                            |
-| :------- | :--------------------------------------------------------------------- |
-| `fork`   | Create a workspace from a directory                                    |
-| `enter`  | Shell into a workspace (`--ephemeral`, `--merge-on-exit`, `--create`)  |
-| `diff`   | Show changes (`--stat`, `--full`, `--files`, `--json`, `--cumulative`) |
-| `merge`  | Apply changes to base (`--commit`, `--patch`, `--drop`)                |
-| `pull`   | Bring base changes into a workspace and re-baseline it                |
-| `land`   | Preserve a workspace's committed topic-branch history in the base     |
-| `compare`| Compare parallel attempts on source, dependency, test, and path facts |
-| `drop`   | Remove a workspace (`--force`, `--all`, `--glob`)                      |
-| `ls`     | List workspaces                                                        |
-| `run`    | Start a dev server with automatic proxy setup                          |
-| `switch` | Hot-swap which workspace the proxy routes to                           |
-
-<br/>
+Forkspace runs on Linux and macOS and needs no root or daemon. On Linux, install
+[`fuse-overlayfs`](https://github.com/containers/fuse-overlayfs) for the fastest forks.
 
 ## How it works
 
-On Linux with [fuse-overlayfs](https://github.com/containers/fuse-overlayfs), forkspace creates a union mount:
+<p align="center">
+  <img src="assets/films/how.webp" width="100%" alt="The overlay model: a workspace reads from the project, writes and deletions go to a separate changes layer, and that layer is what diff shows and merge applies." />
+</p>
 
+On Linux with `fuse-overlayfs`, a workspace is a union of two layers:
+
+- **Your project** is the read-only lower layer. Forkspace never writes to it until you merge.
+- **The changes layer** starts empty. A file is copied into it the first time it is written,
+  new files land there, and deletions are recorded as markers.
+- **The workspace** is what you see: the changes layer on top of your project.
+
+Because every change lives in that one layer, `diff` reads it directly, `merge` applies it to
+your project, and `drop` deletes it.
+
+APFS clones, reflinks and the plain-copy floor create an ordinary directory instead, and track
+changes against a manifest written at fork time. The commands and their output are the same on
+every backend; see [Platforms](#platforms).
+
+## Where to use it
+
+### Parallel AI agents
+
+<p align="center">
+  <img src="assets/films/agents.webp" width="100%" alt="Three agents work on the same task in three workspaces; forkspace compare shows how the attempts differ, one is merged and the others are dropped." />
+</p>
+
+Give each agent its own workspace of the same repository. They can install packages, run
+tests and edit the same files without stepping on each other or on you. When they are done,
+compare the attempts and keep the best one.
+
+```bash
+for n in a b c; do forkspace new agent-$n; done
+
+# Start one agent per workspace, e.g. `forkspace enter agent-a -- <your agent>`.
+forkspace enter agent-a -- sh -c 'echo "export const otp = true;" > src/otp.ts'
+
+forkspace compare agent-a agent-b agent-c   # what each attempt touched
+forkspace merge agent-a                     # keep one
+forkspace drop --all                        # discard the rest
 ```
-merged/    ← you work here (reads from both layers)
-  │
-  ├── upper/   ← your changes live here (copy-on-write)
-  └── lower/   ← original project (read-only, untouched)
+
+### Dev servers side by side
+
+<p align="center">
+  <img src="assets/films/servers.webp" width="100%" alt="Two workspaces run their own dev servers; forkspace switch changes which one localhost:4000 serves." />
+</p>
+
+Each workspace runs its own dev server on its own port. A small proxy on `localhost:4000`
+serves whichever one you switch to, so you can compare branches in one browser tab without
+restarting anything.
+
+<!-- notest: starts long-running host services; the proxy integration suite executes this lifecycle -->
+```bash
+forkspace new feature-a
+forkspace new feature-b
+
+forkspace run feature-a -- npm run dev    # gets $PORT=3000
+forkspace run feature-b -- npm run dev    # 3000 is taken: gets a free port from 5501
+
+forkspace switch feature-a                # localhost:4000 → feature-a
+forkspace switch feature-b                # localhost:4000 → feature-b
 ```
 
-When you read a file, it comes from the original. When you write, the file is copied to upper first (copy-on-write), then modified there. The original never changes. Deletes are tracked as whiteout markers. The upper directory _is_ the diff - no diffing algorithm needed.
+### Throwaway experiments
 
-Forking avoids copying project contents on the Linux overlay backend. Merging moves files from upper back to the base. Dropping unmounts and deletes the upper.
+Try a risky upgrade, a large refactor or a destructive script without cleaning up afterwards.
+An ephemeral workspace is removed as soon as its command or shell exits.
 
-APFS clone, Linux reflink, and portable-copy workspaces are ordinary snapshot directories.
-They share the same fork manifest, ctime scan, conflict planner, and command output. See the
-[platform matrix](docs/platform-parity.md) and [limitations](docs/macos-limitations.md).
+```bash
+forkspace enter --ephemeral -- make test
+```
 
-<br/>
+### Stacked changes
 
-## Under the hood
+Start a workspace from another workspace to build in steps, and review everything from the
+original project to the top of the stack at once.
 
-> **No daemon. No runtime. Just syscalls and a state file.**
+```bash
+forkspace new step-1
+forkspace new step-2 --from step-1
+forkspace diff step-2 --cumulative
+```
 
-| Primitive           | Role                                                              |
-| :------------------ | :---------------------------------------------------------------- |
-| **OverlayFS**       | Copy-on-write file isolation - the kernel does the hard work      |
-| **flock()**         | File-level locking so parallel forkspace commands don't corrupt state |
-| **setsid()**        | Dev servers run as independent sessions, survive your terminal    |
-| **kill() + pgid**   | Stopping a server kills the entire process tree                   |
-| **Atomic writes**   | write → fsync → rename - state file can't corrupt on crash        |
-| **Capability probes** | Select the fastest available backend without privileged setup  |
+## Commands
 
-<br/>
+| Command   | What it does                                                                |
+| :-------- | :-------------------------------------------------------------------------- |
+| `new`     | Create a workspace from a directory or another workspace (`--from`, `--branch`, `--copy`) |
+| `enter`   | Open a shell or run a command in a workspace (`--ephemeral`, `--merge-on-exit`) |
+| `diff`    | Show what changed (`--stat`, `--full`, `--files`, `--json`, `--cumulative`) |
+| `compare` | Compare parallel attempts by source, dependency and test changes           |
+| `merge`   | Apply a workspace's changes to its base (`--commit`, `--patch`, `--drop`)   |
+| `pull`    | Bring new base changes into a workspace                                     |
+| `land`    | Bring a workspace's Git branch and commits into the base repository         |
+| `run`     | Start a dev server in a workspace behind the `localhost:4000` proxy        |
+| `switch`  | Point the proxy at another workspace's dev server                          |
+| `ls`      | List workspaces, their backend and how many files changed                  |
+| `drop`    | Remove workspaces (`--all`, `--glob`, `--force`)                            |
 
-## Requirements
+Every command has `--help`; `ls`, `diff`, `compare` and `pull` also print `--json`. The full reference is in
+[docs/cli-reference.md](docs/cli-reference.md).
 
-- Linux or macOS; no root/sudo required
-- Fastest on Linux with `fuse-overlayfs`, or on macOS with APFS clones
-- Linux falls back to per-file reflinks and then a portable full copy
-- `--copy` explicitly exercises the universal fallback on either platform
+## Platforms
+
+Forkspace probes the filesystem and uses the fastest backend that works. The choice is
+recorded per workspace.
+
+| Platform | Backend                        | Forking                                   |
+| :------- | :----------------------------- | :---------------------------------------- |
+| Linux    | `fuse-overlayfs`               | Nothing is copied; changes go to a layer  |
+| Linux    | Reflinks (e.g. Btrfs, XFS)     | Files share blocks until they are written |
+| macOS    | APFS clones                    | The directory is cloned copy-on-write     |
+| Both     | Plain copy (`--copy`)          | A full copy, reported when it happens     |
+
+Measured numbers are in [docs/benchmarks.md](docs/benchmarks.md), and the behaviour of each
+backend is listed in [docs/platform-parity.md](docs/platform-parity.md) and
+[docs/macos-limitations.md](docs/macos-limitations.md).
 
 ## License
 
-MIT
-
-<p align="center">
-  <a href="https://github.com/berezovyy/forkspace/issues">Report Bug</a> &middot;
-  <a href="https://github.com/berezovyy/forkspace/issues">Request Feature</a>
-</p>
+[MIT](LICENSE)

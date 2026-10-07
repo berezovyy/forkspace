@@ -45,10 +45,10 @@ fn new_warns_about_a_copied_venv_that_points_at_the_base() {
     let output = forkspace(
         home.path(),
         &[
-            "fork",
-            base_path.to_str().unwrap(),
-            "--name",
+            "new",
             "venv-ws",
+            "--from",
+            base_path.to_str().unwrap(),
             "--copy",
         ],
         &[],
@@ -82,10 +82,10 @@ fn new_does_not_warn_about_unrelated_shebangs() {
     let output = forkspace(
         home.path(),
         &[
-            "fork",
-            base.path().to_str().unwrap(),
-            "--name",
+            "new",
             "plain-ws",
+            "--from",
+            base.path().to_str().unwrap(),
             "--copy",
         ],
         &[],
@@ -108,13 +108,7 @@ fn enter_gives_each_workspace_its_own_compose_project() {
     fs::write(base.join("compose.yaml"), "services: {}\n").unwrap();
     let new = forkspace(
         home.path(),
-        &[
-            "fork",
-            base.to_str().unwrap(),
-            "--name",
-            "Agent.1",
-            "--copy",
-        ],
+        &["new", "Agent.1", "--from", base.to_str().unwrap(), "--copy"],
         &[],
     );
     assert!(

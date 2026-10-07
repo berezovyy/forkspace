@@ -122,10 +122,10 @@ fn ten_parallel_public_forks_commit_without_state_or_tree_corruption() {
             Command::new(env!("CARGO_BIN_EXE_forkspace"))
                 .env("FORKSPACE_HOME", home)
                 .args([
-                    "fork",
-                    base.to_str().unwrap(),
-                    "--name",
+                    "new",
                     &format!("public-{index}"),
+                    "--from",
+                    base.to_str().unwrap(),
                     "--copy",
                 ])
                 .output()
@@ -164,10 +164,10 @@ fn kill_during_copy_fork_reconciles_the_intent_and_partial_tree() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
         .args([
-            "fork",
-            base.path().to_str().unwrap(),
-            "--name",
+            "new",
             "interrupted",
+            "--from",
+            base.path().to_str().unwrap(),
             "--copy",
         ])
         .stdout(Stdio::null())
@@ -210,10 +210,10 @@ fn kill_during_drop_is_inferred_from_trash_and_is_idempotent() {
     assert!(forkspace(
         home.path(),
         &[
-            "fork",
-            base.path().to_str().unwrap(),
-            "--name",
+            "new",
             "drop-kill",
+            "--from",
+            base.path().to_str().unwrap(),
             "--copy"
         ]
     )
@@ -248,10 +248,10 @@ fn kill_during_merge_blocks_mutations_until_explicit_resume_then_converges() {
     assert!(forkspace(
         home.path(),
         &[
-            "fork",
-            base.path().to_str().unwrap(),
-            "--name",
+            "new",
             "merge-kill",
+            "--from",
+            base.path().to_str().unwrap(),
             "--copy"
         ]
     )
@@ -334,10 +334,10 @@ fn unicode_non_utf8_case_and_long_paths_round_trip_through_copy_diff_and_merge()
     assert!(forkspace(
         home.path(),
         &[
-            "fork",
-            base.path().to_str().unwrap(),
-            "--name",
+            "new",
             "names",
+            "--from",
+            base.path().to_str().unwrap(),
             "--copy"
         ]
     )
@@ -382,7 +382,7 @@ fn moved_base_is_flagged_but_the_independent_workspace_still_enters_and_diffs() 
     fs::write(base.join("file"), b"old\n").unwrap();
     assert!(forkspace(
         home.path(),
-        &["fork", base.to_str().unwrap(), "--name", "moved", "--copy"]
+        &["new", "moved", "--from", base.to_str().unwrap(), "--copy"]
     )
     .status
     .success());
@@ -421,10 +421,10 @@ fn missing_or_ejected_workspace_volume_is_flagged_without_erasing_state() {
     assert!(forkspace(
         home.path(),
         &[
-            "fork",
-            base.path().to_str().unwrap(),
-            "--name",
+            "new",
             "ejected",
+            "--from",
+            base.path().to_str().unwrap(),
             "--copy"
         ]
     )
@@ -462,7 +462,7 @@ fn backend_override_is_echoed_but_other_platform_state_is_never_repaired_away() 
     let forked = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
         .env("FORKSPACE_BACKEND", "copy")
-        .args(["fork", base.path().to_str().unwrap(), "--name", "foreign"])
+        .args(["new", "foreign", "--from", base.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(forked.status.success());
@@ -506,10 +506,10 @@ fn enospc_copy_fixture_cleans_partial_materialization_when_provided() {
     let failed = forkspace(
         &home,
         &[
-            "fork",
-            base.path().to_str().unwrap(),
-            "--name",
+            "new",
             "no-space",
+            "--from",
+            base.path().to_str().unwrap(),
             "--copy",
         ],
     );
@@ -534,10 +534,10 @@ fn manifest_install_failure_keeps_the_view_and_reports_tracking_degraded() {
     let forked = forkspace(
         home.path(),
         &[
-            "fork",
-            base.path().to_str().unwrap(),
-            "--name",
+            "new",
             "degraded-manifest",
+            "--from",
+            base.path().to_str().unwrap(),
             "--copy",
         ],
     );
@@ -592,10 +592,10 @@ fn sibling_cache_race_parallel_merges_and_diff_during_writes_remain_consistent()
         assert!(forkspace(
             home.path(),
             &[
-                "fork",
-                base.path().to_str().unwrap(),
-                "--name",
+                "new",
                 &format!("sibling-{index}"),
+                "--from",
+                base.path().to_str().unwrap(),
                 "--copy",
             ]
         )

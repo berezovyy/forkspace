@@ -43,7 +43,7 @@ mod macos {
                 "FORKSPACE_HOME",
                 std::env::var_os("FORKSPACE_HOME").unwrap(),
             )
-            .args(["fork", base.to_str().unwrap(), "--name", name])
+            .args(["new", name, "--from", base.to_str().unwrap()])
             .output()
             .unwrap();
         assert!(
@@ -628,7 +628,7 @@ mod macos {
                             "FORKSPACE_HOME",
                             std::env::var_os("FORKSPACE_HOME").unwrap(),
                         )
-                        .args(["fork", base_path.to_str().unwrap(), "--name", "winner"])
+                        .args(["new", "winner", "--from", base_path.to_str().unwrap()])
                         .output()
                         .unwrap()
                 })
@@ -1278,10 +1278,10 @@ http.server.ThreadingHTTPServer(('127.0.0.1',int(os.environ['PORT'])),H).serve_f
         let mut child = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
             .args([
-                "fork",
-                base.path().to_str().unwrap(),
-                "--name",
+                "new",
                 "interrupted",
+                "--from",
+                base.path().to_str().unwrap(),
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1332,10 +1332,10 @@ http.server.ThreadingHTTPServer(('127.0.0.1',int(os.environ['PORT'])),H).serve_f
         let mut child = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
             .args([
-                "fork",
-                base.path().to_str().unwrap(),
-                "--name",
+                "new",
                 "sleep-resume",
+                "--from",
+                base.path().to_str().unwrap(),
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1435,10 +1435,10 @@ http.server.ThreadingHTTPServer(('127.0.0.1',int(os.environ['PORT'])),H).serve_f
             let copied = Command::new(env!("CARGO_BIN_EXE_forkspace"))
                 .env("FORKSPACE_HOME", &home)
                 .args([
-                    "fork",
-                    Path::new(&base).to_str().unwrap(),
-                    "--name",
+                    "new",
                     "non-apfs-copy",
+                    "--from",
+                    Path::new(&base).to_str().unwrap(),
                     "--copy",
                 ])
                 .output()

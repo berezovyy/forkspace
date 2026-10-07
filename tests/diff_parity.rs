@@ -183,10 +183,10 @@ fn copy_stack_is_a_snapshot_and_merges_exactly_one_level_at_a_time() {
             .unwrap()
     };
     assert!(run(&[
-        "fork",
-        base.path().to_str().unwrap(),
-        "--name",
+        "new",
         "parent",
+        "--from",
+        base.path().to_str().unwrap(),
         "--copy"
     ])
     .status
@@ -195,7 +195,7 @@ fn copy_stack_is_a_snapshot_and_merges_exactly_one_level_at_a_time() {
         .view_path
         .clone();
     fs::write(parent_view.join("file"), b"before-child\n").unwrap();
-    assert!(run(&["fork", "parent", "--name", "child", "--copy"])
+    assert!(run(&["new", "child", "--from", "parent", "--copy"])
         .status
         .success());
     let child_view = forkspace::state::State::load().unwrap().workspaces["child"]
@@ -259,7 +259,7 @@ fn cross_platform_mutation_script_has_one_normalized_json_truth() {
 
     let fork = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
-        .args(["fork", base.path().to_str().unwrap(), "--name", "parity"])
+        .args(["new", "parity", "--from", base.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(

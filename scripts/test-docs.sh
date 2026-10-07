@@ -112,7 +112,7 @@ MAKE
 
     if grep -q 'forkspace compare attempt-a' "$block"; then
         for name in attempt-a attempt-b attempt-c; do
-            FORKSPACE_HOME="$home" "$bin" fork "$project" --name "$name" --copy >/dev/null 2>/dev/null
+            FORKSPACE_HOME="$home" "$bin" new "$name" --from "$project" --copy >/dev/null 2>/dev/null
         done
         printf 'review\n' > "$home/workspaces/attempt-b/src/review.txt"
     fi

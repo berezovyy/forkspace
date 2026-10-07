@@ -121,10 +121,10 @@ fn public_fork_branch_then_land_preserves_the_workspace_commits() {
     let forked = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
         .args([
-            "fork",
-            base.to_str().unwrap(),
-            "--name",
+            "new",
             "public",
+            "--from",
+            base.to_str().unwrap(),
             "--branch",
             "feature/public",
             "--copy",
@@ -303,7 +303,7 @@ fn default_branch_requires_as_and_branch_preflight_is_clone_free() {
 
     let non_repo = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-        .args(["fork", "--name", "never-created", "--branch", "topic"])
+        .args(["new", "never-created", "--branch", "topic", "--from"])
         .arg(non_repo.path())
         .env(
             "FORKSPACE_HOME",
@@ -474,10 +474,10 @@ fn branch_preflight_refuses_a_git_worktree_without_touching_the_repository() {
     let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
         .args([
-            "fork",
-            worktree.to_str().unwrap(),
-            "--name",
+            "new",
             "no-worktree",
+            "--from",
+            worktree.to_str().unwrap(),
             "--branch",
             "topic",
             "--copy",

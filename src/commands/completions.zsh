@@ -9,7 +9,7 @@ _forkspace_workspaces() {
 _forkspace() {
     local -a commands
     commands=(
-        'fork:Create a new workspace from a directory'
+        'new:Create a new workspace from a directory or another workspace'
         'drop:Remove a workspace'
         'enter:Open a shell (or run a command) inside a workspace'
         'run:Start a process in a workspace'
@@ -34,10 +34,10 @@ _forkspace() {
             ;;
         args)
             case "$words[1]" in
-                fork)
+                new)
                     _arguments \
-                        '1:base directory:_directories' \
-                        '--name=[Workspace name]:name:' \
+                        '1:workspace name:' \
+                        '--from=[Directory or workspace to start from]:source:_files -/' \
                         '--session=[Session identifier]:session:' \
                         '--tmpfs[Keep changes in RAM]' \
                         '--branch=[Create a Git branch]:branch:' \

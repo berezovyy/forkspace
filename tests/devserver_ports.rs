@@ -71,10 +71,10 @@ fn run_follows_a_server_that_ignores_port_and_listens_on_ipv6_only() {
     let created = forkspace(
         home.path(),
         &[
-            "fork",
-            base.path().to_str().unwrap(),
-            "--name",
+            "new",
             "ports",
+            "--from",
+            base.path().to_str().unwrap(),
             "--copy",
         ],
     );

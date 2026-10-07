@@ -1,12 +1,12 @@
-Create a new workspace from a directory
+Create a new workspace from a directory or another workspace
 
-Usage: forkspace fork [OPTIONS] [BASE]
+Usage: forkspace new [OPTIONS] [NAME]
 
 Arguments:
-  [BASE]  Directory to fork (defaults to current directory) [default: .]
+  [NAME]  Name for the new workspace (defaults to the source directory's name)
 
 Options:
-      --name <NAME>        Name for the new workspace (defaults to directory basename)
+      --from <SOURCE>      Directory or workspace to start from [default: .]
       --session <SESSION>  Session identifier for grouping related workspaces
       --tmpfs              Keep the workspace's changes in RAM (Linux overlay only; lost on reboot)
       --branch <BRANCH>    Create and record a Git branch in the workspace

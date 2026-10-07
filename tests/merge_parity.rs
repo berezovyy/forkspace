@@ -211,10 +211,10 @@ fn selected_directory_backend_round_trips_through_the_public_cli() {
     let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
         .args([
-            "fork",
-            base.path().to_str().unwrap(),
-            "--name",
+            "new",
             "primitive-parity",
+            "--from",
+            base.path().to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -274,10 +274,10 @@ fn installer_failure_keeps_the_applied_journal_resumable_and_never_drops() {
     let forked = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
         .args([
-            "fork",
-            base.path().to_str().unwrap(),
-            "--name",
+            "new",
             "install-failure",
+            "--from",
+            base.path().to_str().unwrap(),
             "--copy",
         ])
         .output()

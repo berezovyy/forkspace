@@ -6,10 +6,10 @@ pub(crate) mod completions;
 pub mod diff;
 pub mod drop;
 pub(crate) mod enter;
-pub mod fork;
 pub mod land;
 pub mod ls;
 pub(crate) mod merge;
+pub mod new;
 pub(crate) mod pull;
 pub(crate) mod run;
 pub(crate) mod switch;
@@ -26,7 +26,7 @@ fn print_json(value: &impl serde::Serialize) -> Result {
 /// Run the parsed subcommand.
 pub fn dispatch(cli: Cli) -> Result {
     match cli.command {
-        Commands::Fork(args) => fork::exec(args),
+        Commands::New(args) => new::exec(args),
         Commands::Drop(args) => drop::exec(args),
         Commands::Enter(args) => enter::exec(args),
         Commands::Run(args) => run::exec(args),

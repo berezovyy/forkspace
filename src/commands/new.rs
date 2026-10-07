@@ -1,24 +1,24 @@
-//! `forkspace fork`: create a workspace from a directory or stack one on another workspace.
+//! `forkspace new`: create a workspace from a directory or stack one on another workspace.
 
 use std::path::{Path, PathBuf};
 
 use crate::backend::BackendKind;
-use crate::cli::ForkArgs;
+use crate::cli::NewArgs;
 use crate::error::{ForkspaceError, Result};
 use crate::git;
 use crate::state::State;
 use crate::workspace::{self, CreateOptions, Workspace};
 
-pub fn exec(args: ForkArgs) -> Result {
+pub fn exec(args: NewArgs) -> Result {
     if let Some(branch) = args.branch.as_deref() {
-        ensure_branch_creatable(&branch_base(&args.base)?, branch)?;
+        ensure_branch_creatable(&branch_base(&args.from)?, branch)?;
     }
     let name = match args.name {
         Some(name) => name,
-        None => default_name(&args.base)?,
+        None => default_name(&args.from)?,
     };
     let mut ws = workspace::create(
-        args.base,
+        args.from,
         &name,
         CreateOptions {
             session: args.session,
@@ -32,14 +32,14 @@ pub fn exec(args: ForkArgs) -> Result {
     print_backend_notes(&ws);
     warn_inherited_venvs(&ws);
     println!(
-        "created workspace '{}' from {}",
+        "created workspace '{}' at {}",
         ws.name,
         ws.view_path.display()
     );
     Ok(())
 }
 
-/// The repository a `--branch` fork branches from: the parent's view when stacking.
+/// The repository a `--branch` workspace branches from: the parent's view when stacking.
 fn branch_base(base: &Path) -> Result<PathBuf> {
     let state = State::load()?;
     Ok(state
@@ -58,8 +58,9 @@ fn ensure_branch_creatable(base: &Path, branch: &str) -> Result {
     }
     if git::git_dir_is_file(base) {
         return Err(ForkspaceError::CapabilityUnsupported {
-            diagnosis: "--branch cannot fork a Git worktree or submodule checkout".to_string(),
-            remedy: "fork the main checkout instead".to_string(),
+            diagnosis: "--branch cannot start from a Git worktree or submodule checkout"
+                .to_string(),
+            remedy: "use the main checkout as --from instead".to_string(),
         });
     }
     git::validate_branch(base, branch)?;
@@ -77,7 +78,7 @@ fn default_name(base: &Path) -> Result<String> {
         .map(str::to_string)
         .ok_or_else(|| {
             ForkspaceError::InvalidArgument(
-                "cannot derive workspace name from path; use --name".to_string(),
+                "cannot derive a workspace name from the source path; pass a name".to_string(),
             )
         })
 }

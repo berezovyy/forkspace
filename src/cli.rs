@@ -20,8 +20,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Create a new workspace from a directory
-    Fork(ForkArgs),
+    /// Create a new workspace from a directory or another workspace
+    New(NewArgs),
 
     /// Remove a workspace and unmount its overlay
     Drop(DropArgs),
@@ -63,18 +63,17 @@ pub enum Commands {
 }
 
 #[derive(Args)]
-pub struct ForkArgs {
-    #[arg(
-        default_value = ".",
-        help = "Directory to fork (defaults to current directory)"
-    )]
-    pub base: PathBuf,
+pub struct NewArgs {
+    #[arg(help = "Name for the new workspace (defaults to the source directory's name)")]
+    pub name: Option<String>,
 
     #[arg(
         long,
-        help = "Name for the new workspace (defaults to directory basename)"
+        value_name = "SOURCE",
+        default_value = ".",
+        help = "Directory or workspace to start from"
     )]
-    pub name: Option<String>,
+    pub from: PathBuf,
 
     #[arg(long, help = "Session identifier for grouping related workspaces")]
     pub session: Option<String>,

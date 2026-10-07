@@ -59,7 +59,7 @@ pub struct Workspace {
     /// RFC 3339 creation time.
     pub created: String,
     pub session: Option<String>,
-    /// Git branch created by `fork --branch`.
+    /// Git branch created by `new --branch`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     /// Removed automatically when the `enter` session that created it exits.
@@ -82,7 +82,7 @@ pub struct Workspace {
     /// The backend fell back to a slower path (e.g. a full copy) or lost change tracking.
     #[serde(default, skip_serializing_if = "is_false")]
     pub degraded: bool,
-    /// Why the backend behaved as it did, shown to the user after `fork`.
+    /// Why the backend behaved as it did, shown to the user after `new`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe_reason: Option<String>,
     #[serde(flatten)]

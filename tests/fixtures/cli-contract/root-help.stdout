@@ -5,7 +5,7 @@ Linux overlayfs, APFS clones, Linux reflinks, and a portable copy floor share on
 Usage: forkspace <COMMAND>
 
 Commands:
-  fork     Create a new workspace from a directory
+  new      Create a new workspace from a directory or another workspace
   drop     Remove a workspace and unmount its overlay
   enter    Open a shell (or run a command) inside a workspace
   run      Start a process in a workspace (dev server, Electron, etc.)
