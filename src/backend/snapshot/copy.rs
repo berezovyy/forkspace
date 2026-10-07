@@ -83,7 +83,30 @@ where
             .map_err(|_| ForkspaceError::StateFailed("copy walk escaped its source".to_string()))?;
         copier.copy_entry(entry.path(), target.join(relative))?;
     }
-    copier.finish_directories()
+    let stats = copier.finish_directories()?;
+    sync_tree(target)?;
+    Ok(stats)
+}
+
+/// Make the finished copy durable with one filesystem-wide flush. An `fsync` per file costs
+/// a journal commit each on ext4 (46 s instead of well under a second for 10,000 files) and
+/// stalls other writers on the volume meanwhile. macOS has no `syncfs`, so it flushes all
+/// filesystems; there the copy primitive is only the fallback behind APFS clones.
+fn sync_tree(target: &Path) -> Result {
+    #[cfg(target_os = "linux")]
+    {
+        let directory =
+            fs::File::open(target).io_context(|| format!("open {}", target.display()))?;
+        if unsafe { libc::syncfs(directory.as_raw_fd()) } != 0 {
+            return Err(std::io::Error::last_os_error())
+                .io_context(|| format!("sync the filesystem holding {}", target.display()));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    unsafe {
+        libc::sync();
+    }
+    Ok(())
 }
 
 struct TreeCopier<F> {
@@ -217,11 +240,8 @@ fn copy_sparse(source: &Path, destination: &Path, length: u64) -> Result {
         let _ = fs::remove_file(destination);
         fs::copy(source, destination)
             .io_context(|| format!("copy {} -> {}", source.display(), destination.display()))?;
-        return Ok(());
     }
-    output
-        .sync_all()
-        .io_context(|| format!("sync {}", destination.display()))
+    Ok(())
 }
 
 /// Copies each `SEEK_DATA`/`SEEK_HOLE` extent of `input` into the pre-sized `output`.
