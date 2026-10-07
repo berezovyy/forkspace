@@ -104,7 +104,9 @@ pub fn build(workspace: &Workspace, theirs: bool) -> Result<PullPlan> {
     let backend = select_backend(Some(workspace.backend_kind))?;
     let theirs_delta = backend.base_changes(workspace)?;
     let ours_delta = backend.changes(workspace, true, false)?;
-    build_from_changes(workspace, theirs_delta, ours_delta, theirs)
+    crate::util::trace::time("plan", || {
+        build_from_changes(workspace, theirs_delta, ours_delta, theirs)
+    })
 }
 
 /// Plan a pull from already-collected base-side (`theirs_delta`) and workspace-side
@@ -175,6 +177,7 @@ pub fn render(plan: &PullPlan) -> String {
 
 /// Journal and apply `plan`, returning the journal path for [`finish`] and [`complete`].
 pub fn start(workspace: &Workspace, plan: &PullPlan) -> Result<PathBuf> {
+    let _apply = crate::util::trace::span("apply");
     journal::start(
         OperationKind::Pull,
         &workspace.name,

@@ -24,7 +24,7 @@ use crate::changes::manifest::ManifestStatus;
 use crate::changes::{self, FileChange};
 use crate::error::Result;
 use crate::paths;
-use crate::util::IoContext;
+use crate::util::{trace, IoContext};
 use crate::workspace::Workspace;
 use mount::{mount_overlay, unmount_overlay, ViewHealth};
 
@@ -164,12 +164,17 @@ impl WorkspaceBackend for OverlayBackend {
             }
         }
 
-        if let Err(error) = mount_overlay(&req.base, &layers.upper, &layers.work, &layers.merged) {
+        let mounted = trace::time("materialize", || {
+            mount_overlay(&req.base, &layers.upper, &layers.work, &layers.merged)
+        });
+        if let Err(error) = mounted {
             cleanup(&layers);
             return Err(error);
         }
-        let recorded = crate::changes::manifest::build(&req.name, &req.base, fork_time_ns)
-            .and_then(|_| refuse_reserved_names(&req.name));
+        let recorded = trace::time("manifest", || {
+            crate::changes::manifest::build(&req.name, &req.base, fork_time_ns)
+        })
+        .and_then(|_| refuse_reserved_names(&req.name));
         if let Err(error) = recorded {
             let _ = unmount_overlay(&layers.merged);
             let _ = crate::changes::manifest::remove(&req.name);
@@ -217,6 +222,7 @@ impl WorkspaceBackend for OverlayBackend {
         include_ignored: bool,
         need_line_counts: bool,
     ) -> Result<Vec<FileChange>> {
+        let _scan = trace::span("scan");
         let changes = if need_line_counts {
             changes::collect_changes(ws)?
         } else {

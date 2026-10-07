@@ -162,7 +162,7 @@ pub trait WorkspaceBackend {
     fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount>;
     /// Changes made in the base since the workspace was forked.
     fn base_changes(&self, ws: &Workspace) -> Result<Vec<FileChange>> {
-        crate::sync::pull::base_changes(ws)
+        crate::util::trace::time("scan-base", || crate::sync::pull::base_changes(ws))
     }
     /// Environment variables exported to processes run inside the workspace.
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)>;

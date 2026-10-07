@@ -22,7 +22,9 @@ pub fn remove(state: &mut State, name: &str) -> Result {
 
     let backend = select_backend(Some(workspace.backend_kind))?;
     remove_after_cleanup(state, name, || {
-        backend.destroy(&workspace, DestroyMode::Normal)
+        crate::util::trace::time("destroy", || {
+            backend.destroy(&workspace, DestroyMode::Normal)
+        })
     })
 }
 

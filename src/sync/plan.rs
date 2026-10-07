@@ -15,7 +15,7 @@ use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::sync::{display_paths, is_transferable, render_plan};
 use crate::util::fs::mtime_ns;
-use crate::util::IoContext;
+use crate::util::{trace, IoContext};
 use crate::workspace::Workspace;
 
 /// The changes a merge would transfer from a workspace into its base.
@@ -59,7 +59,9 @@ pub fn build(workspace: &Workspace, overwrite_base: bool) -> Result<MergePlan> {
         backend.view_path(workspace)
     };
     let all = backend.changes(workspace, true, false)?;
-    build_from_changes(workspace, source, all, overwrite_base)
+    trace::time("plan", || {
+        build_from_changes(workspace, source, all, overwrite_base)
+    })
 }
 
 /// Plan a merge from an already-collected change list, reading entries from `source`.

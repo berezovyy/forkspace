@@ -15,7 +15,8 @@ fn main() {
         }
         return;
     }
-    if let Err(error) = commands::dispatch(Cli::parse()) {
+    let result = forkspace::util::trace::time("command", || commands::dispatch(Cli::parse()));
+    if let Err(error) = result {
         exit_with(&error);
     }
 }

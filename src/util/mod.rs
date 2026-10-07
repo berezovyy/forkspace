@@ -2,6 +2,7 @@
 
 pub mod fs;
 mod glob;
+pub mod trace;
 
 pub use fs::{ensure_parent_dir, ensure_private_dir, write_atomic, IoContext, WalkDirExt};
 pub use glob::glob_matches;

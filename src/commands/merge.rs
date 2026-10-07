@@ -127,7 +127,7 @@ fn apply(args: &MergeArgs, workspace: &Workspace) -> Result<Option<Applied>> {
 fn run_post_merge_steps(args: &MergeArgs, workspace: &Workspace) -> Result {
     if !args.no_install {
         if let Some(manager) = install::detect_package_manager(workspace) {
-            install::run_install(&workspace.base, manager)?;
+            crate::util::trace::time("install", || install::run_install(&workspace.base, manager))?;
             println!("ran package install");
         }
     }

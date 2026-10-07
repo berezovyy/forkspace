@@ -45,6 +45,7 @@ pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
 /// The journal is left in the `applied` phase; the caller finishes any post-merge steps and
 /// then removes it, so a crash in between is still visible as an interrupted merge.
 pub fn execute(plan: &MergePlan) -> Result<PathBuf> {
+    let _apply = crate::util::trace::span("apply");
     journal::start(
         OperationKind::Merge,
         &plan.workspace,

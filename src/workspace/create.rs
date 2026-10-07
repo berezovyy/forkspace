@@ -11,7 +11,7 @@ use crate::backend::{
 use crate::error::{ForkspaceError, Result};
 use crate::process::watch;
 use crate::state::{PendingCreate, State};
-use crate::util::IoContext;
+use crate::util::{trace, IoContext};
 use crate::workspace::{guard, Workspace};
 
 /// Stacks deeper than this are refused; merge or fork from an earlier ancestor instead.
@@ -39,6 +39,7 @@ struct Origin {
 /// and inherits its backend (unless `force_copy` is set).
 pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Workspace> {
     validate_name(name)?;
+    let preflight = trace::span("preflight");
     let Origin {
         path: origin,
         parent,
@@ -49,6 +50,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
     let origin = origin
         .canonicalize()
         .io_context(|| format!("failed to canonicalize base path: {}", origin.display()))?;
+    drop(preflight);
 
     record_intent(name, backend.as_ref())?;
     let request = CreateReq {
@@ -75,9 +77,11 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         backend.kind(),
         view,
     );
-    State::with_state(|state| {
-        clear_intent(state, name);
-        state.add_workspace(workspace.clone())
+    trace::time("state", || {
+        State::with_state(|state| {
+            clear_intent(state, name);
+            state.add_workspace(workspace.clone())
+        })
     })?;
     Ok(workspace)
 }

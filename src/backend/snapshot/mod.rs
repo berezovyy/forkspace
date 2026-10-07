@@ -33,7 +33,7 @@ use crate::changes::FileChange;
 use crate::error::{ForkspaceError, Result};
 use crate::paths;
 use crate::util::fs::ctime_ns;
-use crate::util::{now_unix_ns, IoContext};
+use crate::util::{now_unix_ns, trace, IoContext};
 use crate::workspace::Workspace;
 
 /// Capabilities shared by the per-file primitives (reflink and plain copy).
@@ -191,14 +191,16 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
 
         let started = Instant::now();
         let started_ns = now_unix_ns();
-        let stats = self
-            .primitive
-            .materialize(&req.base, &destination)
-            .inspect_err(|_| {
-                let _ = fs::remove_dir_all(&destination);
-            })?;
+        let stats = trace::time("materialize", || {
+            self.primitive.materialize(&req.base, &destination)
+        })
+        .inspect_err(|_| {
+            let _ = fs::remove_dir_all(&destination);
+        })?;
         let fork_time_ns = self.primitive.fork_time_ns(started_ns, &stats);
-        let manifest = self.start_manifest(&req.name, &destination, &req.base, fork_time_ns);
+        let manifest = trace::time("manifest", || {
+            self.start_manifest(&req.name, &destination, &req.base, fork_time_ns)
+        });
 
         let mut summary = self
             .primitive
@@ -242,11 +244,13 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
         include_ignored: bool,
         need_line_counts: bool,
     ) -> Result<Vec<FileChange>> {
-        crate::changes::collect_clone_changes(ws, include_ignored, need_line_counts)
+        trace::time("scan", || {
+            crate::changes::collect_clone_changes(ws, include_ignored, need_line_counts)
+        })
     }
 
     fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount> {
-        manifest::change_count(ws, include_ignored)
+        trace::time("scan", || manifest::change_count(ws, include_ignored))
     }
 
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {
