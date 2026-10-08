@@ -127,6 +127,8 @@ MAKE
         NO_COLOR=1 \
         sh -eu "$block"
     )
+    # Examples may leave workspaces (and overlay mounts) behind; unmount them before cleanup.
+    FORKSPACE_HOME="$home" "$bin" drop --all >/dev/null 2>&1 || true
 done < "$manifest"
 
 # The documented install command is registry-facing. CI proves the same Cargo package installs

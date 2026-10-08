@@ -42,7 +42,10 @@ fn trace_lines_go_to_stderr_only() {
     let created = forkspace(home.path(), true, &["new", "ws", "--from", from]);
     let phases = trace_phases(&created);
     for phase in ["preflight", "materialize", "manifest", "state", "command"] {
-        assert!(phases.iter().any(|p| p == phase), "missing {phase} in {phases:?}");
+        assert!(
+            phases.iter().any(|p| p == phase),
+            "missing {phase} in {phases:?}"
+        );
     }
 
     let view = home.path().join("workspaces/ws");
@@ -93,7 +96,10 @@ fn bench_script_runs_in_short_mode() {
     assert_eq!(backend["kind"], "copy");
     assert_eq!(backend["errors"], serde_json::json!([]));
     for label in ["new", "diff --stat (clean)", "merge (one file)", "drop"] {
-        assert_eq!(backend["summary"][label]["n"], 2, "missing samples for {label}");
+        assert_eq!(
+            backend["summary"][label]["n"], 2,
+            "missing samples for {label}"
+        );
     }
     assert!(backend["phases"]["new"]["materialize"]["p50"].is_number());
 }
