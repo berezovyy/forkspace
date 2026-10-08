@@ -102,6 +102,8 @@ fn fake_backend_passes_workspace_contract() {
         name: "view".into(),
         base: root.path().to_path_buf(),
         tmpfs: false,
+        live: false,
+        parent_layers: None,
     };
 
     backend.preflight(root.path()).unwrap();

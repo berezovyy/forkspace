@@ -3,6 +3,7 @@
 mod create;
 mod env;
 pub mod guard;
+mod private_git;
 pub mod remove;
 
 pub use create::{create, CreateOptions};
@@ -82,6 +83,10 @@ pub struct Workspace {
     /// The backend fell back to a slower path (e.g. a full copy) or lost change tracking.
     #[serde(default, skip_serializing_if = "is_false")]
     pub degraded: bool,
+    /// `HEAD` at fork time, for workspaces given a private repository because the base's
+    /// `.git` pointed outside it (a linked worktree or submodule).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_head_at_fork: Option<String>,
     /// Why the backend behaved as it did, shown to the user after `new`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe_reason: Option<String>,
@@ -140,6 +145,7 @@ impl Workspace {
             manifest_status: view.manifest_status,
             manifest_generation: 1,
             last_pull: None,
+            git_head_at_fork: None,
             degraded: view.degraded,
             probe_reason: view.probe_reason,
             unknown_fields: Map::new(),
@@ -179,6 +185,25 @@ impl Workspace {
     /// The overlay's scratch directory.
     pub fn work_path(&self) -> Result<&Path> {
         Ok(&self.linux_state()?.work)
+    }
+
+    /// Whether this is an overlay over the live base (`new --live`, or recorded before frozen
+    /// copies existed), so later base changes show through.
+    pub fn is_live(&self) -> bool {
+        self.linux_state().is_ok_and(|state| state.lower.is_none())
+    }
+
+    /// The tree this workspace's changes are measured against: a sealed overlay's frozen copy
+    /// (the newest one after a `pull`), otherwise the base.
+    pub fn ancestor_dir(&self) -> &Path {
+        match &self.backend_state {
+            BackendState::Overlay(state) => state
+                .ancestor
+                .as_deref()
+                .or(state.lower.as_deref())
+                .unwrap_or(&self.base),
+            BackendState::MacClone { .. } | BackendState::CowDir { .. } => &self.base,
+        }
     }
 
     /// Whether the overlay layers live on tmpfs (always false for snapshot workspaces).

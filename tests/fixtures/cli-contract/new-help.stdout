@@ -11,4 +11,5 @@ Options:
       --tmpfs              Keep the workspace's changes in RAM (Linux overlay only; lost on reboot)
       --branch <BRANCH>    Create and record a Git branch in the workspace
       --copy               Consent to a full directory copy backend
+      --live               Show later changes to the source in the workspace (Linux overlay only; skips the frozen copy)
   -h, --help               Print help

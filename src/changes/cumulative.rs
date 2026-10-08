@@ -45,7 +45,7 @@ fn collect(
     let final_view = select_backend(Some(workspace.backend_kind))?.view_path(workspace);
     let mut changes = Vec::new();
     for path in touched {
-        let base_path = root.base.join(&path);
+        let base_path = root.ancestor_dir().join(&path);
         let final_path = final_view.join(&path);
         match (
             fs::symlink_metadata(&base_path),

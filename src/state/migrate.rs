@@ -68,7 +68,10 @@ impl From<LegacyWorkspace> for Workspace {
             view_path: value.merged.clone(),
             fork_time_ns: 0,
             backend_kind: BackendKind::Overlay,
+            // Workspaces from before frozen copies mount the live base.
             backend_state: BackendState::Overlay(OverlayState {
+                lower: None,
+                ancestor: None,
                 upper: value.upper,
                 work: value.work,
                 merged: value.merged,
@@ -79,6 +82,7 @@ impl From<LegacyWorkspace> for Workspace {
             manifest_status: ManifestStatus::Absent,
             manifest_generation: 0,
             last_pull: None,
+            git_head_at_fork: None,
             degraded: false,
             probe_reason: None,
             unknown_fields: value.unknown_fields,

@@ -69,6 +69,7 @@ fn create_for_entry(args: &EnterArgs) -> Result<String> {
         CreateOptions {
             tmpfs: args.tmpfs,
             force_copy: args.copy,
+            live: args.live,
             ..Default::default()
         },
     )?;

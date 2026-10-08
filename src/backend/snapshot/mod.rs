@@ -14,9 +14,9 @@ mod xattr;
 
 #[cfg(target_os = "macos")]
 pub(crate) use clonefile::ClonefilePrimitive;
-pub(crate) use copy::CopyPrimitive;
+pub(crate) use copy::{materialize_tree, CopyPrimitive, Placed};
 #[cfg(target_os = "linux")]
-pub(crate) use reflink::{probe as reflink_probe, ReflinkPrimitive};
+pub(crate) use reflink::{probe as reflink_probe, reflink_file, ReflinkPrimitive};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -48,6 +48,10 @@ const DIRECTORY_COPY_CAPABILITIES: Capabilities = Capabilities {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ForkStats {
     pub reflinked_files: u64,
+    /// Files hard-linked to an identical file of an earlier frozen copy.
+    pub linked_files: u64,
+    /// Entries materialized: files, directories, and symlinks.
+    pub entries: u64,
     pub copied_files: u64,
     pub copied_bytes: u64,
     /// Latest ctime among materialized entries.
@@ -183,6 +187,15 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
     fn create(&self, req: &CreateReq) -> Result<ViewInfo> {
         if req.tmpfs {
             return Err(self.primitive.tmpfs_unsupported());
+        }
+        if req.live {
+            return Err(ForkspaceError::CapabilityUnsupported {
+                diagnosis: format!(
+                    "--live needs the Linux overlay backend; {} workspaces are always sealed copies",
+                    self.primitive.kind().as_str()
+                ),
+                remedy: "omit --live".to_string(),
+            });
         }
         let destination = paths::snapshot_dir(&req.name);
         if destination.exists() {

@@ -102,6 +102,10 @@ pub fn generate_patch(workspace: &Workspace, changes: &[FileChange]) -> Result<S
 
 /// Whether the workspace moved its Git `HEAD`, i.e. made commits a file-level merge would flatten.
 pub fn workspace_head_changed(workspace: &Workspace) -> Result<bool> {
+    if let Some(head) = &workspace.git_head_at_fork {
+        let current = crate::git::rev_parse(&workspace.view_path, "HEAD").unwrap_or_default();
+        return Ok(&current != head);
+    }
     Ok(select_backend(Some(workspace.backend_kind))?
         .changes(workspace, true, false)?
         .iter()

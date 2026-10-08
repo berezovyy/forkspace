@@ -12,6 +12,7 @@ Options:
       --ephemeral          Destroy the workspace automatically on exit
       --tmpfs              Keep the workspace's changes in RAM (Linux overlay only; lost on reboot)
       --copy               Consent to a full directory copy backend when creating
+      --live               When creating, show later changes to the base in the workspace (Linux overlay only)
       --merge-on-exit      Merge changes back to the base directory when exiting the shell
       --session <SESSION>  Session identifier to set in the spawned shell
   -h, --help               Print help

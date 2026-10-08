@@ -89,6 +89,13 @@ pub struct NewArgs {
 
     #[arg(long, help = "Consent to a full directory copy backend")]
     pub copy: bool,
+
+    #[arg(
+        long,
+        conflicts_with = "copy",
+        help = "Show later changes to the source in the workspace (Linux overlay only; skips the frozen copy)"
+    )]
+    pub live: bool,
 }
 
 #[derive(Args)]
@@ -138,6 +145,13 @@ pub struct EnterArgs {
 
     #[arg(long, help = "Consent to a full directory copy backend when creating")]
     pub copy: bool,
+
+    #[arg(
+        long,
+        conflicts_with = "copy",
+        help = "When creating, show later changes to the base in the workspace (Linux overlay only)"
+    )]
+    pub live: bool,
 
     #[arg(
         long,

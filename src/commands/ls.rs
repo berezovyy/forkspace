@@ -59,6 +59,7 @@ fn json_entry(workspace: &Workspace) -> serde_json::Value {
         "parent": workspace.parent,
         "branch": workspace.branch,
         "backend": workspace.backend_kind.as_str(),
+        "live": workspace.is_live(),
         "degraded": workspace.degraded,
         "probe_reason": workspace.probe_reason,
         "base_missing": !workspace.base.is_dir(),
@@ -73,7 +74,7 @@ fn table_row(workspace: &Workspace, include_ignored: bool) -> Result<Row> {
         workspace.name.clone(),
         origin(workspace),
         workspace.branch.clone().unwrap_or_else(|| "-".to_string()),
-        workspace.backend_kind.as_str().to_string(),
+        describe_backend(workspace),
         describe_count(count),
         describe_process(workspace),
     ])
@@ -100,6 +101,16 @@ fn shorten_path(path: &Path) -> String {
         Some(relative) if relative.as_os_str().is_empty() => ".".to_string(),
         Some(relative) => format!("./{}", relative.display()),
         None => path.display().to_string(),
+    }
+}
+
+/// The backend kind, marked when the workspace sees later base changes (`new --live`).
+fn describe_backend(workspace: &Workspace) -> String {
+    let kind = workspace.backend_kind.as_str();
+    if workspace.is_live() {
+        format!("{kind} (live)")
+    } else {
+        kind.to_string()
     }
 }
 

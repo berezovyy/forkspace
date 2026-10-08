@@ -1,7 +1,10 @@
 //! Linux overlay backend: a fuse-overlayfs lower/upper/work/merged view.
 //!
-//! The upper directory holds exactly the workspace's writes, so it doubles as the change set.
+//! The lower layer is a frozen copy of the base ([`frozen`]), so later changes to the base
+//! never show through; `--live` workspaces use the base itself instead. The upper directory
+//! holds exactly the workspace's writes, so it doubles as the change set.
 
+pub(crate) mod frozen;
 pub mod mount;
 mod tmpfs;
 mod whiteout;
@@ -38,6 +41,14 @@ const CAPABILITIES: Capabilities = Capabilities {
 /// Overlay layer directories, persisted in `state.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverlayState {
+    /// The frozen copy mounted as the lower layer; `None` for a live workspace, whose lower
+    /// layer is the base itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lower: Option<PathBuf>,
+    /// The frozen copy changes are measured against, when it is newer than `lower`: `pull`
+    /// re-baselines on a fresh copy of the base without remounting the view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ancestor: Option<PathBuf>,
     pub upper: PathBuf,
     pub work: PathBuf,
     pub merged: PathBuf,
@@ -53,6 +64,8 @@ impl OverlayState {
     /// The standard `upper/`, `work/`, `merged/` layout under `root`.
     pub fn at(root: &Path) -> Self {
         Self {
+            lower: None,
+            ancestor: None,
             upper: root.join("upper"),
             work: root.join("work"),
             merged: root.join("merged"),
@@ -126,6 +139,34 @@ fn refuse_reserved_names(name: &str) -> Result {
     Ok(())
 }
 
+/// The frozen copy a new workspace mounts: of the project, or, when stacking on a sealed
+/// workspace, of that workspace's view with its unchanged files linked from its own copy.
+fn freeze_base(req: &CreateReq) -> Result<frozen::Frozen> {
+    let basis = match req.parent_layers.as_ref() {
+        Some(OverlayState {
+            lower: Some(lower),
+            upper,
+            ..
+        }) => frozen::Basis::Workspace { lower, upper },
+        _ => frozen::Basis::Project,
+    };
+    frozen::freeze(&req.base, basis)
+}
+
+/// What a new frozen copy cost, shown after `new` (nothing when an existing copy was reused).
+fn describe_freeze(frozen: &frozen::Frozen) -> Option<String> {
+    if !frozen.created || frozen.copied_files == 0 {
+        return None;
+    }
+    Some(format!(
+        "froze a copy of the base for this workspace (copied {} files, {:.1} MiB; \
+         linked {} unchanged files); later forks reuse it",
+        frozen.copied_files,
+        frozen.copied_bytes as f64 / f64::from(1 << 20),
+        frozen.linked_files
+    ))
+}
+
 impl WorkspaceBackend for OverlayBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Overlay
@@ -141,8 +182,15 @@ impl WorkspaceBackend for OverlayBackend {
 
     fn create(&self, req: &CreateReq) -> Result<ViewInfo> {
         let root = paths::overlay_root(&req.name);
+        let frozen = if req.live {
+            None
+        } else {
+            Some(trace::time("freeze", || freeze_base(req))?)
+        };
         let fork_time_ns = crate::util::now_unix_ns();
         let mut layers = OverlayState::at(&root);
+        layers.lower = frozen.as_ref().map(|frozen| frozen.tree.clone());
+        let lower = layers.lower.clone().unwrap_or_else(|| req.base.clone());
         if req.tmpfs {
             let tmpfs = tmpfs::create_layers(&req.name, fork_time_ns)?;
             layers.upper = tmpfs.upper;
@@ -165,14 +213,14 @@ impl WorkspaceBackend for OverlayBackend {
         }
 
         let mounted = trace::time("materialize", || {
-            mount_overlay(&req.base, &layers.upper, &layers.work, &layers.merged)
+            mount_overlay(&lower, &layers.upper, &layers.work, &layers.merged)
         });
         if let Err(error) = mounted {
             cleanup(&layers);
             return Err(error);
         }
         let recorded = trace::time("manifest", || {
-            crate::changes::manifest::build(&req.name, &req.base, fork_time_ns)
+            crate::changes::manifest::build(&req.name, &lower, fork_time_ns)
         })
         .and_then(|_| refuse_reserved_names(&req.name));
         if let Err(error) = recorded {
@@ -189,7 +237,7 @@ impl WorkspaceBackend for OverlayBackend {
             backend_state: BackendState::Overlay(layers),
             manifest_status: ManifestStatus::Ready,
             degraded: false,
-            probe_reason: None,
+            probe_reason: frozen.as_ref().and_then(describe_freeze),
         })
     }
 
@@ -298,7 +346,17 @@ fn remount(ws: &Workspace, state: &OverlayState) -> Result {
             state.merged.display()
         )));
     }
-    mount_overlay(&ws.base, &state.upper, &state.work, &state.merged)?;
+    if let Some(lower) = &state.lower {
+        if !lower.is_dir() {
+            return Err(crate::error::ForkspaceError::RecordedPathMissing {
+                workspace: ws.name.clone(),
+                kind: "frozen copy".to_string(),
+                path: lower.display().to_string(),
+            });
+        }
+    }
+    let lower = state.lower.as_deref().unwrap_or(&ws.base);
+    mount_overlay(lower, &state.upper, &state.work, &state.merged)?;
     eprintln!("note: remounted workspace '{}'", ws.name);
     Ok(())
 }

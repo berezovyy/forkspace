@@ -6,7 +6,8 @@
 use std::path::PathBuf;
 
 use crate::backend::{
-    pending_create_path, select_backend, select_backend_for_create, CreateReq, WorkspaceBackend,
+    pending_create_path, select_backend, select_backend_for_create, CreateReq, DestroyMode,
+    OverlayState, WorkspaceBackend,
 };
 use crate::error::{ForkspaceError, Result};
 use crate::process::watch;
@@ -24,12 +25,16 @@ pub struct CreateOptions {
     pub tmpfs: bool,
     /// Skip capability probing and use the portable full-copy backend.
     pub force_copy: bool,
+    /// Overlay only: mount the base itself rather than a frozen copy of it.
+    pub live: bool,
 }
 
 /// Where a new workspace's contents come from, and the backend that will copy them.
 struct Origin {
     path: PathBuf,
     parent: Option<String>,
+    /// The parent's overlay layers, when stacking on an overlay workspace.
+    parent_layers: Option<OverlayState>,
     backend: Box<dyn WorkspaceBackend>,
 }
 
@@ -43,6 +48,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
     let Origin {
         path: origin,
         parent,
+        parent_layers,
         backend,
     } = resolve_origin(base, name, options.force_copy)?;
 
@@ -57,6 +63,8 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         name: name.to_string(),
         base: origin.clone(),
         tmpfs: options.tmpfs,
+        live: options.live,
+        parent_layers,
     };
     let view = match backend.create(&request) {
         Ok(view) => view,
@@ -69,7 +77,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         }
     };
 
-    let workspace = Workspace::from_view(
+    let mut workspace = Workspace::from_view(
         name.to_string(),
         origin,
         parent,
@@ -77,6 +85,15 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         backend.kind(),
         view,
     );
+    if let Err(error) = give_private_git(&mut workspace) {
+        let _ = backend.destroy(&workspace, DestroyMode::Normal);
+        let _ = crate::changes::manifest::remove(name);
+        State::with_state(|state| {
+            clear_intent(state, name);
+            Ok(())
+        })?;
+        return Err(error);
+    }
     trace::time("state", || {
         State::with_state(|state| {
             clear_intent(state, name);
@@ -84,6 +101,16 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         })
     })?;
     Ok(workspace)
+}
+
+/// When the base's `.git` points outside it (a linked worktree or submodule), give the view a
+/// repository of its own, so commits in the workspace cannot move the project's branches.
+fn give_private_git(workspace: &mut Workspace) -> Result {
+    if super::private_git::privatize(&workspace.base, &workspace.view_path)? {
+        workspace.git_head_at_fork =
+            Some(crate::git::rev_parse(&workspace.view_path, "HEAD").unwrap_or_default());
+    }
+    Ok(())
 }
 
 /// Resolve `base` to a directory, stacking on the workspace of that name if there is one.
@@ -96,6 +123,7 @@ fn resolve_origin(base: PathBuf, name: &str, force_copy: bool) -> Result<Origin>
         return Ok(Origin {
             path: base,
             parent: None,
+            parent_layers: None,
             backend,
         });
     };
@@ -116,6 +144,7 @@ fn resolve_origin(base: PathBuf, name: &str, force_copy: bool) -> Result<Origin>
     Ok(Origin {
         path,
         parent: Some(parent.name.clone()),
+        parent_layers: parent.linux_state().ok().cloned(),
         backend,
     })
 }

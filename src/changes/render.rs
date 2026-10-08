@@ -84,7 +84,7 @@ pub fn generate_unified_diff(workspace: &Workspace, change: &FileChange) -> Stri
         |_| workspace.view_path.join(&change.path),
         |upper| upper.join(&change.path),
     );
-    let old_path = workspace.base.join(&change.path);
+    let old_path = workspace.ancestor_dir().join(&change.path);
     let display = change.path.display();
 
     if change.kind != ChangeKind::Added {

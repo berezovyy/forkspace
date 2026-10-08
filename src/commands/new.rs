@@ -24,6 +24,7 @@ pub fn exec(args: NewArgs) -> Result {
             session: args.session,
             tmpfs: args.tmpfs,
             force_copy: args.copy,
+            live: args.live,
         },
     )?;
     if let Some(branch) = args.branch {
@@ -54,13 +55,6 @@ fn ensure_branch_creatable(base: &Path, branch: &str) -> Result {
         return Err(ForkspaceError::CapabilityUnsupported {
             diagnosis: format!("{} is not a Git repository", base.display()),
             remedy: "omit --branch, or run `git init` first".to_string(),
-        });
-    }
-    if git::git_dir_is_file(base) {
-        return Err(ForkspaceError::CapabilityUnsupported {
-            diagnosis: "--branch cannot start from a Git worktree or submodule checkout"
-                .to_string(),
-            remedy: "use the main checkout as --from instead".to_string(),
         });
     }
     git::validate_branch(base, branch)?;
@@ -118,7 +112,10 @@ fn print_backend_notes(ws: &Workspace) {
     if let Some(reason) = &ws.probe_reason {
         if ws.degraded {
             eprintln!("warning: {reason}");
-        } else if ws.backend_kind == BackendKind::LinuxReflink {
+        } else if matches!(
+            ws.backend_kind,
+            BackendKind::LinuxReflink | BackendKind::Overlay
+        ) {
             eprintln!("note: {reason}");
         }
     }

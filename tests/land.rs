@@ -452,8 +452,16 @@ fn stacked_child_lands_every_commit_into_the_root_repository() {
 
 #[test]
 #[serial]
-fn branch_preflight_refuses_a_git_worktree_without_touching_the_repository() {
+fn a_git_worktree_base_gets_a_private_repository() {
     let home = common::setup_test_env();
+    let forkspace = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let stderr = |output: &Output| String::from_utf8_lossy(&output.stderr).into_owned();
     let root = tempfile::tempdir().unwrap();
     let main = root.path().join("main");
     let worktree = root.path().join("worktree");
@@ -470,28 +478,41 @@ fn branch_preflight_refuses_a_git_worktree_without_touching_the_repository() {
         &["worktree", "add", "--quiet", worktree.to_str().unwrap()],
     );
     let refs_before = git(&main, &["show-ref"]);
-    let objects_before = git(&main, &["count-objects", "-v"]);
-    let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-        .env("FORKSPACE_HOME", home.path())
-        .args([
-            "new",
-            "no-worktree",
-            "--from",
-            worktree.to_str().unwrap(),
-            "--branch",
-            "topic",
-            "--copy",
-        ])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(6));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("main checkout"));
+    let worktree_head = git(&worktree, &["rev-parse", "HEAD"]);
+    let worktree_branch = git(&worktree, &["branch", "--show-current"]);
+
+    let created = forkspace(&[
+        "new",
+        "agent",
+        "--from",
+        worktree.to_str().unwrap(),
+        "--branch",
+        "topic",
+        "--copy",
+    ]);
+    assert!(created.status.success(), "{}", stderr(&created));
     assert_eq!(git(&main, &["show-ref"]), refs_before);
-    assert_eq!(git(&main, &["count-objects", "-v"]), objects_before);
-    assert!(!State::load()
-        .unwrap()
-        .workspaces
-        .contains_key("no-worktree"));
+
+    let view = home.path().join("workspaces/agent");
+    assert!(view.join(".git").is_dir());
+    fs::write(view.join("tracked.txt"), "agent\n").unwrap();
+    git(&view, &["add", "tracked.txt"]);
+    git(&view, &["commit", "--quiet", "-m", "agent work"]);
+
+    assert_eq!(git(&worktree, &["rev-parse", "HEAD"]), worktree_head);
+    assert_eq!(
+        git(&worktree, &["branch", "--show-current"]),
+        worktree_branch
+    );
+    assert_eq!(git(&worktree, &["status", "--porcelain"]), "");
+    assert_eq!(git(&main, &["show-ref"]), refs_before);
+
+    let landed = forkspace(&["land", "agent"]);
+    assert!(landed.status.success(), "{}", stderr(&landed));
+    assert_eq!(
+        git(&main, &["log", "-1", "--format=%s", "topic"]).trim(),
+        "agent work"
+    );
 }
 
 #[test]

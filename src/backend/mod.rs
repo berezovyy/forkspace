@@ -109,6 +109,11 @@ pub struct CreateReq {
     pub base: PathBuf,
     /// Put the writable layers on an existing tmpfs (overlay only).
     pub tmpfs: bool,
+    /// Mount the base itself instead of a frozen copy (overlay only), so later base changes
+    /// show through.
+    pub live: bool,
+    /// The layers of the overlay workspace `base` is the view of, when stacking.
+    pub parent_layers: Option<OverlayState>,
 }
 
 /// What [`WorkspaceBackend::create`] produced.

@@ -1,8 +1,8 @@
 //! Change scan for overlay workspaces: the upper directory is the change set.
 //!
-//! Every regular entry in the upper dir is an add or a modification of the base; a whiteout
-//! (a 0:0 character device, or a zero-length `.wh.` file) marks a deletion of the base entry
-//! it names.
+//! Every regular entry in the upper dir is an add or a modification of the workspace's
+//! ancestor (its frozen copy of the base, or the base itself for `--live`); a whiteout (a 0:0
+//! character device, or a zero-length `.wh.` file) marks a deletion of the entry it names.
 
 use std::fs;
 use std::path::Path;
@@ -27,6 +27,7 @@ pub fn collect_changes_fast(workspace: &Workspace) -> Result<Vec<FileChange>> {
 
 fn collect(workspace: &Workspace, need_line_counts: bool) -> Result<Vec<FileChange>> {
     let upper = workspace.upper_path()?;
+    let ancestor = workspace.ancestor_dir();
     if !upper.exists() {
         return Ok(Vec::new());
     }
@@ -51,13 +52,13 @@ fn collect(workspace: &Workspace, need_line_counts: bool) -> Result<Vec<FileChan
 
         let metadata = entry.metadata().ok();
         if metadata.as_ref().is_some_and(is_device_whiteout) {
-            if fs::symlink_metadata(workspace.base.join(rel)).is_ok() {
+            if fs::symlink_metadata(ancestor.join(rel)).is_ok() {
                 changes.push(FileChange::deletion(rel.to_path_buf()));
             }
             continue;
         }
         if metadata.is_some_and(|metadata| metadata.len() == 0) {
-            match valid_whiteout(rel, file_name, &workspace.base) {
+            match valid_whiteout(rel, file_name, ancestor) {
                 Some(Whiteout::Opaque) => continue,
                 Some(Whiteout::Deletion(original_name)) => {
                     changes.push(FileChange::deletion(rel.with_file_name(original_name)));
@@ -70,7 +71,7 @@ fn collect(workspace: &Workspace, need_line_counts: bool) -> Result<Vec<FileChan
             continue;
         }
 
-        let base_path = workspace.base.join(rel);
+        let base_path = ancestor.join(rel);
         if let Some(change) = classify_file(
             rel.to_path_buf(),
             entry.path(),

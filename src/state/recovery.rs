@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use super::{State, TrashRecord};
+use crate::backend::overlay::frozen;
 use crate::changes::manifest;
 use crate::error::Result;
 use crate::paths;
@@ -33,6 +34,7 @@ impl State {
         let mut changed = journal::sweep_terminal()?;
         changed |= self.trash_abandoned_creates(&trash_root);
         changed |= self.forget_interrupted_drops(&trash_root);
+        changed |= self.trash_unused_frozen_copies();
         changed |= self.remove_orphan_manifests();
         changed |= self.adopt_untracked_trash(&trash_root);
         changed |= self.forget_deleted_trash();
@@ -69,6 +71,37 @@ impl State {
             }
         }
         self.pending_creates = retained;
+        changed
+    }
+
+    /// Frozen copies that no workspace mounts or measures against are moved to the trash.
+    /// Skipped while a create is in flight, since the copy it just made is not recorded yet.
+    pub(crate) fn trash_unused_frozen_copies(&mut self) -> bool {
+        if !self.pending_creates.is_empty() {
+            return false;
+        }
+        let referenced = frozen::ids_of(
+            self.workspaces
+                .values()
+                .filter_map(|workspace| workspace.linux_state().ok())
+                .flat_map(|layers| [layers.lower.as_deref(), layers.ancestor.as_deref()])
+                .flatten(),
+        );
+        let trash_root = paths::trash_dir();
+        let mut changed = false;
+        for path in frozen::unreferenced(&referenced) {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let destination = trash_root.join(format!(
+                "frozen-{}-{}-{}",
+                name.trim_start_matches('.'),
+                now_unix_ns(),
+                std::process::id()
+            ));
+            if fs::create_dir_all(&trash_root).is_ok() && fs::rename(&path, &destination).is_ok() {
+                self.trash.push(TrashRecord::new(destination));
+                changed = true;
+            }
+        }
         changed
     }
 

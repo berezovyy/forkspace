@@ -45,11 +45,6 @@ pub fn is_repo(directory: &Path) -> bool {
     succeeds(directory, &["rev-parse", "--git-dir"])
 }
 
-/// Whether `.git` is a file (a linked worktree or submodule) rather than a directory.
-pub fn git_dir_is_file(directory: &Path) -> bool {
-    directory.join(".git").is_file()
-}
-
 /// Reject names `git check-ref-format --branch` does not accept.
 pub fn validate_branch(directory: &Path, branch: &str) -> Result {
     let output = spawn(directory, &["check-ref-format", "--branch", branch], || {

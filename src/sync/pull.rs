@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use walkdir::WalkDir;
 
-use crate::backend::select_backend;
+use crate::backend::overlay::frozen;
+use crate::backend::{select_backend, BackendState};
 use crate::changes::filter::ChangeFilter;
 use crate::changes::manifest::{self, ManifestKind, ManifestStatus};
 use crate::changes::{ChangeKind, FileChange};
@@ -216,10 +217,22 @@ pub fn resume_apply(workspace: &Workspace) -> Result<PathBuf> {
 /// [`complete`] removes the journal.
 pub fn finish(workspace: &mut Workspace, path: &Path) -> Result {
     journal::set_phase(path, OperationPhase::Rebaselining)?;
-    let fork_time_ns = now_unix_ns();
     // The new ancestor is the current origin, not the possibly still-edited workspace.
-    // This preserves ours-only edits in subsequent diff and merge results.
-    manifest::build(&workspace.name, &workspace.base, fork_time_ns)?;
+    // This preserves ours-only edits in subsequent diff and merge results. A sealed overlay
+    // measures its changes against a frozen copy, so it gets a fresh one of the origin; the
+    // view keeps its mounted lower layer, and the pulled files in its upper layer now match
+    // the ancestor.
+    let ancestor = match &mut workspace.backend_state {
+        BackendState::Overlay(layers) if layers.lower.is_some() => {
+            let frozen = frozen::freeze(&workspace.base, frozen::Basis::Project)?;
+            layers.ancestor =
+                (layers.lower.as_ref() != Some(&frozen.tree)).then(|| frozen.tree.clone());
+            frozen.tree
+        }
+        _ => workspace.base.clone(),
+    };
+    let fork_time_ns = now_unix_ns();
+    manifest::build(&workspace.name, &ancestor, fork_time_ns)?;
     workspace.fork_time_ns = fork_time_ns;
     workspace.manifest_generation = workspace.manifest_generation.saturating_add(1);
     workspace.last_pull = Some(now_rfc3339());

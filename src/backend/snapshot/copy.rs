@@ -34,7 +34,7 @@ impl ForkPrimitive for CopyPrimitive {
     }
 
     fn materialize(&self, base: &Path, dest: &Path) -> Result<ForkStats> {
-        materialize_tree(base, dest, |_source, _target| Ok(false))
+        materialize_tree(base, dest, |_source, _target| Ok(Placed::No))
     }
 
     fn summarize(&self, stats: &ForkStats, elapsed_ms: u128) -> ForkSummary {
@@ -57,20 +57,32 @@ fn faster_fork_remedy() -> &'static str {
     }
 }
 
+/// How a `materialize_tree` callback placed a regular file at its target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Placed {
+    /// Not placed: copy it byte for byte.
+    No,
+    /// Cloned (reflink); its metadata still has to be applied.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Cloned,
+    /// Hard-linked to an identical immutable file, metadata included.
+    Linked,
+}
+
 /// Recreates `source` at `target`, preserving permissions, mtimes, xattrs, symlinks, and hard
-/// links. `clone_regular` may clone a regular file in place and return `true`; when it returns
-/// `false` the file is copied byte-for-byte instead.
+/// links. `place_regular` may place a regular file itself (see [`Placed`]); otherwise the file
+/// is copied byte for byte.
 pub(crate) fn materialize_tree<F>(
     source: &Path,
     target: &Path,
-    clone_regular: F,
+    place_regular: F,
 ) -> Result<ForkStats>
 where
-    F: FnMut(&Path, &Path) -> Result<bool>,
+    F: FnMut(&Path, &Path) -> Result<Placed>,
 {
     fs::create_dir_all(target).io_context(|| format!("create {}", target.display()))?;
     let mut copier = TreeCopier {
-        clone_regular,
+        place_regular,
         hardlinks: HashMap::new(),
         directories: Vec::new(),
         stats: ForkStats::default(),
@@ -103,14 +115,15 @@ fn sync_tree(target: &Path) -> Result {
         }
     }
     #[cfg(not(target_os = "linux"))]
-    unsafe {
-        libc::sync();
+    {
+        let _ = target;
+        unsafe { libc::sync() };
     }
     Ok(())
 }
 
 struct TreeCopier<F> {
-    clone_regular: F,
+    place_regular: F,
     /// First destination of each multiply-linked source inode, keyed by `(dev, ino)`.
     hardlinks: HashMap<(u64, u64), PathBuf>,
     /// Directories whose metadata is applied after their contents are written.
@@ -120,9 +133,10 @@ struct TreeCopier<F> {
 
 impl<F> TreeCopier<F>
 where
-    F: FnMut(&Path, &Path) -> Result<bool>,
+    F: FnMut(&Path, &Path) -> Result<Placed>,
 {
     fn copy_entry(&mut self, source: &Path, destination: PathBuf) -> Result {
+        self.stats.entries += 1;
         let metadata =
             fs::symlink_metadata(source).io_context(|| format!("inspect {}", source.display()))?;
 
@@ -166,12 +180,20 @@ where
             }
         }
 
-        if (self.clone_regular)(source, &destination)? {
-            self.stats.reflinked_files += 1;
-        } else {
-            copy_sparse(source, &destination, metadata.len())?;
-            self.stats.copied_files += 1;
-            self.stats.copied_bytes += metadata.len();
+        match (self.place_regular)(source, &destination)? {
+            Placed::Linked => {
+                self.stats.linked_files += 1;
+                if multiply_linked {
+                    self.hardlinks.insert(identity, destination);
+                }
+                return Ok(());
+            }
+            Placed::Cloned => self.stats.reflinked_files += 1,
+            Placed::No => {
+                copy_sparse(source, &destination, metadata.len())?;
+                self.stats.copied_files += 1;
+                self.stats.copied_bytes += metadata.len();
+            }
         }
         fs::set_permissions(&destination, metadata.permissions())
             .io_context(|| format!("set permissions on {}", destination.display()))?;

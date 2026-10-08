@@ -8,7 +8,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
-use super::copy::materialize_tree;
+use super::copy::{materialize_tree, Placed};
 use super::{ForkPrimitive, ForkStats, ForkSummary, DIRECTORY_COPY_CAPABILITIES};
 use crate::backend::probe::ProbeResult;
 use crate::backend::{BackendKind, Capabilities};
@@ -56,9 +56,9 @@ impl ForkPrimitive for ReflinkPrimitive {
     }
 }
 
-/// Clones `source` to a new `target`. Returns `false`, leaving no `target`, when the
+/// Clones `source` to a new `target`. Returns [`Placed::No`], leaving no `target`, when the
 /// filesystem refuses this particular file.
-fn reflink_file(source: &Path, target: &Path) -> Result<bool> {
+pub(crate) fn reflink_file(source: &Path, target: &Path) -> Result<Placed> {
     let input =
         fs::File::open(source).io_context(|| format!("open {} for reflink", source.display()))?;
     let output = fs::OpenOptions::new()
@@ -67,12 +67,12 @@ fn reflink_file(source: &Path, target: &Path) -> Result<bool> {
         .open(target)
         .io_context(|| format!("create {} for reflink", target.display()))?;
     if clone_file(&input, &output) {
-        return Ok(true);
+        return Ok(Placed::Cloned);
     }
     drop(output);
     fs::remove_file(target)
         .io_context(|| format!("reset {} after reflink refusal", target.display()))?;
-    Ok(false)
+    Ok(Placed::No)
 }
 
 /// Checks that `base` and `destination_parent` share a filesystem and that it accepts

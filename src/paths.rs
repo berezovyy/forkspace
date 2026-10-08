@@ -37,6 +37,11 @@ pub fn snapshot_dir(name: &str) -> PathBuf {
     snapshot_root().join(name)
 }
 
+/// Frozen copies of projects that sealed overlay workspaces mount as their lower layer.
+pub fn frozen_root() -> PathBuf {
+    forkspace_home().join("frozen")
+}
+
 /// Directories renamed here are deleted asynchronously.
 pub fn trash_dir() -> PathBuf {
     forkspace_home().join("trash")
