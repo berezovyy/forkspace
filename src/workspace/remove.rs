@@ -45,6 +45,7 @@ pub fn with_descendants(state: &State, name: &str) -> Vec<String> {
 fn remove_after_cleanup(state: &mut State, name: &str, cleanup: impl FnOnce() -> Result) -> Result {
     cleanup()?;
     manifest::remove(name)?;
+    crate::sync::ancestor::remove(name)?;
     state.remove_workspace(name)?;
     state.trash_unused_frozen_copies();
     Ok(())

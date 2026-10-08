@@ -83,6 +83,7 @@ impl From<LegacyWorkspace> for Workspace {
             manifest_generation: 0,
             last_pull: None,
             git_head_at_fork: None,
+            unresolved_conflicts: Vec::new(),
             degraded: false,
             probe_reason: None,
             unknown_fields: value.unknown_fields,

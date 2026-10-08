@@ -49,6 +49,18 @@ pub enum ForkspaceError {
     #[error("pull conflict: base and workspace both changed {paths:?}; review the paths or rerun with --theirs")]
     PullConflict { paths: Vec<String> },
 
+    #[error("merge conflict: the base and the workspace changed the same lines of {paths:?}; run `forkspace pull {workspace}`, resolve the conflict markers in the workspace, then merge again")]
+    MergeOverlap {
+        workspace: String,
+        paths: Vec<String>,
+    },
+
+    #[error("workspace '{workspace}' has conflict markers to resolve in {paths:?}; edit those files in the workspace, then merge")]
+    ConflictMarkers {
+        workspace: String,
+        paths: Vec<String>,
+    },
+
     // Half-applied operations that must be resumed first.
     #[error("workspace '{0}' has an interrupted pull; run `forkspace pull {0} --resume` before diff or merge")]
     StaleAncestor(String),
@@ -142,6 +154,8 @@ impl ForkspaceError {
             | Self::BranchCheckedOut { .. }
             | Self::BaseMismatch { .. }
             | Self::MergeConflict { .. }
+            | Self::MergeOverlap { .. }
+            | Self::ConflictMarkers { .. }
             | Self::PullConflict { .. } => 5,
             Self::CapabilityUnsupported { .. } => 6,
             Self::BackendUnavailable { .. } | Self::MountFailed(_) => 7,

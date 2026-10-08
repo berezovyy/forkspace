@@ -42,6 +42,11 @@ pub fn frozen_root() -> PathBuf {
     forkspace_home().join("frozen")
 }
 
+/// Fork-time copies of snapshot workspaces' source files, for line-level merges.
+pub fn ancestor_root() -> PathBuf {
+    forkspace_home().join("ancestors")
+}
+
 /// Directories renamed here are deleted asynchronously.
 pub fn trash_dir() -> PathBuf {
     forkspace_home().join("trash")

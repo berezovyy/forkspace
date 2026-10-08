@@ -126,9 +126,10 @@ fn disjoint_edits_preserve_ours_and_conflicts_refuse_atomically() {
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].path, Path::new("b"));
 
+    // Binary content cannot be merged line by line, so it stays a whole-file conflict.
     std::thread::sleep(std::time::Duration::from_millis(2));
-    fs::write(base.path().join("a"), b"base-again\n").unwrap();
-    fs::write(view.path().join("a"), b"ours-a\n").unwrap();
+    fs::write(base.path().join("a"), b"base-again\0\n").unwrap();
+    fs::write(view.path().join("a"), b"ours-a\0\n").unwrap();
     let before = fs::read(view.path().join("a")).unwrap();
     let error = build_plan(&ws, false).unwrap_err();
     assert!(matches!(error, ForkspaceError::PullConflict { .. }));
@@ -138,7 +139,7 @@ fn disjoint_edits_preserve_ours_and_conflicts_refuse_atomically() {
     let journal = pull::start(&ws, &plan).unwrap();
     pull::finish(&mut ws, &journal).unwrap();
     pull::complete(&journal).unwrap();
-    assert_eq!(fs::read(view.path().join("a")).unwrap(), b"base-again\n");
+    assert_eq!(fs::read(view.path().join("a")).unwrap(), b"base-again\0\n");
 }
 
 #[test]

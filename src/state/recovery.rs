@@ -36,6 +36,7 @@ impl State {
         changed |= self.forget_interrupted_drops(&trash_root);
         changed |= self.trash_unused_frozen_copies();
         changed |= self.remove_orphan_manifests();
+        self.remove_orphan_ancestors();
         changed |= self.adopt_untracked_trash(&trash_root);
         changed |= self.forget_deleted_trash();
         Ok(changed)
@@ -149,6 +150,26 @@ impl State {
             }
         }
         changed
+    }
+
+    /// Fork-time copies belong to a recorded or pending workspace; staging copies need a live
+    /// writer.
+    fn remove_orphan_ancestors(&self) {
+        for path in bounded_entries(&paths::ancestor_root()) {
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let orphan = match name
+                .strip_prefix('.')
+                .and_then(|rest| rest.rsplit_once(".tmp-"))
+            {
+                Some((_, pid)) => !pid.parse().is_ok_and(|pid| is_alive(pid, None)),
+                None => !self.name_in_use(name),
+            };
+            if orphan {
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
     }
 
     /// Every directory in the trash is tracked, so deletions interrupted before they were

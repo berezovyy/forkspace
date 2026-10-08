@@ -14,22 +14,31 @@ pub fn exec(args: PullArgs) -> Result {
         guard::require_live_view(state, &workspace)?;
 
         // `count` is `None` when resuming, where the original plan is no longer known.
-        let (journal, count) = if args.resume {
-            (pull::resume_apply(&workspace)?, None)
+        let (journal, count, marked) = if args.resume {
+            (pull::resume_apply(&workspace)?, None, Vec::new())
         } else {
             guard::ensure_no_interrupted_pull(&name)?;
-            let plan = pull::build(&workspace, args.theirs)?;
+            let plan = pull::build_with(&workspace, args.theirs, !args.no_install)?;
             print_plan(&plan, args.json)?;
             if args.dry_run {
+                pull::discard_staging(&workspace);
                 return Ok(());
             }
-            (pull::start(&workspace, &plan)?, Some(plan.changes.len()))
+            let journal = pull::start(&workspace, &plan)?;
+            (journal, Some(plan.changes.len()), plan.marked)
         };
 
         if !args.no_install {
             install_in_workspace(&workspace)?;
         }
-        pull::finish(state.require_workspace_mut(&name)?, &journal)?;
+        let recorded = state.require_workspace_mut(&name)?;
+        pull::finish(recorded, &journal)?;
+        for path in &marked {
+            if !recorded.unresolved_conflicts.contains(path) {
+                recorded.unresolved_conflicts.push(path.clone());
+            }
+        }
+        let unresolved = recorded.unresolved_conflicts.clone();
         // Make the new ancestor durable before removing the recovery journal.
         state.save()?;
         pull::complete(&journal)?;
@@ -37,7 +46,13 @@ pub fn exec(args: PullArgs) -> Result {
             Some(count) => println!("pulled {count} files into '{name}' and re-baselined"),
             None => println!("resumed pull into '{name}' and re-baselined"),
         }
-        Ok(())
+        if marked.is_empty() {
+            return Ok(());
+        }
+        Err(ForkspaceError::ConflictMarkers {
+            workspace: name.clone(),
+            paths: crate::sync::display_paths(&unresolved),
+        })
     })
 }
 

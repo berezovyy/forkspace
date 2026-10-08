@@ -87,6 +87,9 @@ pub struct Workspace {
     /// `.git` pointed outside it (a linked worktree or submodule).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_head_at_fork: Option<String>,
+    /// Files `pull` wrote conflict markers into; `merge` refuses while any still has them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unresolved_conflicts: Vec<PathBuf>,
     /// Why the backend behaved as it did, shown to the user after `new`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe_reason: Option<String>,
@@ -146,6 +149,7 @@ impl Workspace {
             manifest_generation: 1,
             last_pull: None,
             git_head_at_fork: None,
+            unresolved_conflicts: Vec::new(),
             degraded: view.degraded,
             probe_reason: view.probe_reason,
             unknown_fields: Map::new(),

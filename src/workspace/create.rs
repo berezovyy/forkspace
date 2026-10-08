@@ -85,6 +85,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         backend.kind(),
         view,
     );
+    record_fork_time_files(&workspace);
     if let Err(error) = give_private_git(&mut workspace) {
         let _ = backend.destroy(&workspace, DestroyMode::Normal);
         let _ = crate::changes::manifest::remove(name);
@@ -101,6 +102,22 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         })
     })?;
     Ok(workspace)
+}
+
+/// Keep the fork-time version of a snapshot workspace's source files for line-level merges.
+/// Without it, files both sides change are whole-file conflicts, so a failure only warns.
+fn record_fork_time_files(workspace: &Workspace) {
+    if !workspace.backend_kind.stacking_is_snapshot() {
+        return;
+    }
+    let recorded = trace::time("ancestor", || {
+        crate::sync::ancestor::record(&workspace.name, &workspace.view_path)
+    });
+    if let Err(error) = recorded {
+        eprintln!(
+            "warning: could not keep fork-time copies for line-level merges ({error}); files both sides change will be whole-file conflicts"
+        );
+    }
 }
 
 /// When the base's `.git` points outside it (a linked worktree or submodule), give the view a

@@ -5,11 +5,13 @@
 //! [`journal`], which records the transfer as resumable per-path steps. [`install`] runs the
 //! project's package manager after a transfer.
 
+pub mod ancestor;
 pub mod install;
 pub mod journal;
 pub mod merge;
 pub mod plan;
 pub mod pull;
+pub mod three_way;
 
 use std::path::PathBuf;
 

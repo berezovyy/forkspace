@@ -26,7 +26,7 @@ pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
     let plan = plan::build(workspace, false)?;
     let counts = ChangeCounts::of(&plan.changes);
     if !plan.changes.is_empty() {
-        if workspace.manifest_status == ManifestStatus::Absent {
+        if workspace.manifest_status == ManifestStatus::Absent && plan.merged_steps.is_empty() {
             apply_without_journal(&plan)?;
         } else {
             journal::remove(&execute(&plan)?)?;
@@ -53,6 +53,7 @@ pub fn execute(plan: &MergePlan) -> Result<PathBuf> {
         plan.target.clone(),
         plan.changes.clone(),
         plan.fork_time_ns,
+        plan.merged_steps.clone(),
     )
 }
 

@@ -4,6 +4,10 @@
 //! step is an atomic rename, and `next` is persisted after every step, so an interrupted
 //! operation can be resumed exactly where it stopped. A journal whose phase is `done` is
 //! terminal and is swept on the next state load.
+//!
+//! A step for a file both sides changed installs a line-level merge staged in the journal's
+//! staging directory (`<journal>.d/`) instead of the source entry, and only over the exact
+//! target the merge was computed from.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -51,6 +55,32 @@ pub enum OperationPhase {
     Done,
 }
 
+/// Size and modification time of an entry, to notice it changed between planning and apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fingerprint {
+    pub size: u64,
+    pub mtime_ns: i128,
+}
+
+impl Fingerprint {
+    pub fn of(path: &Path) -> Option<Self> {
+        let metadata = fs::symlink_metadata(path).ok()?;
+        Some(Self {
+            size: metadata.len(),
+            mtime_ns: crate::util::fs::mtime_ns(&metadata),
+        })
+    }
+}
+
+/// A step installing a staged line-level merge rather than the source entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergedStep {
+    #[serde(with = "crate::changes::path_serde")]
+    pub path: PathBuf,
+    /// The target the merge was computed from; anything else there is a newer edit.
+    pub expected: Fingerprint,
+}
+
 /// The durable record of one merge or pull.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OperationJournal {
@@ -64,6 +94,9 @@ pub struct OperationJournal {
     #[serde(default)]
     pub phase: OperationPhase,
     pub fork_time_ns: u128,
+    /// Steps whose content is a staged line-level merge.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merged: Vec<MergedStep>,
 }
 
 impl OperationJournal {
@@ -84,6 +117,7 @@ impl OperationJournal {
             next: 0,
             phase: OperationPhase::Planned,
             fork_time_ns,
+            merged: Vec::new(),
         }
     }
 }
@@ -91,6 +125,11 @@ impl OperationJournal {
 /// Location of the journal for one operation on one workspace generation.
 pub fn path(op: OperationKind, workspace: &str, fork_time_ns: u128) -> PathBuf {
     paths::journal_dir().join(format!("{}-{workspace}-{fork_time_ns}.json", op.as_str()))
+}
+
+/// Where the line-level merges of the operation journaled at `journal` are staged.
+pub fn staging_dir(journal: &Path) -> PathBuf {
+    journal.with_extension("d")
 }
 
 /// Durably write a journal: temp file, fsync, rename, fsync directory.
@@ -115,9 +154,11 @@ pub fn start(
     target: PathBuf,
     changes: Vec<FileChange>,
     fork_time_ns: u128,
+    merged: Vec<MergedStep>,
 ) -> Result<PathBuf> {
     let path = path(op, workspace, fork_time_ns);
-    let journal = OperationJournal::new(op, workspace, source, target, changes, fork_time_ns);
+    let mut journal = OperationJournal::new(op, workspace, source, target, changes, fork_time_ns);
+    journal.merged = merged;
     save(&path, &journal)?;
     apply_remaining(&path)?;
     Ok(path)
@@ -128,14 +169,19 @@ pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
     let mut journal = load(path)?;
     journal.phase = OperationPhase::Applying;
     save(path, &journal)?;
+    let staging = staging_dir(path);
     while journal.next < journal.changes.len() {
-        apply_change(
-            &journal.source,
-            &journal.target,
-            &journal.changes[journal.next],
-            journal.next,
-            journal.op.as_str(),
-        )?;
+        let change = &journal.changes[journal.next];
+        match journal.merged.iter().find(|step| step.path == change.path) {
+            Some(step) => apply_merged(&staging, &journal.target, step, journal.next, journal.op)?,
+            None => apply_change(
+                &journal.source,
+                &journal.target,
+                change,
+                journal.next,
+                journal.op.as_str(),
+            )?,
+        }
         journal.next += 1;
         save(path, &journal)?;
     }
@@ -151,8 +197,9 @@ pub fn set_phase(path: &Path, phase: OperationPhase) -> Result {
     save(path, &journal)
 }
 
-/// Delete a completed journal.
+/// Delete a completed journal and its staged merges.
 pub fn remove(path: &Path) -> Result {
+    remove_existing(&staging_dir(path))?;
     fs::remove_file(path).io_context(|| format!("remove {}", path.display()))
 }
 
@@ -200,6 +247,12 @@ pub fn sweep_terminal() -> Result<bool> {
             .path();
         if path.extension().and_then(|value| value.to_str()) == Some("tmp") {
             changed |= fs::remove_file(&path).is_ok();
+            continue;
+        }
+        if path.extension().and_then(|value| value.to_str()) == Some("d") {
+            if !path.with_extension("json").exists() {
+                changed |= fs::remove_dir_all(&path).is_ok();
+            }
             continue;
         }
         let Ok(bytes) = fs::read(&path) else {
@@ -262,6 +315,37 @@ pub(crate) fn apply_change(
     if change.kind == ChangeKind::Added {
         return install_new(&temporary, &target, change, operation);
     }
+    fs::rename(&temporary, &target).io_context(|| format!("install {}", target.display()))
+}
+
+/// Install the staged merge of `step` over its target, provided the target is still the one
+/// the merge was computed from. A target that already holds the merge is a step that ran
+/// before a crash.
+fn apply_merged(
+    staging: &Path,
+    target_root: &Path,
+    step: &MergedStep,
+    index: usize,
+    op: OperationKind,
+) -> Result {
+    let staged = staging.join(&step.path);
+    let target = target_root.join(&step.path);
+    let unchanged = Fingerprint::of(&target) == Some(step.expected);
+    if !unchanged && !same_entry(&staged, &target) {
+        let paths = vec![step.path.display().to_string()];
+        return Err(match op {
+            OperationKind::Pull => ForkspaceError::PullConflict { paths },
+            OperationKind::Merge => ForkspaceError::MergeConflict { paths },
+        });
+    }
+    let metadata =
+        fs::symlink_metadata(&staged).io_context(|| format!("inspect {}", staged.display()))?;
+    let temporary = target.with_extension(format!("forkspace-{}-{index}.tmp", op.as_str()));
+    let _ = remove_existing(&temporary);
+    fs::copy(&staged, &temporary)
+        .io_context(|| format!("copy {} -> {}", staged.display(), temporary.display()))?;
+    fs::set_permissions(&temporary, metadata.permissions())
+        .io_context(|| format!("set permissions on {}", temporary.display()))?;
     fs::rename(&temporary, &target).io_context(|| format!("install {}", target.display()))
 }
 

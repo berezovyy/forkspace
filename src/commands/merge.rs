@@ -8,7 +8,7 @@ use crate::error::Result;
 use crate::review::signals;
 use crate::state::State;
 use crate::sync::journal::{self, OperationPhase};
-use crate::sync::plan::{self, MergePlan};
+use crate::sync::plan::{self, MergePlan, PlanOptions};
 use crate::sync::{install, join_paths, merge};
 use crate::workspace::{guard, Workspace};
 
@@ -45,6 +45,10 @@ pub fn exec(args: MergeArgs) -> Result {
             journal::remove(path)?;
         }
 
+        state
+            .require_workspace_mut(&args.name)?
+            .unresolved_conflicts
+            .clear();
         let counts = applied.counts;
         if counts.total() == 0 && !args.resume {
             println!("nothing to merge in '{}'", args.name);
@@ -89,7 +93,14 @@ fn apply(args: &MergeArgs, workspace: &Workspace) -> Result<Option<Applied>> {
     }
 
     let overwrite = args.overwrite_base || args.force;
-    let plan = plan::build(workspace, overwrite || args.dry_run)?;
+    let plan = plan::build_with(
+        workspace,
+        PlanOptions {
+            overwrite_base: overwrite,
+            preview: args.dry_run,
+            install_runs: !args.no_install,
+        },
+    )?;
     let review = review_plan(workspace, &plan);
     if args.dry_run {
         println!("{review}");

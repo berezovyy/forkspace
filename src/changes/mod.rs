@@ -9,7 +9,7 @@ mod cumulative;
 pub mod filter;
 pub mod manifest;
 mod overlay;
-mod path_serde;
+pub(crate) mod path_serde;
 pub mod render;
 mod snapshot;
 

@@ -16,8 +16,10 @@ use crate::changes::filter::ChangeFilter;
 use crate::changes::manifest::{self, ManifestKind, ManifestStatus};
 use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
-use crate::sync::journal::{self, OperationKind, OperationPhase};
+use crate::sync::ancestor;
+use crate::sync::journal::{self, MergedStep, OperationKind, OperationPhase};
 use crate::sync::plan::matches_ancestor;
+use crate::sync::three_way::{reconcile, Favor, Policy};
 use crate::sync::{display_paths, is_transferable, render_plan};
 use crate::util::fs::{mode_bits, same_contents};
 use crate::util::{now_rfc3339, now_unix_ns, WalkDirExt};
@@ -32,8 +34,16 @@ pub struct PullPlan {
     /// The workspace view changes land in.
     pub target: PathBuf,
     pub changes: Vec<FileChange>,
-    /// Paths both sides changed differently.
+    /// Paths both sides changed that could not be combined line by line.
     pub conflicts: Vec<PathBuf>,
+    /// Paths both sides changed whose edits were combined line by line.
+    pub auto_merged: Vec<PathBuf>,
+    /// Paths whose overlapping hunks are written between conflict markers, to resolve in the
+    /// workspace.
+    pub marked: Vec<PathBuf>,
+    /// Journal steps installing the staged line-level merges.
+    #[serde(skip)]
+    pub merged_steps: Vec<MergedStep>,
     /// Paths both sides changed to the same result; nothing to copy.
     pub convergent: Vec<PathBuf>,
 }
@@ -102,11 +112,17 @@ pub fn base_changes(workspace: &Workspace) -> Result<Vec<FileChange>> {
 /// Plan a pull into `workspace`. With `theirs`, conflicting paths take the base version;
 /// without it, any conflict is an error.
 pub fn build(workspace: &Workspace, theirs: bool) -> Result<PullPlan> {
+    build_with(workspace, theirs, false)
+}
+
+/// Like [`build`]; `install_runs` says the install step follows, so a lockfile both sides
+/// changed can simply take the base's version.
+pub fn build_with(workspace: &Workspace, theirs: bool, install_runs: bool) -> Result<PullPlan> {
     let backend = select_backend(Some(workspace.backend_kind))?;
     let theirs_delta = backend.base_changes(workspace)?;
     let ours_delta = backend.changes(workspace, true, false)?;
     crate::util::trace::time("plan", || {
-        build_from_changes(workspace, theirs_delta, ours_delta, theirs)
+        plan_changes(workspace, theirs_delta, ours_delta, theirs, install_runs)
     })
 }
 
@@ -118,13 +134,23 @@ pub fn build_from_changes(
     ours_delta: Vec<FileChange>,
     theirs: bool,
 ) -> Result<PullPlan> {
+    plan_changes(workspace, theirs_delta, ours_delta, theirs, false)
+}
+
+fn plan_changes(
+    workspace: &Workspace,
+    theirs_delta: Vec<FileChange>,
+    ours_delta: Vec<FileChange>,
+    theirs: bool,
+    install_runs: bool,
+) -> Result<PullPlan> {
     let ours: BTreeSet<_> = ours_delta
         .into_iter()
         .filter(|change| is_transferable(change.class))
         .map(|change| change.path)
         .collect();
     let mut changes = Vec::new();
-    let mut conflicts = Vec::new();
+    let mut both_changed = Vec::new();
     let mut convergent = Vec::new();
     for change in theirs_delta {
         if !ours.contains(&change.path) {
@@ -135,25 +161,57 @@ pub fn build_from_changes(
         ) {
             convergent.push(change.path);
         } else {
-            conflicts.push(change.path.clone());
-            if theirs {
-                changes.push(change);
-            }
+            both_changed.push(change);
         }
     }
+
+    let staging = journal::staging_dir(&journal::path(
+        OperationKind::Pull,
+        &workspace.name,
+        workspace.fork_time_ns,
+    ));
+    let _ = fs::remove_dir_all(&staging);
+    let paths: Vec<PathBuf> = both_changed
+        .iter()
+        .map(|change| change.path.clone())
+        .collect();
+    let policy = Policy {
+        favor: if theirs {
+            Favor::Project
+        } else {
+            Favor::Neither
+        },
+        allow_markers: true,
+        install_runs,
+    };
+    let view = &workspace.view_path;
+    let reconciled = reconcile(workspace, &paths, view, view, &staging, policy)?;
+    let mut conflicts = reconciled.whole_file;
     conflicts.sort();
     convergent.sort();
     if !conflicts.is_empty() && !theirs {
+        let _ = fs::remove_dir_all(&staging);
         return Err(ForkspaceError::PullConflict {
             paths: display_paths(&conflicts),
         });
     }
+    changes.extend(both_changed);
+    // Raw byte order, as `base_changes` produces.
+    changes.sort_by(|a, b| {
+        a.path
+            .as_os_str()
+            .as_encoded_bytes()
+            .cmp(b.path.as_os_str().as_encoded_bytes())
+    });
     Ok(PullPlan {
         workspace: workspace.name.clone(),
         source: workspace.base.clone(),
         target: workspace.view_path.clone(),
         changes,
         conflicts,
+        auto_merged: reconciled.auto_merged,
+        marked: reconciled.marked,
+        merged_steps: reconciled.steps,
         convergent,
     })
 }
@@ -172,7 +230,11 @@ pub fn render(plan: &PullPlan) -> String {
             ChangeKind::Modified => "update",
             ChangeKind::Deleted => "delete",
         },
-        &[("taking base for conflicts", &plan.conflicts)],
+        &[
+            ("merged line by line", &plan.auto_merged),
+            ("conflict markers to resolve", &plan.marked),
+            ("taking base for conflicts", &plan.conflicts),
+        ],
     )
 }
 
@@ -186,6 +248,7 @@ pub fn start(workspace: &Workspace, plan: &PullPlan) -> Result<PathBuf> {
         plan.target.clone(),
         plan.changes.clone(),
         workspace.fork_time_ns,
+        plan.merged_steps.clone(),
     )
 }
 
@@ -229,7 +292,11 @@ pub fn finish(workspace: &mut Workspace, path: &Path) -> Result {
                 (layers.lower.as_ref() != Some(&frozen.tree)).then(|| frozen.tree.clone());
             frozen.tree
         }
-        _ => workspace.base.clone(),
+        BackendState::Overlay(_) => workspace.base.clone(),
+        BackendState::MacClone { .. } | BackendState::CowDir { .. } => {
+            ancestor::record(&workspace.name, &workspace.base)?;
+            workspace.base.clone()
+        }
     };
     let fork_time_ns = now_unix_ns();
     manifest::build(&workspace.name, &ancestor, fork_time_ns)?;
@@ -238,6 +305,12 @@ pub fn finish(workspace: &mut Workspace, path: &Path) -> Result {
     workspace.last_pull = Some(now_rfc3339());
     workspace.manifest_status = ManifestStatus::Ready;
     Ok(())
+}
+
+/// Remove the merges a dry run staged for `workspace`.
+pub fn discard_staging(workspace: &Workspace) {
+    let journal = journal::path(OperationKind::Pull, &workspace.name, workspace.fork_time_ns);
+    let _ = fs::remove_dir_all(journal::staging_dir(&journal));
 }
 
 /// Mark the pull journal at `path` done and remove it.

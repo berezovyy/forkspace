@@ -13,6 +13,8 @@ use crate::changes::filter::ChangeFilter;
 use crate::changes::manifest::{self, ManifestRow, ManifestStatus};
 use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
+use crate::sync::journal::{self, MergedStep, OperationKind};
+use crate::sync::three_way::{has_conflict_markers, reconcile, Favor, Policy};
 use crate::sync::{display_paths, is_transferable, render_plan};
 use crate::util::fs::mtime_ns;
 use crate::util::{trace, IoContext};
@@ -27,8 +29,16 @@ pub struct MergePlan {
     /// The base directory the changes land in.
     pub target: PathBuf,
     pub changes: Vec<FileChange>,
-    /// Paths the base also changed since the fork.
+    /// Paths both sides changed that could not be combined: whole-file conflicts, and text
+    /// files whose edits overlap.
     pub conflicts: Vec<PathBuf>,
+    /// Paths both sides changed whose edits were combined line by line.
+    pub auto_merged: Vec<PathBuf>,
+    /// Lockfiles both sides changed: the base's version stays and the install step
+    /// regenerates it from the merged manifest.
+    pub kept_base: Vec<PathBuf>,
+    /// Journal steps installing the staged line-level merges.
+    pub merged_steps: Vec<MergedStep>,
     /// Paths whose fork-time state was not recorded, so a base-side edit cannot be ruled out.
     pub ancestor_unknown: Vec<PathBuf>,
     pub fork_time_ns: u128,
@@ -36,11 +46,32 @@ pub struct MergePlan {
     pub skipped: usize,
 }
 
+/// How a merge plan treats paths both sides changed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlanOptions {
+    /// Overlapping hunks take the workspace's lines, and other conflicts the workspace's file.
+    pub overwrite_base: bool,
+    /// Report conflicts in the plan instead of failing, and stage nothing (dry runs).
+    pub preview: bool,
+    /// The install step runs after the merge, so a lockfile both sides changed can keep the
+    /// base's version.
+    pub install_runs: bool,
+}
+
+/// Plan a merge of `workspace` into its base. With `preview`, conflicts are reported in the
+/// plan instead of failing it.
+pub fn build(workspace: &Workspace, preview: bool) -> Result<MergePlan> {
+    build_with(
+        workspace,
+        PlanOptions {
+            preview,
+            ..PlanOptions::default()
+        },
+    )
+}
+
 /// Plan a merge of `workspace` into its base.
-///
-/// Conflicts are an error unless `overwrite_base` is set, in which case they are reported in
-/// the plan and the workspace version wins.
-pub fn build(workspace: &Workspace, overwrite_base: bool) -> Result<MergePlan> {
+pub fn build_with(workspace: &Workspace, options: PlanOptions) -> Result<MergePlan> {
     if !workspace.base.is_dir() {
         return Err(ForkspaceError::InvalidArgument(format!(
             "base directory for '{}' is missing at {}; restore it before merging",
@@ -59,21 +90,34 @@ pub fn build(workspace: &Workspace, overwrite_base: bool) -> Result<MergePlan> {
         backend.view_path(workspace)
     };
     let all = backend.changes(workspace, true, false)?;
-    trace::time("plan", || {
-        build_from_changes(workspace, source, all, overwrite_base)
-    })
+    trace::time("plan", || plan_changes(workspace, source, all, options))
 }
 
-/// Plan a merge from an already-collected change list, reading entries from `source`.
+/// Plan a merge from an already-collected change list, reading entries from `source`. With
+/// `overwrite_base`, conflicts are reported and the workspace wins.
 pub fn build_from_changes(
     workspace: &Workspace,
     source: PathBuf,
     all: Vec<FileChange>,
     overwrite_base: bool,
 ) -> Result<MergePlan> {
+    let options = PlanOptions {
+        overwrite_base,
+        ..PlanOptions::default()
+    };
+    plan_changes(workspace, source, all, options)
+}
+
+fn plan_changes(
+    workspace: &Workspace,
+    source: PathBuf,
+    all: Vec<FileChange>,
+    options: PlanOptions,
+) -> Result<MergePlan> {
     ensure_manifest_usable(workspace)?;
+    ensure_markers_resolved(workspace)?;
     let total = all.len();
-    let changes: Vec<_> = ChangeFilter::build(&workspace.base)
+    let mut changes: Vec<_> = ChangeFilter::build(&workspace.base)
         .filter_changes(all)
         .into_iter()
         .filter(|change| is_transferable(change.class))
@@ -81,21 +125,85 @@ pub fn build_from_changes(
     check_sources(&source, &changes)?;
     validate_space(&source, &workspace.base, &changes)?;
 
-    let (conflicts, ancestor_unknown) = classify(workspace, &changes)?;
-    if !conflicts.is_empty() && !overwrite_base {
-        return Err(ForkspaceError::MergeConflict {
-            paths: display_paths(&conflicts),
+    let (both_changed, ancestor_unknown) = classify(workspace, &changes)?;
+    let staging = journal::staging_dir(&journal::path(
+        OperationKind::Merge,
+        &workspace.name,
+        workspace.fork_time_ns,
+    ));
+    let _ = fs::remove_dir_all(&staging);
+    let policy = Policy {
+        favor: if options.overwrite_base && !options.preview {
+            Favor::Workspace
+        } else {
+            Favor::Neither
+        },
+        allow_markers: false,
+        install_runs: options.install_runs,
+    };
+    let reconciled = reconcile(
+        workspace,
+        &both_changed,
+        &source,
+        &workspace.base,
+        &staging,
+        policy,
+    )?;
+    let mut conflicts = [
+        reconciled.overlapping.clone(),
+        reconciled.whole_file.clone(),
+    ]
+    .concat();
+    conflicts.sort();
+    if options.preview {
+        let _ = fs::remove_dir_all(&staging);
+    } else if !conflicts.is_empty() && !options.overwrite_base {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(if reconciled.overlapping.is_empty() {
+            ForkspaceError::MergeConflict {
+                paths: display_paths(&conflicts),
+            }
+        } else {
+            ForkspaceError::MergeOverlap {
+                workspace: workspace.name.clone(),
+                paths: display_paths(&conflicts),
+            }
         });
     }
+    changes.retain(|change| !reconciled.project_wins.contains(&change.path));
     Ok(MergePlan {
         workspace: workspace.name.clone(),
         source,
         target: workspace.base.clone(),
-        skipped: total - changes.len(),
+        skipped: total - changes.len() - reconciled.project_wins.len(),
         changes,
         conflicts,
+        auto_merged: reconciled.auto_merged,
+        kept_base: reconciled.project_wins,
+        merged_steps: if options.preview {
+            Vec::new()
+        } else {
+            reconciled.steps
+        },
         ancestor_unknown,
         fork_time_ns: workspace.fork_time_ns,
+    })
+}
+
+/// Refuse to merge while files still hold conflict markers that `pull` wrote.
+fn ensure_markers_resolved(workspace: &Workspace) -> Result {
+    let remaining: Vec<PathBuf> = workspace
+        .unresolved_conflicts
+        .iter()
+        .filter(|path| has_conflict_markers(&workspace.view_path.join(path)))
+        .cloned()
+        .collect();
+    if remaining.is_empty() {
+        return Ok(());
+    }
+    Err(ForkspaceError::ConflictMarkers {
+        workspace: workspace.name.clone(),
+        paths: display_paths(&remaining),
     })
 }
 
@@ -114,6 +222,11 @@ pub fn render(plan: &MergePlan) -> String {
             ChangeKind::Deleted => "delete",
         },
         &[
+            ("merged line by line", &plan.auto_merged),
+            (
+                "keeping the base lockfile (install regenerates it)",
+                &plan.kept_base,
+            ),
             ("ancestor unknown", &plan.ancestor_unknown),
             ("conflicts", &plan.conflicts),
         ],
