@@ -29,7 +29,9 @@ pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
         if workspace.manifest_status == ManifestStatus::Absent && plan.merged_steps.is_empty() {
             apply_without_journal(&plan)?;
         } else {
-            journal::remove(&execute(&plan)?)?;
+            let journal = execute(&plan)?;
+            journal::finish_undo(&journal)?;
+            journal::remove(&journal)?;
         }
     }
     Ok(MergeResult {
@@ -83,7 +85,7 @@ pub fn resume(workspace: &Workspace) -> Result<PathBuf> {
 /// Apply `plan` step by step without recording a journal (workspaces without a fork manifest).
 fn apply_without_journal(plan: &MergePlan) -> Result {
     for (index, change) in plan.changes.iter().enumerate() {
-        journal::apply_change(&plan.source, &plan.target, change, index, "merge")?;
+        journal::apply_change(&plan.source, &plan.target, change, index, "merge", None)?;
     }
     Ok(())
 }

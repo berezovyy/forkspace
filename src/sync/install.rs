@@ -52,7 +52,11 @@ impl PackageManager {
 ///
 /// `package.json`'s `packageManager` field wins; otherwise the first lockfile present decides.
 pub fn detect_package_manager(workspace: &Workspace) -> Option<PackageManager> {
-    let view = project_root(workspace)?;
+    detect_in(&project_root(workspace)?)
+}
+
+/// The package manager of the JavaScript project in `view`, if it is one.
+pub fn detect_in(view: &Path) -> Option<PackageManager> {
     let package_json = view.join("package.json");
     if !package_json.exists() {
         return None;

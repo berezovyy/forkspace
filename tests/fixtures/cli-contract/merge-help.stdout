@@ -1,9 +1,9 @@
 Apply workspace changes back to the base directory
 
-Usage: forkspace merge [OPTIONS] <NAME>
+Usage: forkspace merge [OPTIONS] [NAME]
 
 Arguments:
-  <NAME>  Name of the workspace to merge
+  [NAME]  Name of the workspace to merge (with --undo: whose latest merge to undo)
 
 Options:
       --commit             Create a git commit with the merged changes
@@ -15,4 +15,6 @@ Options:
       --resume             Resume an interrupted merge
       --overwrite-base     Overwrite conflicting changes in the base
       --quiet              Suppress the pre-apply plan summary
+      --undo               Put the base back as it was before the latest merge
+      --list               With --undo, list the merges that can be undone
   -h, --help               Print help

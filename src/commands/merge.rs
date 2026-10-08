@@ -9,7 +9,7 @@ use crate::review::signals;
 use crate::state::State;
 use crate::sync::journal::{self, OperationPhase};
 use crate::sync::plan::{self, MergePlan, PlanOptions};
-use crate::sync::{install, join_paths, merge};
+use crate::sync::{install, join_paths, merge, undo};
 use crate::workspace::{guard, Workspace};
 
 /// The outcome of the apply step: the journal still to close, and what was transferred
@@ -20,18 +20,22 @@ struct Applied {
 }
 
 pub fn exec(args: MergeArgs) -> Result {
+    if args.undo {
+        return undo(&args);
+    }
+    let name = args.name.clone().unwrap_or_default();
     State::with_state(|state| {
-        guard::ensure_no_interrupted_pull(&args.name)?;
+        guard::ensure_no_interrupted_pull(&name)?;
         if !args.resume {
-            guard::ensure_no_interrupted_merge(&args.name)?;
+            guard::ensure_no_interrupted_merge(&name)?;
         }
-        let workspace = state.require_workspace(&args.name)?.clone();
+        let workspace = state.require_workspace(&name)?.clone();
         guard::require_live_view(state, &workspace)?;
 
         if args.patch {
-            if print_patch(&args, &workspace)? && args.drop {
-                crate::workspace::remove(state, &args.name)?;
-                eprintln!("removed '{}'", args.name);
+            if print_patch(&name, &workspace)? && args.drop {
+                crate::workspace::remove(state, &name)?;
+                eprintln!("removed '{}'", name);
             }
             return Ok(());
         }
@@ -41,21 +45,22 @@ pub fn exec(args: MergeArgs) -> Result {
         };
         run_post_merge_steps(&args, &workspace)?;
         if let Some(path) = &applied.journal {
+            journal::finish_undo(path)?;
             journal::set_phase(path, OperationPhase::Done)?;
             journal::remove(path)?;
         }
 
         state
-            .require_workspace_mut(&args.name)?
+            .require_workspace_mut(&name)?
             .unresolved_conflicts
             .clear();
         let counts = applied.counts;
         if counts.total() == 0 && !args.resume {
-            println!("nothing to merge in '{}'", args.name);
+            println!("nothing to merge in '{}'", name);
             return Ok(());
         }
         if args.drop {
-            crate::workspace::remove(state, &args.name)?;
+            crate::workspace::remove(state, &name)?;
         }
         println!(
             "merged {} files ({} added, {} modified, {} deleted)",
@@ -65,17 +70,17 @@ pub fn exec(args: MergeArgs) -> Result {
             counts.deleted
         );
         if args.drop {
-            println!("removed '{}'", args.name);
+            println!("removed '{}'", name);
         }
         Ok(())
     })
 }
 
 /// Print the workspace's changes as a unified patch. Returns whether there was anything to print.
-fn print_patch(args: &MergeArgs, workspace: &Workspace) -> Result<bool> {
+fn print_patch(name: &str, workspace: &Workspace) -> Result<bool> {
     let plan = plan::build(workspace, true)?;
     if plan.changes.is_empty() {
-        println!("nothing to merge in '{}'", args.name);
+        println!("nothing to merge in '{name}'");
         return Ok(false);
     }
     print!("{}", merge::generate_patch(workspace, &plan.changes)?);
@@ -145,12 +150,61 @@ fn run_post_merge_steps(args: &MergeArgs, workspace: &Workspace) -> Result {
     if args.commit || args.message.is_some() {
         let default_message = format!(
             "forkspace merge: applied changes from workspace {}",
-            args.name
+            workspace.name
         );
         merge::git_commit(
             &workspace.base,
             args.message.as_deref().unwrap_or(&default_message),
         )?;
+    }
+    Ok(())
+}
+
+/// `merge --undo [NAME]`: put the base back as it was before the latest merge (of `NAME`),
+/// or with `--list` show the merges that can be undone.
+fn undo(args: &MergeArgs) -> Result {
+    if args.list {
+        let records = undo::list();
+        if records.is_empty() {
+            println!("no merges to undo");
+        }
+        for (_, record) in records {
+            println!(
+                "{}  {}  {} files  {}",
+                record.merged_at,
+                record.workspace,
+                record.steps.len(),
+                record.project.display()
+            );
+        }
+        return Ok(());
+    }
+    // The state lock keeps a merge from running into the project while it is restored.
+    let report = State::with_state(|_| undo::undo(args.name.as_deref()))?;
+    println!(
+        "undid the merge of '{}' into {}: restored {} files, removed {} added files",
+        report.workspace,
+        report.project.display(),
+        report.restored,
+        report.removed
+    );
+    if !report.changed_since.is_empty() {
+        eprintln!(
+            "warning: left alone because they changed after the merge (their pre-merge versions stay in the undo store): {}",
+            join_paths(&report.changed_since)
+        );
+    }
+    if !report.newer_merge.is_empty() {
+        eprintln!(
+            "warning: left alone because a newer merge also changed them; undo that merge first: {}",
+            join_paths(&report.newer_merge)
+        );
+    }
+    if !args.no_install && report.restored + report.removed > 0 {
+        if let Some(manager) = install::detect_in(&report.project) {
+            install::run_install(&report.project, manager)?;
+            println!("ran package install");
+        }
     }
     Ok(())
 }

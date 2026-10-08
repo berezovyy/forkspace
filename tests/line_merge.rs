@@ -324,6 +324,7 @@ fn an_interrupted_auto_merge_resumes_from_its_journal() {
         next: 0,
         phase: OperationPhase::Applying,
         fork_time_ns,
+        undo: None,
         merged: vec![MergedStep {
             path: PathBuf::from("app.txt"),
             expected: Fingerprint::of(&target).unwrap(),

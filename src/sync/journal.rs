@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::paths;
+use crate::sync::undo;
 use crate::util::fs::{rename_exchange, rename_noreplace, same_contents, FlaggedRename};
 use crate::util::{ensure_parent_dir, IoContext};
 
@@ -97,6 +98,10 @@ pub struct OperationJournal {
     /// Steps whose content is a staged line-level merge.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merged: Vec<MergedStep>,
+    /// For a merge: the undo record that keeps every project entry this operation replaces
+    /// or deletes (see [`crate::sync::undo`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undo: Option<PathBuf>,
 }
 
 impl OperationJournal {
@@ -118,6 +123,7 @@ impl OperationJournal {
             phase: OperationPhase::Planned,
             fork_time_ns,
             merged: Vec::new(),
+            undo: None,
         }
     }
 }
@@ -159,6 +165,9 @@ pub fn start(
     let path = path(op, workspace, fork_time_ns);
     let mut journal = OperationJournal::new(op, workspace, source, target, changes, fork_time_ns);
     journal.merged = merged;
+    if op == OperationKind::Merge {
+        journal.undo = Some(undo::begin(workspace, &journal.target, &journal.changes)?);
+    }
     save(&path, &journal)?;
     apply_remaining(&path)?;
     Ok(path)
@@ -170,16 +179,25 @@ pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
     journal.phase = OperationPhase::Applying;
     save(path, &journal)?;
     let staging = staging_dir(path);
+    let undo = journal.undo.clone();
     while journal.next < journal.changes.len() {
         let change = &journal.changes[journal.next];
         match journal.merged.iter().find(|step| step.path == change.path) {
-            Some(step) => apply_merged(&staging, &journal.target, step, journal.next, journal.op)?,
+            Some(step) => apply_merged(
+                &staging,
+                &journal.target,
+                step,
+                journal.next,
+                journal.op,
+                undo.as_deref(),
+            )?,
             None => apply_change(
                 &journal.source,
                 &journal.target,
                 change,
                 journal.next,
                 journal.op.as_str(),
+                undo.as_deref(),
             )?,
         }
         journal.next += 1;
@@ -195,6 +213,14 @@ pub fn set_phase(path: &Path, phase: OperationPhase) -> Result {
     let mut journal = load(path)?;
     journal.phase = phase;
     save(path, &journal)
+}
+
+/// Make the merge journaled at `path` undoable, once everything it changes is in place.
+pub fn finish_undo(path: &Path) -> Result {
+    match load(path)?.undo {
+        Some(dir) => undo::finish(&dir),
+        None => Ok(()),
+    }
 }
 
 /// Delete a completed journal and its staged merges.
@@ -294,28 +320,33 @@ pub(crate) fn apply_change(
     change: &FileChange,
     index: usize,
     operation: &str,
+    undo: Option<&Path>,
 ) -> Result {
     let source = source_root.join(&change.path);
     let target = target_root.join(&change.path);
+    let keep = undo.map(|dir| (dir, change.path.as_path()));
     if change.kind == ChangeKind::Deleted {
-        return remove_existing(&target);
+        return match keep {
+            Some((dir, relative)) => undo::keep(dir, relative, &target),
+            None => remove_existing(&target),
+        };
     }
     ensure_parent_dir(&target)?;
     let metadata =
         fs::symlink_metadata(&source).io_context(|| format!("inspect {}", source.display()))?;
     if metadata.is_dir() {
-        return install_dir(&source, &metadata, &target);
+        return install_dir(&source, &metadata, &target, keep);
     }
     let temporary = target.with_extension(format!("forkspace-{operation}-{index}.tmp"));
     stage_entry(&source, &metadata, &temporary)?;
     let existing = fs::symlink_metadata(&target).ok();
     if existing.as_ref().is_some_and(fs::Metadata::is_dir) {
-        return replace_directory(&temporary, &target);
+        return replace_directory(&temporary, &target, keep);
     }
     if change.kind == ChangeKind::Added {
         return install_new(&temporary, &target, change, operation);
     }
-    fs::rename(&temporary, &target).io_context(|| format!("install {}", target.display()))
+    install_over(&temporary, &target, keep)
 }
 
 /// Install the staged merge of `step` over its target, provided the target is still the one
@@ -327,6 +358,7 @@ fn apply_merged(
     step: &MergedStep,
     index: usize,
     op: OperationKind,
+    undo: Option<&Path>,
 ) -> Result {
     let staged = staging.join(&step.path);
     let target = target_root.join(&step.path);
@@ -346,19 +378,51 @@ fn apply_merged(
         .io_context(|| format!("copy {} -> {}", staged.display(), temporary.display()))?;
     fs::set_permissions(&temporary, metadata.permissions())
         .io_context(|| format!("set permissions on {}", temporary.display()))?;
-    fs::rename(&temporary, &target).io_context(|| format!("install {}", target.display()))
+    install_over(
+        &temporary,
+        &target,
+        undo.map(|dir| (dir, step.path.as_path())),
+    )
+}
+
+/// Rename the staged `temporary` over `target`. With an undo record, the two are swapped so
+/// the replaced entry can be kept; without swap support it is copied into the store first.
+fn install_over(temporary: &Path, target: &Path, keep: Option<(&Path, &Path)>) -> Result {
+    let install =
+        || fs::rename(temporary, target).io_context(|| format!("install {}", target.display()));
+    let Some((dir, relative)) = keep else {
+        return install();
+    };
+    if fs::symlink_metadata(target).is_err() {
+        return install();
+    }
+    match rename_exchange(temporary, target)
+        .io_context(|| format!("swap {} into place", target.display()))?
+    {
+        FlaggedRename::Done => undo::keep(dir, relative, temporary),
+        _ => {
+            undo::keep_copy(dir, relative, target)?;
+            install()
+        }
+    }
 }
 
 /// Put the staged entry where a directory is. A plain rename cannot replace a directory with
 /// a non-directory, so the two are swapped atomically and the old tree is deleted from the
 /// staging name; the path is never missing. Without swap support the directory is removed
 /// first, as before.
-fn replace_directory(temporary: &Path, target: &Path) -> Result {
+fn replace_directory(temporary: &Path, target: &Path, keep: Option<(&Path, &Path)>) -> Result {
     match rename_exchange(temporary, target)
         .io_context(|| format!("swap {} into place", target.display()))?
     {
-        FlaggedRename::Done => remove_existing(temporary),
+        FlaggedRename::Done => match keep {
+            Some((dir, relative)) => undo::keep(dir, relative, temporary),
+            None => remove_existing(temporary),
+        },
         _ => {
+            if let Some((dir, relative)) = keep {
+                undo::keep_copy(dir, relative, target)?;
+            }
             remove_existing(target)?;
             fs::rename(temporary, target).io_context(|| format!("install {}", target.display()))
         }
@@ -418,9 +482,17 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 
 /// Directories are created in place (their entries are separate steps), then given the
 /// source's permissions and modification time.
-fn install_dir(source: &Path, metadata: &fs::Metadata, target: &Path) -> Result {
+fn install_dir(
+    source: &Path,
+    metadata: &fs::Metadata,
+    target: &Path,
+    keep: Option<(&Path, &Path)>,
+) -> Result {
     if fs::symlink_metadata(target).is_ok_and(|existing| !existing.is_dir()) {
-        remove_existing(target)?;
+        match keep {
+            Some((dir, relative)) => undo::keep(dir, relative, target)?,
+            None => remove_existing(target)?,
+        }
     }
     fs::create_dir_all(target).io_context(|| format!("create {}", target.display()))?;
     fs::set_permissions(target, metadata.permissions())
@@ -495,7 +567,8 @@ mod tests {
         fs::write(target.path().join("new.txt"), "created in base meanwhile\n").unwrap();
         let change = FileChange::new(PathBuf::from("new.txt"), ChangeKind::Added);
 
-        let error = apply_change(source.path(), target.path(), &change, 0, "merge").unwrap_err();
+        let error =
+            apply_change(source.path(), target.path(), &change, 0, "merge", None).unwrap_err();
         assert!(
             matches!(error, ForkspaceError::MergeConflict { .. }),
             "{error}"
@@ -518,7 +591,7 @@ mod tests {
         fs::write(target.path().join("new.txt"), "same\n").unwrap();
         let change = FileChange::new(PathBuf::from("new.txt"), ChangeKind::Added);
 
-        apply_change(source.path(), target.path(), &change, 0, "pull").unwrap();
+        apply_change(source.path(), target.path(), &change, 0, "pull", None).unwrap();
         assert_eq!(fs::read_dir(target.path()).unwrap().count(), 1);
     }
 
@@ -530,7 +603,7 @@ mod tests {
         fs::write(target.path().join("thing/nested/old"), "old\n").unwrap();
         let change = FileChange::new(PathBuf::from("thing"), ChangeKind::Modified);
 
-        apply_change(source.path(), target.path(), &change, 3, "merge").unwrap();
+        apply_change(source.path(), target.path(), &change, 3, "merge", None).unwrap();
         assert_eq!(
             fs::read_to_string(target.path().join("thing")).unwrap(),
             "now a file\n"

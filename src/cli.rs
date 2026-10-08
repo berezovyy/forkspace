@@ -268,8 +268,11 @@ pub struct CompareArgs {
 
 #[derive(Args)]
 pub struct MergeArgs {
-    #[arg(help = "Name of the workspace to merge")]
-    pub name: String,
+    #[arg(
+        required_unless_present = "undo",
+        help = "Name of the workspace to merge (with --undo: whose latest merge to undo)"
+    )]
+    pub name: Option<String>,
 
     #[arg(long, help = "Create a git commit with the merged changes")]
     pub commit: bool,
@@ -304,6 +307,20 @@ pub struct MergeArgs {
 
     #[arg(long, help = "Suppress the pre-apply plan summary")]
     pub quiet: bool,
+
+    #[arg(
+        long,
+        conflicts_with_all = ["commit", "message", "patch", "drop", "dry_run", "resume", "overwrite_base"],
+        help = "Put the base back as it was before the latest merge"
+    )]
+    pub undo: bool,
+
+    #[arg(
+        long,
+        requires = "undo",
+        help = "With --undo, list the merges that can be undone"
+    )]
+    pub list: bool,
 }
 
 #[derive(Args)]

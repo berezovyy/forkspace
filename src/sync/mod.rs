@@ -12,6 +12,7 @@ pub mod merge;
 pub mod plan;
 pub mod pull;
 pub mod three_way;
+pub mod undo;
 
 use std::path::PathBuf;
 
