@@ -81,7 +81,9 @@ fn default_name(base: &Path) -> Result<String> {
 /// removed again, so `--branch` is all-or-nothing.
 fn create_branch(ws: &mut Workspace, branch: String) -> Result {
     if git::run_git(&ws.view_path, &["switch", "-c", &branch]).is_err() {
-        State::with_state(|state| workspace::remove(state, &ws.name))?;
+        State::with_state(|state| {
+            workspace::remove::remove_with(state, &ws.name, workspace::remove::Processes::Kill)
+        })?;
         return Err(ForkspaceError::BranchExists(format!(
             "'{branch}' could not be created; no workspace was kept"
         )));

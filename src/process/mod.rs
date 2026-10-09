@@ -2,9 +2,11 @@
 //! tracking that survives PID reuse.
 
 pub(crate) mod devserver;
+pub mod members;
 mod ports;
 pub(crate) mod proxy;
 mod spawn;
+pub mod systemd;
 pub mod watch;
 
 use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};

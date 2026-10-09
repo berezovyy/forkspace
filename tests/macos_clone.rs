@@ -587,6 +587,7 @@ mod macos {
         let started = Instant::now();
         commands::drop::exec(DropArgs {
             name: Some("again".into()),
+            kill: false,
             force: false,
             all: false,
             glob: false,
@@ -728,6 +729,7 @@ mod macos {
         assert_eq!(manifest::read("rebuild").unwrap().len(), 2_002);
         commands::drop::exec(DropArgs {
             name: Some("rebuild".into()),
+            kill: false,
             force: false,
             all: false,
             glob: false,
@@ -795,6 +797,7 @@ mod macos {
 
         commands::drop::exec(DropArgs {
             name: Some("manifest".into()),
+            kill: false,
             force: false,
             all: false,
             glob: false,
@@ -1130,6 +1133,7 @@ mod macos {
 
         commands::drop::exec(DropArgs {
             name: Some("step-1".into()),
+            kill: false,
             force: true,
             all: false,
             glob: false,
@@ -1216,6 +1220,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',int(os.environ['PORT'])),H).serve_f
         let b_process = state.workspaces["dev-b"].process.clone().unwrap();
         commands::drop::exec(DropArgs {
             name: Some("dev-b".into()),
+            kill: false,
             force: false,
             all: false,
             glob: false,

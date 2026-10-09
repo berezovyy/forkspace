@@ -33,6 +33,13 @@ pub enum ForkspaceError {
     #[error("workspace '{0}' has uncommitted tracked changes; commit them, or use `forkspace merge` for file-level transfer")]
     WorkspaceDirty(String),
 
+    #[error("workspace '{workspace}' is still used by: {processes}; {remedy}")]
+    WorkspaceInUse {
+        workspace: String,
+        processes: String,
+        remedy: String,
+    },
+
     #[error("branch '{branch}' is checked out in the base; switch the base off it (`git switch -`) and re-run")]
     BranchCheckedOut { branch: String },
 
@@ -151,6 +158,7 @@ impl ForkspaceError {
             Self::WorkspaceExists(_) | Self::BranchExists(_) => 4,
             Self::HasChildren { .. }
             | Self::WorkspaceDirty(_)
+            | Self::WorkspaceInUse { .. }
             | Self::BranchCheckedOut { .. }
             | Self::BaseMismatch { .. }
             | Self::MergeConflict { .. }

@@ -32,7 +32,8 @@ pub fn exec(args: EnterArgs) -> Result {
     guard::ensure_idle(&name)?;
     let backend = select_backend(Some(workspace.backend_kind))?;
 
-    let status = shell_command(&args, &state, workspace, backend.as_ref())?
+    let command = shell_command(&args, &state, workspace, backend.as_ref())?;
+    let status = crate::process::systemd::scoped(command, &name)
         .status()
         .io_context(|| "failed to spawn command".to_string())?;
     report_exit(&name, status);
@@ -186,5 +187,8 @@ fn read_single_char() -> Option<char> {
 }
 
 fn drop_workspace(name: &str) -> Result {
-    State::with_state(|state| workspace::remove(state, name))
+    // An entered workspace is disposable: what the session left running goes with it.
+    State::with_state(|state| {
+        workspace::remove::remove_with(state, name, workspace::remove::Processes::Kill)
+    })
 }

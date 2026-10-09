@@ -29,10 +29,12 @@ pub fn exec(args: LsArgs) -> Result {
 
     let mut workspaces: Vec<&Workspace> = state.workspaces.values().collect();
     workspaces.sort_by(|a, b| a.name.cmp(&b.name));
+    let processes = crate::process::members::counts(workspaces.iter().copied());
+    let count_of = |workspace: &Workspace| processes.get(&workspace.name).copied().unwrap_or(0);
     if args.json {
         let values: Vec<_> = workspaces
             .iter()
-            .map(|workspace| json_entry(workspace))
+            .map(|workspace| json_entry(workspace, count_of(workspace)))
             .collect();
         return super::print_json(&values);
     }
@@ -43,7 +45,7 @@ pub fn exec(args: LsArgs) -> Result {
 
     let rows = workspaces
         .iter()
-        .map(|workspace| table_row(workspace, args.no_gitignore))
+        .map(|workspace| table_row(workspace, args.no_gitignore, count_of(workspace)))
         .collect::<Result<Vec<_>>>()?;
     let show_branch = workspaces
         .iter()
@@ -52,7 +54,7 @@ pub fn exec(args: LsArgs) -> Result {
     Ok(())
 }
 
-fn json_entry(workspace: &Workspace) -> serde_json::Value {
+fn json_entry(workspace: &Workspace, processes: usize) -> serde_json::Value {
     serde_json::json!({
         "name": workspace.name,
         "base": workspace.base,
@@ -64,10 +66,11 @@ fn json_entry(workspace: &Workspace) -> serde_json::Value {
         "probe_reason": workspace.probe_reason,
         "base_missing": !workspace.base.is_dir(),
         "view_missing": !workspace.view_path.is_dir(),
+        "processes": processes,
     })
 }
 
-fn table_row(workspace: &Workspace, include_ignored: bool) -> Result<Row> {
+fn table_row(workspace: &Workspace, include_ignored: bool, processes: usize) -> Result<Row> {
     let count =
         select_backend(Some(workspace.backend_kind))?.change_count(workspace, include_ignored)?;
     Ok([
@@ -76,7 +79,7 @@ fn table_row(workspace: &Workspace, include_ignored: bool) -> Result<Row> {
         workspace.branch.clone().unwrap_or_else(|| "-".to_string()),
         describe_backend(workspace),
         describe_count(count),
-        describe_process(workspace),
+        describe_process(workspace, processes),
     ])
 }
 
@@ -123,15 +126,26 @@ fn describe_count(count: ChangeCount) -> String {
     }
 }
 
-fn describe_process(workspace: &Workspace) -> String {
-    match &workspace.process {
+/// The `forkspace run` dev server, if any, and how many processes run in the workspace.
+fn describe_process(workspace: &Workspace, processes: usize) -> String {
+    let server = match &workspace.process {
         Some(process)
             if crate::process::watch::is_alive(process.pid, process.identity.as_deref()) =>
         {
-            format!(":{} ({})", process.port, process.command)
+            Some(format!(":{} ({})", process.port, process.command))
         }
-        Some(_) => "stopped".to_string(),
-        None => "-".to_string(),
+        Some(_) => Some("stopped".to_string()),
+        None => None,
+    };
+    let count = match processes {
+        0 => None,
+        1 => Some("1 process".to_string()),
+        n => Some(format!("{n} processes")),
+    };
+    match (server, count) {
+        (Some(server), Some(count)) => format!("{server}, {count}"),
+        (Some(text), None) | (None, Some(text)) => text,
+        (None, None) => "-".to_string(),
     }
 }
 

@@ -118,6 +118,9 @@ pub struct DropArgs {
     #[arg(long, help = "Force removal even if the workspace has children")]
     pub force: bool,
 
+    #[arg(long, help = "Stop processes still running in the workspace")]
+    pub kill: bool,
+
     #[arg(long, help = "Remove all workspaces")]
     pub all: bool,
 

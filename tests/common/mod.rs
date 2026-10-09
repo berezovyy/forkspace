@@ -10,6 +10,9 @@ pub fn setup_test_env() -> tempfile::TempDir {
     // SAFETY: tests using setup_test_env() are serialized with #[serial],
     // so no concurrent env var mutation can occur.
     unsafe { std::env::set_var("FORKSPACE_HOME", dir.path()) };
+    // Commands would otherwise leave a systemd slice per test workspace that is never
+    // dropped; `tests/processes.rs` covers the systemd path.
+    unsafe { std::env::set_var("FORKSPACE_NO_SYSTEMD", "1") };
     dir
 }
 

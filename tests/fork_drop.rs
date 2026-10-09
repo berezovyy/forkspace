@@ -122,6 +122,7 @@ fn test_drop_workspace() {
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
         name: Some("drop-ws".to_string()),
+        kill: false,
         force: false,
         all: false,
         glob: false,
@@ -140,6 +141,7 @@ fn test_drop_nonexistent() {
     let _dir = common::setup_test_env();
     let result = forkspace::commands::drop::exec(forkspace::cli::DropArgs {
         name: Some("nonexistent-ws".to_string()),
+        kill: false,
         force: false,
         all: false,
         glob: false,
@@ -161,6 +163,7 @@ fn test_drop_with_children_requires_force() {
 
     let result = forkspace::commands::drop::exec(forkspace::cli::DropArgs {
         name: Some("parent-drop".to_string()),
+        kill: false,
         force: false,
         all: false,
         glob: false,
@@ -195,6 +198,7 @@ fn test_drop_force_cascade() {
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
         name: Some("cascade-parent".to_string()),
+        kill: false,
         force: true,
         all: false,
         glob: false,

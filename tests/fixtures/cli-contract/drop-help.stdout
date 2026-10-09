@@ -7,6 +7,7 @@ Arguments:
 
 Options:
       --force  Force removal even if the workspace has children
+      --kill   Stop processes still running in the workspace
       --all    Remove all workspaces
       --glob   Treat name as a glob pattern to match multiple workspaces
   -h, --help   Print help

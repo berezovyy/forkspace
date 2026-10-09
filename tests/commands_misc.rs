@@ -27,6 +27,7 @@ fn test_drop_all() {
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
         name: None,
+        kill: false,
         force: false,
         all: true,
         glob: false,
@@ -52,6 +53,7 @@ fn test_drop_glob() {
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
         name: Some("auth-*".to_string()),
+        kill: false,
         force: false,
         all: false,
         glob: true,
@@ -75,6 +77,7 @@ fn test_drop_glob_no_match() {
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
         name: Some("zzz-*".to_string()),
+        kill: false,
         force: false,
         all: false,
         glob: true,

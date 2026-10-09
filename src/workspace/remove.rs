@@ -1,17 +1,33 @@
-//! Removing a workspace: stop its process, destroy its view, and forget it.
+//! Removing a workspace: stop its processes, destroy its view, and forget it.
 
 use crate::backend::{select_backend, DestroyMode};
 use crate::changes::manifest;
-use crate::error::Result;
+use crate::error::{ForkspaceError, Result};
 use crate::git;
+use crate::process::members;
 use crate::state::State;
-use crate::workspace::guard;
+use crate::workspace::{guard, Workspace};
 
-/// Remove `name` from `state` after destroying its on-disk view.
+/// What removing a workspace does about processes still using it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Processes {
+    /// List them and refuse.
+    Refuse,
+    /// Stop the ones running in the workspace (`drop --kill`), then refuse if any remain.
+    Kill,
+}
+
+/// Remove `name` from `state` after destroying its on-disk view, refusing while processes
+/// other than its `forkspace run` dev server still use it.
 ///
 /// The state record is only dropped once the backend cleanup succeeded, so a busy mount
 /// (EBUSY) leaves a workspace that can be dropped again later.
 pub fn remove(state: &mut State, name: &str) -> Result {
+    remove_with(state, name, Processes::Refuse)
+}
+
+/// [`remove`], choosing what happens to processes still using the workspace.
+pub fn remove_with(state: &mut State, name: &str, processes: Processes) -> Result {
     guard::ensure_idle(name)?;
     let workspace = state.require_workspace(name)?.clone();
     warn_if_unlanded(state, name);
@@ -19,12 +35,46 @@ pub fn remove(state: &mut State, name: &str) -> Result {
     if let Some(process) = &workspace.process {
         process.terminate();
     }
+    ensure_unused(&workspace, processes)?;
 
     let backend = select_backend(Some(workspace.backend_kind))?;
     remove_after_cleanup(state, name, || {
         crate::util::trace::time("destroy", || {
             backend.destroy(&workspace, DestroyMode::Normal)
         })
+    })
+}
+
+/// Refuse while processes use `workspace`; with [`Processes::Kill`], stop the ones running in
+/// it first. Processes that only have files open there are never killed.
+fn ensure_unused(workspace: &Workspace, processes: Processes) -> Result {
+    let mut found = members::find(workspace);
+    if found.is_empty() {
+        return Ok(());
+    }
+    if processes == Processes::Kill {
+        members::stop(workspace, &found);
+        found = members::find(workspace);
+        if found.is_empty() {
+            return Ok(());
+        }
+    }
+    let remedy = if processes == Processes::Refuse && found.iter().any(|member| member.owned) {
+        format!(
+            "use `forkspace drop {} --kill` to stop them",
+            workspace.name
+        )
+    } else {
+        "close them (they only have files open there), then drop again".to_string()
+    };
+    Err(ForkspaceError::WorkspaceInUse {
+        workspace: workspace.name.clone(),
+        processes: found
+            .iter()
+            .map(members::Member::describe)
+            .collect::<Vec<_>>()
+            .join(", "),
+        remedy,
     })
 }
 
@@ -44,6 +94,7 @@ pub fn with_descendants(state: &State, name: &str) -> Vec<String> {
 
 fn remove_after_cleanup(state: &mut State, name: &str, cleanup: impl FnOnce() -> Result) -> Result {
     cleanup()?;
+    crate::process::systemd::stop_slice(name);
     manifest::remove(name)?;
     crate::sync::ancestor::remove(name)?;
     crate::sync::checkpoint::remove_all(name)?;

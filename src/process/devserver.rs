@@ -206,13 +206,16 @@ fn spawn(
         .map_err(|e| ForkspaceError::ProcessFailed(format!("log file: {}", e)))?;
 
     let identity = watch::new_identity();
+    let mut shell = Command::new("sh");
+    shell
+        .args(["-c", command])
+        .current_dir(view)
+        .envs(env.iter().map(|(key, value)| (key, value)))
+        .env("PORT", port.to_string())
+        .env(IDENTITY_ENV, &identity);
+    // `systemd-run --scope` execs the command, so the recorded pid stays the dev server's.
     let child = spawn_detached(
-        Command::new("sh")
-            .args(["-c", command])
-            .current_dir(view)
-            .envs(env.iter().map(|(key, value)| (key, value)))
-            .env("PORT", port.to_string())
-            .env(IDENTITY_ENV, &identity)
+        super::systemd::scoped(shell, name)
             .stdout(stdout)
             .stderr(stderr),
     )
