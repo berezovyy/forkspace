@@ -49,6 +49,23 @@ impl RunningProcess {
     }
 }
 
+/// Resource limits on a workspace's processes (Linux, through its systemd slice).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Limits {
+    /// `MemoryHigh`: above it the workspace is throttled and reclaimed (`4G`, `50%`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
+    /// `CPUQuota`: CPU time as a percentage of one CPU (`50%`, `200%`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<String>,
+}
+
+impl Limits {
+    pub fn is_empty(&self) -> bool {
+        self.memory.is_none() && self.cpu.is_none()
+    }
+}
+
 /// One workspace as recorded in `state.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
@@ -87,6 +104,8 @@ pub struct Workspace {
     /// `.git` pointed outside it (a linked worktree or submodule).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_head_at_fork: Option<String>,
+    #[serde(default, skip_serializing_if = "Limits::is_empty")]
+    pub limits: Limits,
     /// Files `pull` wrote conflict markers into; `merge` refuses while any still has them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unresolved_conflicts: Vec<PathBuf>,
@@ -150,6 +169,7 @@ impl Workspace {
             last_pull: None,
             git_head_at_fork: None,
             unresolved_conflicts: Vec::new(),
+            limits: Limits::default(),
             degraded: view.degraded,
             probe_reason: view.probe_reason,
             unknown_fields: Map::new(),

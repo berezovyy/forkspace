@@ -53,7 +53,7 @@ pub(crate) fn start(
     let view = select_backend(Some(workspace.backend_kind))?.view_path(workspace);
     let env = crate::workspace::process_env(state, workspace)?;
 
-    let process = spawn(name, command, &view, &env, port)?;
+    let process = spawn(workspace, command, &view, &env, port)?;
     state.require_workspace_mut(name)?.process = Some(process.clone());
 
     let proxy = match proxy::ensure_running(state) {
@@ -193,13 +193,13 @@ fn choose_port(state: &State, requested: u16) -> Result<u16> {
 /// Launch `sh -c command` in `view` as a detached process group logging to the workspace's
 /// log directory.
 fn spawn(
-    name: &str,
+    workspace: &crate::workspace::Workspace,
     command: &str,
     view: &Path,
     env: &[(String, String)],
     port: u16,
 ) -> Result<RunningProcess> {
-    let log_dir = paths::log_dir(name);
+    let log_dir = paths::log_dir(&workspace.name);
     fs::create_dir_all(&log_dir)
         .map_err(|error| ForkspaceError::ProcessFailed(format!("create log directory: {error}")))?;
     let (stdout, stderr) = create_logs(&log_dir, "stdout.log", "stderr.log")
@@ -215,7 +215,7 @@ fn spawn(
         .env(IDENTITY_ENV, &identity);
     // `systemd-run --scope` execs the command, so the recorded pid stays the dev server's.
     let child = spawn_detached(
-        super::systemd::scoped(shell, name)
+        super::systemd::scoped(shell, workspace, true)
             .stdout(stdout)
             .stderr(stderr),
     )

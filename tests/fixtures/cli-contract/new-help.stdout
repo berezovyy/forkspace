@@ -12,4 +12,6 @@ Options:
       --branch <BRANCH>    Create and record a Git branch in the workspace
       --copy               Consent to a full directory copy backend
       --live               Show later changes to the source in the workspace (Linux overlay only; skips the frozen copy)
+      --memory <SIZE>      Throttle the workspace's processes above this much memory, e.g. 4G (Linux)
+      --cpu <PERCENT>      Cap the workspace's CPU time, as a percentage of one CPU, e.g. 200% (Linux)
   -h, --help               Print help

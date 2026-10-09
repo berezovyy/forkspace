@@ -23,6 +23,7 @@ _forkspace() {
         'checkpoint:Save the current state of a workspace'
         'checkpoints:List a workspace'"'"'s checkpoints'
         'restore:Return a workspace to one of its checkpoints'
+        'limit:Show or change a workspace'"'"'s memory and CPU limits'
     )
 
     _arguments -C \
@@ -46,12 +47,15 @@ _forkspace() {
                         '--branch=[Create a Git branch]:branch:' \
                         '--copy[Consent to a full directory copy]' \
                         '--live[Show later source changes (no frozen copy)]' \
+                        '--memory=[Memory above which the workspace is throttled]:size:' \
+                        '--cpu=[CPU time cap, percent of one CPU]:percent:' \
                         '--help[Show help]'
                     ;;
                 drop)
                     _arguments \
                         '1:workspace:_forkspace_workspaces' \
                         '--force[Force removal]' \
+                        '--kill[Stop processes still running in the workspace]' \
                         '--all[Remove all workspaces]' \
                         '--glob[Treat name as glob pattern]' \
                         '--help[Show help]'
@@ -153,6 +157,13 @@ _forkspace() {
                     _arguments \
                         '1:workspace:_forkspace_workspaces' \
                         '--json[Output as JSON]' \
+                        '--help[Show help]'
+                    ;;
+                limit)
+                    _arguments \
+                        '1:workspace:_forkspace_workspaces' \
+                        '--memory=[Memory limit or none]:size:' \
+                        '--cpu=[CPU limit or none]:percent:' \
                         '--help[Show help]'
                     ;;
                 restore)

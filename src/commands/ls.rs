@@ -67,6 +67,8 @@ fn json_entry(workspace: &Workspace, processes: usize) -> serde_json::Value {
         "base_missing": !workspace.base.is_dir(),
         "view_missing": !workspace.view_path.is_dir(),
         "processes": processes,
+        "memory_bytes": crate::process::systemd::memory_current(&workspace.name),
+        "limits": workspace.limits,
     })
 }
 
@@ -137,10 +139,15 @@ fn describe_process(workspace: &Workspace, processes: usize) -> String {
         Some(_) => Some("stopped".to_string()),
         None => None,
     };
-    let count = match processes {
-        0 => None,
-        1 => Some("1 process".to_string()),
-        n => Some(format!("{n} processes")),
+    let memory = crate::process::systemd::memory_current(&workspace.name)
+        .filter(|bytes| *bytes > 0)
+        .map(|bytes| format!("{:.1} MiB", bytes as f64 / 1_048_576.0));
+    let count = match (processes, memory) {
+        (0, _) => None,
+        (1, None) => Some("1 process".to_string()),
+        (1, Some(memory)) => Some(format!("1 process, {memory}")),
+        (n, None) => Some(format!("{n} processes")),
+        (n, Some(memory)) => Some(format!("{n} processes, {memory}")),
     };
     match (server, count) {
         (Some(server), Some(count)) => format!("{server}, {count}"),

@@ -62,6 +62,10 @@ pub enum Commands {
     /// Return a workspace to one of its checkpoints
     Restore(RestoreArgs),
 
+    /// Show or change a workspace's memory and CPU limits
+    Limit(LimitArgs),
+
+
     /// Generate shell completions
     #[command(hide = true)]
     Completions(CompletionsArgs),
@@ -105,6 +109,20 @@ pub struct NewArgs {
         help = "Show later changes to the source in the workspace (Linux overlay only; skips the frozen copy)"
     )]
     pub live: bool,
+
+    #[arg(
+        long,
+        value_name = "SIZE",
+        help = "Throttle the workspace's processes above this much memory, e.g. 4G (Linux)"
+    )]
+    pub memory: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "PERCENT",
+        help = "Cap the workspace's CPU time, as a percentage of one CPU, e.g. 200% (Linux)"
+    )]
+    pub cpu: Option<String>,
 }
 
 #[derive(Args)]
@@ -333,6 +351,26 @@ pub struct MergeArgs {
         help = "With --undo, list the merges that can be undone"
     )]
     pub list: bool,
+}
+
+#[derive(Args)]
+pub struct LimitArgs {
+    #[arg(help = "Name of the workspace")]
+    pub name: String,
+
+    #[arg(
+        long,
+        value_name = "SIZE",
+        help = "Memory above which it is throttled, e.g. 4G; `none` removes it"
+    )]
+    pub memory: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "PERCENT",
+        help = "CPU time cap as a percentage of one CPU; `none` removes it"
+    )]
+    pub cpu: Option<String>,
 }
 
 #[derive(Args)]

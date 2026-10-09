@@ -19,6 +19,7 @@ Commands:
   checkpoint   Save the current state of a workspace
   checkpoints  List a workspace's checkpoints
   restore      Return a workspace to one of its checkpoints
+  limit        Show or change a workspace's memory and CPU limits
   help         Print this message or the help of the given subcommand(s)
 
 Options:

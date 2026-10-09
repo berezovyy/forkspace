@@ -33,7 +33,9 @@ pub fn exec(args: EnterArgs) -> Result {
     let backend = select_backend(Some(workspace.backend_kind))?;
 
     let command = shell_command(&args, &state, workspace, backend.as_ref())?;
-    let status = crate::process::systemd::scoped(command, &name)
+    // A command (rather than an interactive shell) runs at background priority on macOS.
+    let background = !args.command.is_empty();
+    let status = crate::process::systemd::scoped(command, workspace, background)
         .status()
         .io_context(|| "failed to spawn command".to_string())?;
     report_exit(&name, status);

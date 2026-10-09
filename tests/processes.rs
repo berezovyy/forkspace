@@ -168,3 +168,138 @@ fn without_systemd_the_proc_scan_still_finds_the_process() {
     assert!(wait_until_gone("3104"));
     assert!(!env.home.path().join("workspaces/ws").exists());
 }
+
+/// The cgroup directory of the slice whose name ends in `_<workspace>.slice`.
+fn slice_cgroup(workspace: &str) -> Option<PathBuf> {
+    let uid = unsafe { libc::getuid() };
+    let parent = PathBuf::from(format!(
+        "/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/forkspace.slice"
+    ));
+    fs::read_dir(&parent)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(&format!("_{workspace}.slice")))
+                && has_procs(path)
+        })
+}
+
+fn has_procs(path: &std::path::Path) -> bool {
+    walk_procs(path).next().is_some()
+}
+
+fn walk_procs(path: &std::path::Path) -> impl Iterator<Item = u32> {
+    let mut pids = Vec::new();
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        pids.extend(
+            fs::read_to_string(dir.join("cgroup.procs"))
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|line| line.parse::<u32>().ok()),
+        );
+        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            if entry.path().is_dir() {
+                stack.push(entry.path());
+            }
+        }
+    }
+    pids.into_iter()
+}
+
+#[test]
+fn workspace_processes_run_under_forkspace_slice_with_limits() {
+    if !systemd_user_available() {
+        eprintln!("skipping: no systemd user manager");
+        return;
+    }
+    let env = Env::new("copy", true);
+    // A distinct workspace name, so the slice can be told apart from parallel tests'.
+    let project = env.root.path().join("project");
+    let created = env.run(&[
+        "new",
+        "limited",
+        "--from",
+        project.to_str().unwrap(),
+        "--copy",
+        "--memory",
+        "1G",
+        "--cpu",
+        "150%",
+    ]);
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let started = env.run(&[
+        "enter",
+        "limited",
+        "--",
+        "sh",
+        "-c",
+        "nohup sleep 3105 >/dev/null 2>&1 & exit 0",
+    ]);
+    assert!(started.status.success());
+    std::thread::sleep(Duration::from_millis(300));
+
+    let slice = slice_cgroup("limited").expect("workspace slice with its process");
+    let pid = running("3105")[0];
+    assert!(walk_procs(&slice).any(|member| member == pid));
+    assert_eq!(
+        fs::read_to_string(slice.join("memory.high"))
+            .unwrap()
+            .trim(),
+        "1073741824"
+    );
+    assert_eq!(
+        fs::read_to_string(slice.join("cpu.max")).unwrap().trim(),
+        "150000 100000"
+    );
+    let parent = slice.parent().unwrap();
+    assert_eq!(parent.file_name().unwrap(), "forkspace.slice");
+    assert_eq!(
+        fs::read_to_string(parent.join("cpu.weight"))
+            .unwrap()
+            .trim(),
+        "50"
+    );
+    assert_ne!(
+        fs::read_to_string(parent.join("memory.high"))
+            .unwrap()
+            .trim(),
+        "max"
+    );
+
+    let listed: serde_json::Value =
+        serde_json::from_slice(&env.run(&["ls", "--json"]).stdout).unwrap();
+    let entry = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "limited")
+        .unwrap();
+    assert!(entry["memory_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(entry["limits"]["memory"], "1G");
+
+    let changed = env.run(&["limit", "limited", "--memory", "2G"]);
+    assert!(changed.status.success());
+    assert_eq!(
+        fs::read_to_string(slice.join("memory.high"))
+            .unwrap()
+            .trim(),
+        "2147483648"
+    );
+    assert_eq!(
+        env.run(&["limit", "limited", "--cpu", "lots"])
+            .status
+            .code(),
+        Some(1)
+    );
+
+    assert!(env.run(&["drop", "limited", "--kill"]).status.success());
+    assert!(wait_until_gone("3105"));
+}

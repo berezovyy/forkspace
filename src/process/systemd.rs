@@ -5,12 +5,20 @@
 //! `--scope` keeps the caller's terminal, environment, and working directory, and every
 //! descendant stays in the workspace's cgroup, including `nohup`, `setsid`, and double-forked
 //! processes. The `-` in the slice name makes each workspace slice a child of
-//! `forkspace.slice`, where resource limits for all workspaces can be set. Without a user
-//! manager (containers, SSH sessions without lingering) commands run directly and the
-//! `/proc` scan in [`super::members`] is the only way to find them.
+//! `forkspace.slice`, which carries limits for all workspaces together: a lower CPU weight than
+//! the user's own apps and a shared memory ceiling, so parallel agents cannot freeze the
+//! machine. A workspace's own `--memory` / `--cpu` limits go on its slice. Without a user
+//! manager (containers, SSH sessions without lingering) commands run directly, unlimited, and
+//! the `/proc` scan in [`super::members`] is the only way to find them.
+//!
+//! On macOS, where unprivileged users have no per-group limits, commands that are not an
+//! interactive shell run at background priority (`PRIO_DARWIN_BG`, what `taskpolicy -b` sets):
+//! lower CPU and disk priority than the user's apps.
 
 use std::path::PathBuf;
 use std::process::Command;
+
+use crate::workspace::{Limits, Workspace};
 
 /// Whether `systemd-run --user` can be used here.
 pub fn available() -> bool {
@@ -49,15 +57,18 @@ fn home_hash() -> u32 {
         })
 }
 
-/// `command` wrapped to run in workspace `name`'s slice, or unchanged without systemd.
-pub fn scoped(command: Command, name: &str) -> Command {
+/// `command` set up to run in `workspace`: in its slice under systemd, at background
+/// priority on macOS when `background` (anything but an interactive shell).
+pub fn scoped(command: Command, workspace: &Workspace, background: bool) -> Command {
     if !available() {
-        return command;
+        return lowered(command, background);
     }
+    ensure_shared_limits();
+    apply_limits(&workspace.name, &workspace.limits);
     let mut wrapped = Command::new("systemd-run");
     wrapped
         .args(["--user", "--scope", "--collect", "--quiet"])
-        .arg(format!("--slice={}", slice(name)))
+        .arg(format!("--slice={}", slice(&workspace.name)))
         .arg("--")
         .arg(command.get_program())
         .args(command.get_args());
@@ -71,6 +82,88 @@ pub fn scoped(command: Command, name: &str) -> Command {
         };
     }
     wrapped
+}
+
+#[cfg(target_os = "macos")]
+fn lowered(mut command: Command, background: bool) -> Command {
+    use std::os::unix::process::CommandExt;
+    if background {
+        unsafe {
+            command.pre_exec(|| {
+                // Best effort: an unchanged priority is not a reason to fail the command.
+                libc::setpriority(libc::PRIO_DARWIN_PROCESS, 0, libc::PRIO_DARWIN_BG);
+                Ok(())
+            });
+        }
+    }
+    command
+}
+
+#[cfg(not(target_os = "macos"))]
+fn lowered(command: Command, _background: bool) -> Command {
+    command
+}
+
+/// Set the limits shared by all workspaces on `forkspace.slice`, once per login session (the
+/// properties are runtime-only, and the marker lives in `$XDG_RUNTIME_DIR`).
+fn ensure_shared_limits() {
+    let weight = std::env::var("FORKSPACE_CPU_WEIGHT").unwrap_or_else(|_| "50".to_string());
+    let memory = std::env::var("FORKSPACE_MEMORY_HIGH").unwrap_or_else(|_| "75%".to_string());
+    let properties = [
+        format!("CPUWeight={weight}"),
+        format!("MemoryHigh={memory}"),
+        "TasksMax=25%".to_string(),
+    ];
+    let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") else {
+        return;
+    };
+    let marker = PathBuf::from(runtime).join(format!(
+        "forkspace-limits-{weight}-{}",
+        memory.replace(['/', '%'], "_")
+    ));
+    if marker.exists() {
+        return;
+    }
+    let applied = Command::new("systemctl")
+        .args(["--user", "set-property", "--runtime", "forkspace.slice"])
+        .args(&properties)
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if applied {
+        let _ = std::fs::write(marker, "");
+    }
+}
+
+/// Put `limits` on workspace `name`'s slice (runtime-only; reapplied at every start).
+pub fn apply_limits(name: &str, limits: &Limits) {
+    if !available() || limits.is_empty() {
+        return;
+    }
+    let mut properties = Vec::new();
+    if let Some(memory) = &limits.memory {
+        properties.push(format!("MemoryHigh={memory}"));
+    }
+    if let Some(cpu) = &limits.cpu {
+        properties.push(format!("CPUQuota={cpu}"));
+    }
+    set_properties(name, &properties);
+}
+
+/// Set unit `properties` on workspace `name`'s slice for this session.
+pub fn set_properties(name: &str, properties: &[String]) {
+    if !available() || properties.is_empty() {
+        return;
+    }
+    let _ = Command::new("systemctl")
+        .args(["--user", "set-property", "--runtime", &slice(name)])
+        .args(properties)
+        .output();
+}
+
+/// Memory used by the processes in workspace `name`'s slice right now.
+pub fn memory_current(name: &str) -> Option<u64> {
+    let text = std::fs::read_to_string(slice_cgroup(name)?.join("memory.current")).ok()?;
+    text.trim().parse().ok()
 }
 
 /// Every process in workspace `name`'s slice.

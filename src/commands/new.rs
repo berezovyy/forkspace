@@ -10,6 +10,7 @@ use crate::state::State;
 use crate::workspace::{self, CreateOptions, Workspace};
 
 pub fn exec(args: NewArgs) -> Result {
+    let limits = super::limit::from_flags(args.memory.as_deref(), args.cpu.as_deref())?;
     if let Some(branch) = args.branch.as_deref() {
         ensure_branch_creatable(&branch_base(&args.from)?, branch)?;
     }
@@ -29,6 +30,13 @@ pub fn exec(args: NewArgs) -> Result {
     )?;
     if let Some(branch) = args.branch {
         create_branch(&mut ws, branch)?;
+    }
+    if !limits.is_empty() {
+        super::limit::warn_without_systemd(&limits);
+        State::with_state(|state| {
+            state.require_workspace_mut(&ws.name)?.limits = limits;
+            Ok(())
+        })?;
     }
     print_backend_notes(&ws);
     warn_inherited_venvs(&ws);
