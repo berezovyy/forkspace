@@ -29,6 +29,8 @@ const SWEEP_LIMIT: usize = 128;
 pub enum OperationKind {
     Merge,
     Pull,
+    /// `forkspace restore`: a workspace returned to one of its checkpoints.
+    Restore,
 }
 
 impl OperationKind {
@@ -36,6 +38,7 @@ impl OperationKind {
         match self {
             Self::Merge => "merge",
             Self::Pull => "pull",
+            Self::Restore => "restore",
         }
     }
 }
@@ -73,13 +76,15 @@ impl Fingerprint {
     }
 }
 
-/// A step installing a staged line-level merge rather than the source entry.
+/// A step installing a staged entry (a line-level merge, or a checkpoint's saved version)
+/// rather than the source entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergedStep {
     #[serde(with = "crate::changes::path_serde")]
     pub path: PathBuf,
-    /// The target the merge was computed from; anything else there is a newer edit.
-    pub expected: Fingerprint,
+    /// The target the entry was staged against (`None`: no entry there); anything else there
+    /// is a newer edit.
+    pub expected: Option<Fingerprint>,
 }
 
 /// The durable record of one merge or pull.
@@ -307,7 +312,7 @@ fn is_terminal(value: &serde_json::Value) -> bool {
                 .map(|values| values.len() as u64);
             next.zip(total).is_some_and(|(next, total)| next >= total)
         }
-        Some("merge" | "pull") => phase == Some("done"),
+        Some("merge" | "pull" | "restore") => phase == Some("done"),
         _ => false,
     }
 }
@@ -362,22 +367,23 @@ fn apply_merged(
 ) -> Result {
     let staged = staging.join(&step.path);
     let target = target_root.join(&step.path);
-    let unchanged = Fingerprint::of(&target) == Some(step.expected);
+    let unchanged = Fingerprint::of(&target) == step.expected;
     if !unchanged && !same_entry(&staged, &target) {
         let paths = vec![step.path.display().to_string()];
         return Err(match op {
             OperationKind::Pull => ForkspaceError::PullConflict { paths },
             OperationKind::Merge => ForkspaceError::MergeConflict { paths },
+            OperationKind::Restore => ForkspaceError::InvalidArgument(format!(
+                "{} changed while restoring; rerun the restore with --resume",
+                step.path.display()
+            )),
         });
     }
     let metadata =
         fs::symlink_metadata(&staged).io_context(|| format!("inspect {}", staged.display()))?;
+    ensure_parent_dir(&target)?;
     let temporary = target.with_extension(format!("forkspace-{}-{index}.tmp", op.as_str()));
-    let _ = remove_existing(&temporary);
-    fs::copy(&staged, &temporary)
-        .io_context(|| format!("copy {} -> {}", staged.display(), temporary.display()))?;
-    fs::set_permissions(&temporary, metadata.permissions())
-        .io_context(|| format!("set permissions on {}", temporary.display()))?;
+    stage_entry(&staged, &metadata, &temporary)?;
     install_over(
         &temporary,
         &target,

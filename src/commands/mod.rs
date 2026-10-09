@@ -1,6 +1,7 @@
 //! One handler per subcommand: check the arguments, call into the domain modules, and
 //! print the result.
 
+pub(crate) mod checkpoint;
 pub(crate) mod compare;
 pub(crate) mod completions;
 pub mod diff;
@@ -38,6 +39,9 @@ pub fn dispatch(cli: Cli) -> Result {
         Commands::Merge(args) => merge::exec(args),
         Commands::Pull(args) => pull::exec(args),
         Commands::Land(args) => land::exec(args),
+        Commands::Checkpoint(args) => checkpoint::save(args),
+        Commands::Checkpoints(args) => checkpoint::list(args),
+        Commands::Restore(args) => checkpoint::restore(args),
         Commands::ProxyDaemon(args) => crate::process::proxy::run_proxy(args.port),
     }
 }

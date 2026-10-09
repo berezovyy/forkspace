@@ -53,6 +53,15 @@ pub enum Commands {
     /// Preserve a workspace's Git branch in the base repository
     Land(LandArgs),
 
+    /// Save the current state of a workspace
+    Checkpoint(CheckpointArgs),
+
+    /// List a workspace's checkpoints
+    Checkpoints(CheckpointsArgs),
+
+    /// Return a workspace to one of its checkpoints
+    Restore(RestoreArgs),
+
     /// Generate shell completions
     #[command(hide = true)]
     Completions(CompletionsArgs),
@@ -321,6 +330,45 @@ pub struct MergeArgs {
         help = "With --undo, list the merges that can be undone"
     )]
     pub list: bool,
+}
+
+#[derive(Args)]
+pub struct CheckpointArgs {
+    #[arg(help = "Workspace name (defaults to $FORKSPACE_WORKSPACE)")]
+    pub name: Option<String>,
+
+    #[arg(short, long, help = "A label to recognize the checkpoint by")]
+    pub message: Option<String>,
+
+    #[arg(long, help = "Also save ignored paths such as node_modules")]
+    pub all: bool,
+}
+
+#[derive(Args)]
+pub struct CheckpointsArgs {
+    #[arg(help = "Workspace name (defaults to $FORKSPACE_WORKSPACE)")]
+    pub name: Option<String>,
+
+    #[arg(long, help = "Output as JSON")]
+    pub json: bool,
+}
+
+#[derive(Args)]
+pub struct RestoreArgs {
+    #[arg(help = "Name of the workspace to restore")]
+    pub name: String,
+
+    #[arg(
+        required_unless_present = "resume",
+        help = "Checkpoint id (see `forkspace checkpoints`)"
+    )]
+    pub id: Option<u64>,
+
+    #[arg(long, conflicts_with = "id", help = "Finish an interrupted restore")]
+    pub resume: bool,
+
+    #[arg(long, help = "Skip dependency installation when a lockfile changes")]
+    pub no_install: bool,
 }
 
 #[derive(Args)]

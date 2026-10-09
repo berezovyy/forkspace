@@ -5,18 +5,21 @@ Linux overlayfs, APFS clones, Linux reflinks, and a portable copy floor share on
 Usage: forkspace <COMMAND>
 
 Commands:
-  new      Create a new workspace from a directory or another workspace
-  drop     Remove a workspace and unmount its overlay
-  enter    Open a shell (or run a command) inside a workspace
-  run      Start a process in a workspace (dev server, Electron, etc.)
-  switch   Switch the active workspace (hot-swap via proxy)
-  ls       List all active workspaces
-  diff     Show what changed in a workspace
-  compare  Compare parallel workspace attempts side by side
-  merge    Apply workspace changes back to the base directory
-  pull     Bring base changes into a workspace
-  land     Preserve a workspace's Git branch in the base repository
-  help     Print this message or the help of the given subcommand(s)
+  new          Create a new workspace from a directory or another workspace
+  drop         Remove a workspace and unmount its overlay
+  enter        Open a shell (or run a command) inside a workspace
+  run          Start a process in a workspace (dev server, Electron, etc.)
+  switch       Switch the active workspace (hot-swap via proxy)
+  ls           List all active workspaces
+  diff         Show what changed in a workspace
+  compare      Compare parallel workspace attempts side by side
+  merge        Apply workspace changes back to the base directory
+  pull         Bring base changes into a workspace
+  land         Preserve a workspace's Git branch in the base repository
+  checkpoint   Save the current state of a workspace
+  checkpoints  List a workspace's checkpoints
+  restore      Return a workspace to one of its checkpoints
+  help         Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help

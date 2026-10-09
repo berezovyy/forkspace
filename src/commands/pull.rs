@@ -24,6 +24,13 @@ pub fn exec(args: PullArgs) -> Result {
                 pull::discard_staging(&workspace);
                 return Ok(());
             }
+            // Pull rewrites workspace files; keep a way back.
+            crate::sync::checkpoint::create(
+                &workspace,
+                Some("before pull".to_string()),
+                false,
+                true,
+            )?;
             let journal = pull::start(&workspace, &plan)?;
             (journal, Some(plan.changes.len()), plan.marked)
         };
@@ -57,7 +64,7 @@ pub fn exec(args: PullArgs) -> Result {
 }
 
 /// The named workspace, or the one this shell was entered into.
-fn workspace_name(name: Option<String>) -> Result<String> {
+pub(crate) fn workspace_name(name: Option<String>) -> Result<String> {
     name.or_else(|| std::env::var("FORKSPACE_WORKSPACE").ok())
         .ok_or_else(|| {
             ForkspaceError::InvalidArgument(

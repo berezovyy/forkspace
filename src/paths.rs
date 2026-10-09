@@ -47,6 +47,11 @@ pub fn ancestor_root() -> PathBuf {
     forkspace_home().join("ancestors")
 }
 
+/// Saved workspace states, one directory per workspace.
+pub fn checkpoint_root() -> PathBuf {
+    forkspace_home().join("checkpoints")
+}
+
 /// What each merge replaced or deleted in a project, for `merge --undo`.
 pub fn undo_root() -> PathBuf {
     forkspace_home().join("undo")

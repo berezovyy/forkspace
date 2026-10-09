@@ -6,6 +6,7 @@
 //! project's package manager after a transfer.
 
 pub mod ancestor;
+pub mod checkpoint;
 pub mod install;
 pub mod journal;
 pub mod merge;

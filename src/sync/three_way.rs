@@ -203,6 +203,7 @@ pub(crate) fn reconcile(
             result.whole_file.push(path.clone());
             continue;
         };
+        let expected = Some(expected);
         stage(&staging.join(path), &bytes, &ours)?;
         result.steps.push(MergedStep {
             path: path.clone(),

@@ -46,6 +46,7 @@ fn remove_after_cleanup(state: &mut State, name: &str, cleanup: impl FnOnce() ->
     cleanup()?;
     manifest::remove(name)?;
     crate::sync::ancestor::remove(name)?;
+    crate::sync::checkpoint::remove_all(name)?;
     state.remove_workspace(name)?;
     state.trash_unused_frozen_copies();
     Ok(())

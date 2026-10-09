@@ -106,6 +106,18 @@ fn copy_visible(from: &Path, to: &Path) -> Result {
         }
         fs::copy(entry.path(), &target)
             .io_context(|| format!("copy {} to {}", entry.path().display(), target.display()))?;
+        // Keep the modification time, so restoring a fork-time version is exact.
+        if let Ok(modified) = entry
+            .metadata()
+            .map_err(std::io::Error::from)
+            .and_then(|m| m.modified())
+        {
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&target)
+                .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(modified)))
+                .io_context(|| format!("set time on {}", target.display()))?;
+        }
     }
     Ok(())
 }

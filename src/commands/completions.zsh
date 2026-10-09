@@ -20,6 +20,9 @@ _forkspace() {
         'merge:Apply workspace changes back to the base directory'
         'pull:Bring base changes into a workspace'
         'land:Preserve workspace commits in the base repository'
+        'checkpoint:Save the current state of a workspace'
+        'checkpoints:List a workspace'"'"'s checkpoints'
+        'restore:Return a workspace to one of its checkpoints'
     )
 
     _arguments -C \
@@ -42,6 +45,7 @@ _forkspace() {
                         '--tmpfs[Keep changes in RAM]' \
                         '--branch=[Create a Git branch]:branch:' \
                         '--copy[Consent to a full directory copy]' \
+                        '--live[Show later source changes (no frozen copy)]' \
                         '--help[Show help]'
                     ;;
                 drop)
@@ -60,6 +64,7 @@ _forkspace() {
                         '--ephemeral[Destroy on exit]' \
                         '--tmpfs[Keep changes in RAM]' \
                         '--copy[Consent to a full directory copy]' \
+                        '--live[Show later base changes (no frozen copy)]' \
                         '--merge-on-exit[Merge changes on exit]' \
                         '--session=[Session identifier]:session:' \
                         '--help[Show help]'
@@ -114,6 +119,8 @@ _forkspace() {
                         '--resume[Resume an interrupted merge]' \
                         '--overwrite-base[Overwrite conflicting base changes]' \
                         '--quiet[Suppress the pre-apply plan summary]' \
+                        '--undo[Put the base back as it was before the latest merge]' \
+                        '--list[With --undo, list the merges that can be undone]' \
                         '--help[Show help]'
                     ;;
                 pull)
@@ -132,6 +139,28 @@ _forkspace() {
                         '--force[Replace a divergent branch]' \
                         '--drop[Drop after a successful land]' \
                         '--as=[Land under another branch]:branch:' \
+                        '--help[Show help]'
+                    ;;
+                checkpoint)
+                    _arguments \
+                        '1:workspace:_forkspace_workspaces' \
+                        '-m=[Label]:label:' \
+                        '--message=[Label]:label:' \
+                        '--all[Also save ignored paths]' \
+                        '--help[Show help]'
+                    ;;
+                checkpoints)
+                    _arguments \
+                        '1:workspace:_forkspace_workspaces' \
+                        '--json[Output as JSON]' \
+                        '--help[Show help]'
+                    ;;
+                restore)
+                    _arguments \
+                        '1:workspace:_forkspace_workspaces' \
+                        '2:checkpoint id:' \
+                        '--resume[Finish an interrupted restore]' \
+                        '--no-install[Skip dependency installation]' \
                         '--help[Show help]'
                     ;;
             esac

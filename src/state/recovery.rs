@@ -152,9 +152,18 @@ impl State {
         changed
     }
 
-    /// Fork-time copies belong to a recorded or pending workspace; staging copies need a live
-    /// writer.
+    /// Checkpoints and fork-time copies belong to a recorded or pending workspace; staging
+    /// copies need a live writer.
     fn remove_orphan_ancestors(&self) {
+        for path in bounded_entries(&paths::checkpoint_root()) {
+            let owned = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| self.name_in_use(name));
+            if !owned {
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
         for path in bounded_entries(&paths::ancestor_root()) {
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                 continue;
