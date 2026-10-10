@@ -86,6 +86,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         view,
     );
     record_fork_time_files(&workspace);
+    exclude_from_backups_if_asked(&workspace);
     if let Err(error) = give_private_git(&mut workspace) {
         let _ = backend.destroy(&workspace, DestroyMode::Normal);
         let _ = crate::changes::manifest::remove(name);
@@ -102,6 +103,21 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         })
     })?;
     Ok(workspace)
+}
+
+/// Workspaces stay in backups by default, since one can hold the only copy of an agent's
+/// unmerged work; `FORKSPACE_BACKUP_WORKSPACES=off` opts them out.
+fn exclude_from_backups_if_asked(workspace: &Workspace) {
+    let opted_out = std::env::var("FORKSPACE_BACKUP_WORKSPACES")
+        .is_ok_and(|value| matches!(value.as_str(), "off" | "0" | "false"));
+    if !opted_out {
+        return;
+    }
+    let directory = match &workspace.backend_state {
+        crate::backend::BackendState::Overlay(_) => crate::paths::overlay_root(&workspace.name),
+        _ => crate::paths::snapshot_root(),
+    };
+    crate::disk::exclude_from_backups(&directory);
 }
 
 /// Keep the fork-time version of a snapshot workspace's source files for line-level merges.

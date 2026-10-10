@@ -30,6 +30,7 @@ impl State {
         let trash_root = paths::trash_dir();
         fs::create_dir_all(&trash_root)
             .io_context(|| format!("create trash directory {}", trash_root.display()))?;
+        crate::disk::exclude_from_backups(&trash_root);
 
         let mut changed = journal::sweep_terminal()?;
         changed |= self.trash_abandoned_creates(&trash_root);
@@ -78,19 +79,9 @@ impl State {
     /// Frozen copies that no workspace mounts or measures against are moved to the trash.
     /// Skipped while a create is in flight, since the copy it just made is not recorded yet.
     pub(crate) fn trash_unused_frozen_copies(&mut self) -> bool {
-        if !self.pending_creates.is_empty() {
-            return false;
-        }
-        let referenced = frozen::ids_of(
-            self.workspaces
-                .values()
-                .filter_map(|workspace| workspace.linux_state().ok())
-                .flat_map(|layers| [layers.lower.as_deref(), layers.ancestor.as_deref()])
-                .flatten(),
-        );
         let trash_root = paths::trash_dir();
         let mut changed = false;
-        for path in frozen::unreferenced(&referenced) {
+        for path in self.unused_frozen_copies() {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             let destination = trash_root.join(format!(
                 "frozen-{}-{}-{}",
@@ -104,6 +95,22 @@ impl State {
             }
         }
         changed
+    }
+
+    /// Frozen copies no workspace mounts or measures against (none while a create is in
+    /// flight, since the copy it just made is not recorded yet).
+    pub fn unused_frozen_copies(&self) -> Vec<PathBuf> {
+        if !self.pending_creates.is_empty() {
+            return Vec::new();
+        }
+        let referenced = frozen::ids_of(
+            self.workspaces
+                .values()
+                .filter_map(|workspace| workspace.linux_state().ok())
+                .flat_map(|layers| [layers.lower.as_deref(), layers.ancestor.as_deref()])
+                .flatten(),
+        );
+        frozen::unreferenced(&referenced)
     }
 
     /// A workspace whose view is gone but whose trashed view (`<name>-<fork_time_ns>-…`) is
@@ -197,7 +204,13 @@ impl State {
     /// Trash records whose directory has been deleted are dropped.
     fn forget_deleted_trash(&mut self) -> bool {
         let before = self.trash.len();
-        self.trash.retain(|record| record.path.exists());
+        self.trash.retain(|record| {
+            record.path.exists()
+                && record
+                    .path
+                    .file_name()
+                    .is_none_or(|name| name != "CACHEDIR.TAG")
+        });
         self.trash.len() != before
     }
 }
@@ -238,14 +251,15 @@ impl<'a> ManifestFile<'a> {
     }
 }
 
-/// At most [`SWEEP_LIMIT`] entries of `dir`, skipping unreadable ones; empty if `dir`
-/// cannot be read.
+/// At most [`SWEEP_LIMIT`] entries of `dir`, skipping unreadable ones and the backup
+/// exclusion tag; empty if `dir` cannot be read.
 fn bounded_entries(dir: &Path) -> impl Iterator<Item = PathBuf> {
     fs::read_dir(dir)
         .into_iter()
         .flatten()
-        .take(SWEEP_LIMIT)
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.file_name().is_none_or(|name| name != "CACHEDIR.TAG"))
+        .take(SWEEP_LIMIT)
 }
 
 /// Delete trashed directories in the background; a crash mid-delete just leaves them for

@@ -7,6 +7,7 @@ pub(crate) mod completions;
 pub mod diff;
 pub mod drop;
 pub(crate) mod enter;
+pub(crate) mod gc;
 pub mod land;
 pub(crate) mod limit;
 pub mod ls;
@@ -44,6 +45,7 @@ pub fn dispatch(cli: Cli) -> Result {
         Commands::Checkpoints(args) => checkpoint::list(args),
         Commands::Restore(args) => checkpoint::restore(args),
         Commands::Limit(args) => limit::exec(args),
+        Commands::Gc(args) => gc::exec(args),
         Commands::ProxyDaemon(args) => crate::process::proxy::run_proxy(args.port),
     }
 }

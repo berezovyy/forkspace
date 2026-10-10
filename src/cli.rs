@@ -65,6 +65,9 @@ pub enum Commands {
     /// Show or change a workspace's memory and CPU limits
     Limit(LimitArgs),
 
+    /// Show what disk forkspace could give back, and reclaim it
+    Gc(GcArgs),
+
 
     /// Generate shell completions
     #[command(hide = true)]
@@ -363,6 +366,20 @@ pub struct MergeArgs {
         help = "With --undo, list the merges that can be undone"
     )]
     pub list: bool,
+}
+
+#[derive(Args)]
+pub struct GcArgs {
+    #[arg(
+        long,
+        value_name = "AGE",
+        default_value = "7d",
+        help = "Only remove unchanged workspaces older than this (s, m, h, d, w)"
+    )]
+    pub older_than: String,
+
+    #[arg(long, help = "Remove without asking")]
+    pub yes: bool,
 }
 
 #[derive(Args)]

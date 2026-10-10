@@ -56,9 +56,10 @@ impl Env {
         self.ok(&["merge", name, "--quiet", "--no-install"]);
     }
 
+    /// Undo records (directories; the store also holds its backup exclusion tag).
     fn undo_dirs(&self) -> usize {
         fs::read_dir(self.home.path().join("undo"))
-            .map(|entries| entries.count())
+            .map(|entries| entries.flatten().filter(|entry| entry.path().is_dir()).count())
             .unwrap_or(0)
     }
 }

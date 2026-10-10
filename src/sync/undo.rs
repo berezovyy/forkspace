@@ -99,6 +99,7 @@ pub struct UndoReport {
 pub fn begin(workspace: &str, project: &Path, changes: &[FileChange]) -> Result<PathBuf> {
     let root = paths::undo_root();
     ensure_private_dir(&root)?;
+    crate::disk::exclude_from_backups(&root);
     let created_ns = now_unix_ns();
     let dir = root.join(format!("{created_ns:020}-{workspace}"));
     fs::create_dir_all(dir.join(KEPT)).io_context(|| format!("create {}", dir.display()))?;
@@ -299,12 +300,20 @@ fn topmost_missing_parent(project: &Path, relative: &Path) -> Option<PathBuf> {
 
 /// Keep undo data for the last [`KEEP_MERGES`] merges or [`KEEP_NS`], whichever is more.
 fn prune() {
-    let cutoff = now_unix_ns().saturating_sub(KEEP_NS);
-    for (dir, record) in list().into_iter().skip(KEEP_MERGES) {
-        if record.created_ns < cutoff {
-            let _ = fs::remove_dir_all(dir);
-        }
+    for dir in expired() {
+        let _ = fs::remove_dir_all(dir);
     }
+}
+
+/// Undo records beyond the retention limits.
+pub fn expired() -> Vec<PathBuf> {
+    let cutoff = now_unix_ns().saturating_sub(KEEP_NS);
+    list()
+        .into_iter()
+        .skip(KEEP_MERGES)
+        .filter(|(_, record)| record.created_ns < cutoff)
+        .map(|(dir, _)| dir)
+        .collect()
 }
 
 fn load(dir: &Path) -> Result<UndoRecord> {

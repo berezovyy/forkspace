@@ -69,6 +69,7 @@ pub(crate) enum Basis<'a> {
 pub(crate) fn freeze(source: &Path, basis: Basis<'_>) -> Result<Frozen> {
     let root = paths::frozen_root();
     ensure_private_dir(&root)?;
+    crate::disk::exclude_from_backups(&root);
     let _lock = lock(&root, true)?;
     let source = source
         .canonicalize()

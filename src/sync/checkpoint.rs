@@ -83,6 +83,7 @@ pub fn create(
 ) -> Result<Checkpoint> {
     let root = workspace_dir(&workspace.name);
     ensure_private_dir(&paths::checkpoint_root())?;
+    crate::disk::exclude_from_backups(&paths::checkpoint_root());
     ensure_private_dir(&root)?;
     let id = list(&workspace.name)?
         .iter()
@@ -360,9 +361,17 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 
 /// Keep the newest [`KEEP_MANUAL`] manual and [`KEEP_AUTOMATIC`] automatic checkpoints.
 fn prune(workspace: &str) {
+    for directory in expired(workspace) {
+        let _ = fs::remove_dir_all(directory);
+    }
+}
+
+/// Checkpoint directories of `workspace` beyond the retention limits.
+pub fn expired(workspace: &str) -> Vec<PathBuf> {
     let Ok(checkpoints) = list(workspace) else {
-        return;
+        return Vec::new();
     };
+    let mut expired = Vec::new();
     for automatic in [false, true] {
         let limit = if automatic {
             KEEP_AUTOMATIC
@@ -374,7 +383,8 @@ fn prune(workspace: &str) {
             .filter(|checkpoint| checkpoint.automatic == automatic)
             .collect();
         for checkpoint in kind.iter().take(kind.len().saturating_sub(limit)) {
-            let _ = fs::remove_dir_all(workspace_dir(workspace).join(checkpoint.id.to_string()));
+            expired.push(workspace_dir(workspace).join(checkpoint.id.to_string()));
         }
     }
+    expired
 }

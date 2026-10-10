@@ -24,6 +24,7 @@ _forkspace() {
         'checkpoints:List a workspace'"'"'s checkpoints'
         'restore:Return a workspace to one of its checkpoints'
         'limit:Show or change a workspace'"'"'s memory and CPU limits'
+        'gc:Show what disk forkspace could give back, and reclaim it'
     )
 
     _arguments -C \
@@ -160,6 +161,12 @@ _forkspace() {
                     _arguments \
                         '1:workspace:_forkspace_workspaces' \
                         '--json[Output as JSON]' \
+                        '--help[Show help]'
+                    ;;
+                gc)
+                    _arguments \
+                        '--older-than=[Only remove unchanged workspaces older than this]:age:' \
+                        '--yes[Remove without asking]' \
                         '--help[Show help]'
                     ;;
                 limit)

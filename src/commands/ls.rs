@@ -6,11 +6,14 @@ use owo_colors::OwoColorize;
 
 use crate::backend::{select_backend, ChangeCount};
 use crate::cli::LsArgs;
+use crate::disk;
 use crate::error::Result;
 use crate::state::State;
 use crate::workspace::Workspace;
 
-const HEADERS: [&str; 6] = ["NAME", "BASE", "BRANCH", "BACKEND", "CHANGED", "PROCESS"];
+const HEADERS: [&str; 7] = [
+    "NAME", "BASE", "BRANCH", "BACKEND", "CHANGED", "SIZE", "PROCESS",
+];
 const NAME_COLUMN: usize = 0;
 const BRANCH_COLUMN: usize = 2;
 
@@ -51,7 +54,35 @@ pub fn exec(args: LsArgs) -> Result {
         .iter()
         .any(|workspace| workspace.branch.is_some());
     print_table(&rows, show_branch);
+    print_total(&workspaces);
     Ok(())
+}
+
+/// `forkspace uses 2.1 GB (workspaces 0.8 GB, frozen copies 0.9 GB, …)`.
+fn print_total(workspaces: &[&Workspace]) {
+    let Ok(stores) = disk::StoreUsage::measure() else {
+        return;
+    };
+    let in_workspaces: u64 = workspaces
+        .iter()
+        .filter_map(|workspace| disk::workspace_bytes(workspace).ok())
+        .sum();
+    let mut parts = vec![format!("workspaces {}", disk::human(in_workspaces))];
+    for (label, bytes) in [
+        ("frozen copies", stores.frozen),
+        ("undo and checkpoints", stores.history),
+        ("other", stores.other),
+    ] {
+        if bytes > 0 {
+            parts.push(format!("{label} {}", disk::human(bytes)));
+        }
+    }
+    let total = in_workspaces + stores.frozen + stores.history + stores.other;
+    println!(
+        "\nforkspace uses {} ({})",
+        disk::human(total),
+        parts.join(", ")
+    );
 }
 
 fn json_entry(workspace: &Workspace, processes: usize) -> serde_json::Value {
@@ -66,6 +97,7 @@ fn json_entry(workspace: &Workspace, processes: usize) -> serde_json::Value {
         "probe_reason": workspace.probe_reason,
         "base_missing": !workspace.base.is_dir(),
         "view_missing": !workspace.view_path.is_dir(),
+        "size_bytes": disk::workspace_bytes(workspace).ok(),
         "processes": processes,
         "memory_bytes": crate::process::systemd::memory_current(&workspace.name),
         "limits": workspace.limits,
@@ -81,6 +113,7 @@ fn table_row(workspace: &Workspace, include_ignored: bool, processes: usize) -> 
         workspace.branch.clone().unwrap_or_else(|| "-".to_string()),
         describe_backend(workspace),
         describe_count(count),
+        disk::workspace_bytes(workspace).map_or_else(|_| "?".to_string(), disk::human),
         describe_process(workspace, processes),
     ])
 }

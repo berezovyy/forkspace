@@ -199,6 +199,43 @@ pub fn kill_slice(name: &str) {
     }
 }
 
+/// Slices of this `FORKSPACE_HOME` whose workspace is not in `names` (dropped by a forkspace
+/// that crashed, or removed by hand).
+pub fn orphan_slices<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
+    if !available() {
+        return Vec::new();
+    }
+    let known: std::collections::HashSet<String> =
+        names.into_iter().map(|name| slice(name)).collect();
+    let pattern = format!("forkspace-{:08x}_*", home_hash());
+    let Ok(output) = Command::new("systemctl")
+        .args([
+            "--user",
+            "list-units",
+            "--all",
+            "--plain",
+            "--no-legend",
+            &pattern,
+        ])
+        .output()
+    else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|unit| unit.ends_with(".slice") && !known.contains(*unit))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Stop the systemd unit `unit`.
+pub fn stop_unit(unit: &str) {
+    let _ = Command::new("systemctl")
+        .args(["--user", "stop", unit])
+        .output();
+}
+
 /// Unload workspace `name`'s (now empty) slice.
 pub fn stop_slice(name: &str) {
     if available() {

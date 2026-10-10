@@ -48,6 +48,7 @@ pub fn dir(name: &str) -> PathBuf {
 pub fn record(name: &str, from: &Path) -> Result {
     let root = paths::ancestor_root();
     ensure_private_dir(&root)?;
+    crate::disk::exclude_from_backups(&root);
     let staging = root.join(format!(".{name}.tmp-{}", std::process::id()));
     let _ = fs::remove_dir_all(&staging);
     if let Err(error) = copy_visible(from, &staging) {
