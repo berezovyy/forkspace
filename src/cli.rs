@@ -183,6 +183,15 @@ pub struct EnterArgs {
     )]
     pub live: bool,
 
+    #[arg(long, help = "Let the shell or command write outside the workspace")]
+    pub no_sandbox: bool,
+
+    #[arg(
+        long,
+        help = "List where commands in the workspace may write, then exit"
+    )]
+    pub sandbox_info: bool,
+
     #[arg(
         long,
         help = "Merge changes back to the base directory when exiting the shell"
@@ -221,6 +230,9 @@ pub struct RunArgs {
 
     #[arg(long, help = "Stop the running process instead of starting one")]
     pub stop: bool,
+
+    #[arg(long, help = "Let the process write outside its workspace")]
+    pub no_sandbox: bool,
 
     #[arg(last = true, help = "Command to run (e.g. npm run dev)")]
     pub command: Vec<String>,

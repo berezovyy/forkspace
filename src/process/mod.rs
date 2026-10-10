@@ -5,6 +5,7 @@ pub(crate) mod devserver;
 pub mod members;
 mod ports;
 pub(crate) mod proxy;
+pub mod sandbox;
 mod spawn;
 pub mod systemd;
 pub mod watch;

@@ -10,6 +10,7 @@ use std::process::{Command, ExitStatus};
 use crate::backend::{select_backend, WorkspaceBackend};
 use crate::cli::EnterArgs;
 use crate::error::{ForkspaceError, Result};
+use crate::process::sandbox;
 use crate::state::State;
 use crate::sync::{merge, plan};
 use crate::util::{now_unix_ns, IoContext};
@@ -32,10 +33,18 @@ pub fn exec(args: EnterArgs) -> Result {
     guard::ensure_idle(&name)?;
     let backend = select_backend(Some(workspace.backend_kind))?;
 
+    if args.sandbox_info {
+        print_sandbox(workspace, args.no_sandbox);
+        return Ok(());
+    }
     let command = shell_command(&args, &state, workspace, backend.as_ref())?;
     // A command (rather than an interactive shell) runs at background priority on macOS.
     let background = !args.command.is_empty();
-    let status = crate::process::systemd::scoped(command, workspace, background)
+    let mut command = crate::process::systemd::scoped(command, workspace, background);
+    if !args.no_sandbox && !sandbox::disabled_by_default() {
+        command = sandbox::apply(command, workspace);
+    }
+    let status = command
         .status()
         .io_context(|| "failed to spawn command".to_string())?;
     report_exit(&name, status);
@@ -51,6 +60,34 @@ pub fn exec(args: EnterArgs) -> Result {
         println!("ephemeral workspace removed");
     }
     Ok(())
+}
+
+/// `--sandbox-info`: where commands in `workspace` may write.
+fn print_sandbox(workspace: &workspace::Workspace, no_sandbox: bool) {
+    if no_sandbox || sandbox::disabled_by_default() {
+        println!("the write sandbox is off: commands may write anywhere you can");
+        return;
+    }
+    println!("commands in '{}' may write beneath:", workspace.name);
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let mut hidden = 0;
+    for path in sandbox::writable(workspace) {
+        let in_home = home
+            .as_ref()
+            .is_some_and(|home| path.parent() == Some(home.as_path()));
+        if in_home {
+            hidden += 1;
+        } else {
+            println!("  {}", path.display());
+        }
+    }
+    if hidden > 0 {
+        println!("  ~/.* ({hidden} hidden entries in your home folder, except FORKSPACE_HOME)");
+    }
+    println!(
+        "writes anywhere else, including {}, are refused",
+        workspace.base.display()
+    );
 }
 
 /// Create the workspace for `--new` / `--ephemeral` and return its name.

@@ -69,6 +69,8 @@ _forkspace() {
                         '--tmpfs[Keep changes in RAM]' \
                         '--copy[Consent to a full directory copy]' \
                         '--live[Show later base changes (no frozen copy)]' \
+                        '--no-sandbox[Let the command write outside the workspace]' \
+                        '--sandbox-info[List where commands may write, then exit]' \
                         '--merge-on-exit[Merge changes on exit]' \
                         '--session=[Session identifier]:session:' \
                         '--help[Show help]'
@@ -78,6 +80,7 @@ _forkspace() {
                         '1:workspace:_forkspace_workspaces' \
                         '--port=[App port]:port:' \
                         '--stop[Stop running process]' \
+                        '--no-sandbox[Let the process write outside the workspace]' \
                         '--help[Show help]'
                     ;;
                 switch)

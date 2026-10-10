@@ -10,4 +10,5 @@ Options:
       --port <PORT>          Port the app listens on inside the workspace [default: 3000]
       --port-wait <SECONDS>  How long to wait for the app to listen before returning (0 to skip) [default: 10]
       --stop                 Stop the running process instead of starting one
+      --no-sandbox           Let the process write outside its workspace
   -h, --help                 Print help

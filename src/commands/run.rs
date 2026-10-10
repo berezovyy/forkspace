@@ -19,7 +19,7 @@ pub fn exec(args: RunArgs) -> Result {
 
     let command = args.command.join(" ");
     State::with_state(|state| {
-        let started = devserver::start(state, &args.name, &command, args.port)?;
+        let started = devserver::start(state, &args.name, &command, args.port, !args.no_sandbox)?;
         println!(
             "running '{}' on port {} (PID {})",
             command, started.process.port, started.process.pid

@@ -39,6 +39,7 @@ pub(crate) fn start(
     name: &str,
     command: &str,
     requested_port: u16,
+    sandbox: bool,
 ) -> Result<Started> {
     let workspace = state.require_workspace(name)?;
     guard::require_live_view(state, workspace)?;
@@ -53,7 +54,7 @@ pub(crate) fn start(
     let view = select_backend(Some(workspace.backend_kind))?.view_path(workspace);
     let env = crate::workspace::process_env(state, workspace)?;
 
-    let process = spawn(workspace, command, &view, &env, port)?;
+    let process = spawn(workspace, command, &view, &env, port, sandbox)?;
     state.require_workspace_mut(name)?.process = Some(process.clone());
 
     let proxy = match proxy::ensure_running(state) {
@@ -198,6 +199,7 @@ fn spawn(
     view: &Path,
     env: &[(String, String)],
     port: u16,
+    sandbox: bool,
 ) -> Result<RunningProcess> {
     let log_dir = paths::log_dir(&workspace.name);
     fs::create_dir_all(&log_dir)
@@ -214,12 +216,12 @@ fn spawn(
         .env("PORT", port.to_string())
         .env(IDENTITY_ENV, &identity);
     // `systemd-run --scope` execs the command, so the recorded pid stays the dev server's.
-    let child = spawn_detached(
-        super::systemd::scoped(shell, workspace, true)
-            .stdout(stdout)
-            .stderr(stderr),
-    )
-    .map_err(|e| ForkspaceError::ProcessFailed(format!("spawn: {}", e)))?;
+    let mut launcher = super::systemd::scoped(shell, workspace, true);
+    if sandbox && !super::sandbox::disabled_by_default() {
+        launcher = super::sandbox::apply(launcher, workspace);
+    }
+    let child = spawn_detached(launcher.stdout(stdout).stderr(stderr))
+        .map_err(|e| ForkspaceError::ProcessFailed(format!("spawn: {}", e)))?;
 
     Ok(RunningProcess {
         pid: child.id(),
