@@ -72,10 +72,19 @@ pub fn base_changes(workspace: &Workspace) -> Result<Vec<FileChange>> {
 
     let mut present = BTreeSet::new();
     let mut changes = Vec::new();
-    for entry in WalkDir::new(&workspace.base)
+    // Runtime and internal directories (`node_modules`, `.git`) never transfer: skip them.
+    let walker = WalkDir::new(&workspace.base)
         .min_depth(1)
         .follow_links(false)
-    {
+        .into_iter()
+        .filter_entry(|entry| {
+            !entry.file_type().is_dir()
+                || entry
+                    .path()
+                    .strip_prefix(&workspace.base)
+                    .is_ok_and(|relative| is_transferable(ChangeFilter::class(relative)))
+        });
+    for entry in walker {
         let entry = entry.walk_context(&workspace.base)?;
         let relative = entry
             .path()
@@ -120,7 +129,7 @@ pub fn build(workspace: &Workspace, theirs: bool) -> Result<PullPlan> {
 pub fn build_with(workspace: &Workspace, theirs: bool, install_runs: bool) -> Result<PullPlan> {
     let backend = select_backend(Some(workspace.backend_kind))?;
     let theirs_delta = backend.base_changes(workspace)?;
-    let ours_delta = backend.changes(workspace, true, false)?;
+    let ours_delta = backend.transferable_changes(workspace)?;
     crate::util::trace::time("plan", || {
         plan_changes(workspace, theirs_delta, ours_delta, theirs, install_runs)
     })

@@ -35,7 +35,7 @@ pub fn remove_with(state: &mut State, name: &str, processes: Processes) -> Resul
     if let Some(process) = &workspace.process {
         process.terminate();
     }
-    ensure_unused(&workspace, processes)?;
+    crate::util::trace::time("processes", || ensure_unused(&workspace, processes))?;
 
     let backend = select_backend(Some(workspace.backend_kind))?;
     remove_after_cleanup(state, name, || {
@@ -46,9 +46,17 @@ pub fn remove_with(state: &mut State, name: &str, processes: Processes) -> Resul
 }
 
 /// Refuse while processes use `workspace`; with [`Processes::Kill`], stop the ones running in
-/// it first. Processes that only have files open there are never killed.
-fn ensure_unused(workspace: &Workspace, processes: Processes) -> Result {
+/// it first. Processes that only have files open there are never killed. The `forkspace run`
+/// dev server's process group does not count: removal stops it anyway.
+pub fn ensure_unused(workspace: &Workspace, processes: Processes) -> Result {
+    let server_group = workspace
+        .process
+        .as_ref()
+        .filter(|process| process.is_alive())
+        .map(|process| process.pid);
     let mut found = members::find(workspace);
+    found
+        .retain(|member| server_group.is_none_or(|group| process_group(member.pid) != Some(group)));
     if found.is_empty() {
         return Ok(());
     }
@@ -76,6 +84,11 @@ fn ensure_unused(workspace: &Workspace, processes: Processes) -> Result {
             .join(", "),
         remedy,
     })
+}
+
+fn process_group(pid: u32) -> Option<u32> {
+    let group = unsafe { libc::getpgid(libc::pid_t::try_from(pid).ok()?) };
+    u32::try_from(group).ok()
 }
 
 /// `name` and all of its descendants, deepest first, so children go before parents.

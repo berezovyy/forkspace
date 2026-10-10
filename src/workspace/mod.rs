@@ -100,8 +100,7 @@ pub struct Workspace {
     /// The backend fell back to a slower path (e.g. a full copy) or lost change tracking.
     #[serde(default, skip_serializing_if = "is_false")]
     pub degraded: bool,
-    /// `HEAD` at fork time, for workspaces given a private repository because the base's
-    /// `.git` pointed outside it (a linked worktree or submodule).
+    /// The `HEAD` commit at fork time, for workspaces of a Git project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_head_at_fork: Option<String>,
     #[serde(default, skip_serializing_if = "Limits::is_empty")]

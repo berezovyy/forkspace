@@ -165,6 +165,15 @@ pub trait WorkspaceBackend {
         need_line_counts: bool,
     ) -> Result<Vec<FileChange>>;
     fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount>;
+    /// The changes that can move between the workspace and its base: everything except
+    /// runtime and internal paths (`node_modules`, `.git`), ignored source files included.
+    fn transferable_changes(&self, ws: &Workspace) -> Result<Vec<FileChange>> {
+        Ok(self
+            .changes(ws, true, false)?
+            .into_iter()
+            .filter(|change| crate::sync::is_transferable(change.class))
+            .collect())
+    }
     /// Changes made in the base since the workspace was forked.
     fn base_changes(&self, ws: &Workspace) -> Result<Vec<FileChange>> {
         crate::util::trace::time("scan-base", || crate::sync::pull::base_changes(ws))

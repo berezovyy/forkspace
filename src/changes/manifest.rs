@@ -171,6 +171,17 @@ fn row(root: &Path, entry: &walkdir::DirEntry, fork_time_ns: u128) -> Result<Man
             root.display()
         ))
     })?;
+    row_of(relative, path, &metadata, fork_time_ns)
+}
+
+/// The manifest row of the entry at `path` (`relative` to the view) with `lstat` `metadata`.
+fn row_of(
+    relative: &Path,
+    path: &Path,
+    metadata: &fs::Metadata,
+    fork_time_ns: u128,
+) -> Result<ManifestRow> {
+    let metadata = metadata.clone();
     let kind = ManifestKind::of(&metadata);
     let target = if kind == ManifestKind::Symlink {
         let target =
@@ -244,6 +255,19 @@ fn write_rows(
             .write_all(b"\n")
             .io_context(|| format!("write manifest {}", temporary.display()))
     };
+    let Some(base) = base else {
+        // At fork time the view is not in use yet: read it on several threads.
+        let rows = crate::util::walk::parallel(view, |relative, path, metadata| {
+            row_of(relative, path, metadata, fork_time_ns).map(Some)
+        })?;
+        for (_, row) in &rows {
+            serde_json::to_writer(&mut *writer, row)?;
+            writer
+                .write_all(b"\n")
+                .io_context(|| format!("write manifest {}", temporary.display()))?;
+        }
+        return Ok(rows.len());
+    };
     let mut count = 0;
     for entry in WalkDir::new(view).follow_links(false) {
         let entry = entry.walk_context(view)?;
@@ -251,9 +275,6 @@ fn write_rows(
             write(view, &entry)?;
             count += 1;
         }
-        let Some(base) = base else {
-            continue;
-        };
         let changed_dir = entry.file_type().is_dir()
             && entry
                 .metadata()

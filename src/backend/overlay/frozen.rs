@@ -17,6 +17,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +26,7 @@ use crate::error::{ForkspaceError, Result};
 use crate::paths;
 use crate::process::watch::is_alive;
 use crate::util::fs::{ctime_ns, ensure_private_dir, mode_bits, mtime_ns, sync_dir, write_atomic};
-use crate::util::{now_unix_ns, IoContext, WalkDirExt};
+use crate::util::{now_unix_ns, IoContext};
 
 const META: &str = "meta.json";
 const TREE: &str = "tree";
@@ -239,35 +240,27 @@ fn newest_for(root: &Path, source: &Path) -> Option<(PathBuf, Meta)> {
 
 /// Whether `source` still matches the frozen copy `tree` entry for entry.
 fn unchanged_since(source: &Path, tree: &Path, meta: &Meta) -> Result<bool> {
-    let mut entries = 0_u64;
-    for entry in walkdir::WalkDir::new(source)
-        .min_depth(1)
-        .follow_links(false)
-    {
-        let entry = entry.walk_context(source)?;
-        entries += 1;
-        let Ok(relative) = entry.path().strip_prefix(source) else {
-            return Ok(false);
-        };
-        let (Ok(current), Ok(frozen)) = (
-            entry.path().symlink_metadata(),
-            fs::symlink_metadata(tree.join(relative)),
-        ) else {
-            return Ok(false);
-        };
-        let same = if current.is_dir() {
-            frozen.is_dir() && mode_bits(&current) == mode_bits(&frozen)
-        } else if current.file_type().is_symlink() {
-            frozen.file_type().is_symlink()
-                && fs::read_link(entry.path()).ok() == fs::read_link(tree.join(relative)).ok()
-        } else {
-            same_file(&current, &frozen, meta.started_ns)
-        };
-        if !same {
-            return Ok(false);
+    let differs = AtomicBool::new(false);
+    let seen = crate::util::walk::parallel(source, |relative, path, current| {
+        if differs.load(Ordering::Relaxed) {
+            return Ok(None);
         }
-    }
-    Ok(entries == meta.entries)
+        let same = fs::symlink_metadata(tree.join(relative)).is_ok_and(|frozen| {
+            if current.is_dir() {
+                frozen.is_dir() && mode_bits(current) == mode_bits(&frozen)
+            } else if current.file_type().is_symlink() {
+                frozen.file_type().is_symlink()
+                    && fs::read_link(path).ok() == fs::read_link(tree.join(relative)).ok()
+            } else {
+                same_file(current, &frozen, meta.started_ns)
+            }
+        });
+        if !same {
+            differs.store(true, Ordering::Relaxed);
+        }
+        Ok(Some(()))
+    })?;
+    Ok(!differs.load(Ordering::Relaxed) && seen.len() as u64 == meta.entries)
 }
 
 /// Whether a project file (`current`) is still identical to its frozen copy (`frozen`): a

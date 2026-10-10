@@ -262,8 +262,23 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
         })
     }
 
+    /// The same scan as `diff` (pruning ignored directories), counted; an unreadable
+    /// manifest goes through [`manifest::change_count`]'s recovery.
     fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount> {
-        trace::time("scan", || manifest::change_count(ws, include_ignored))
+        trace::time("scan", || match ws.manifest_status {
+            ManifestStatus::Ready if manifest::manifest_path(&ws.name).is_file() => {
+                Ok(ChangeCount::Ready(
+                    crate::changes::collect_clone_changes(ws, include_ignored, false)?.len(),
+                ))
+            }
+            _ => manifest::change_count(ws, include_ignored),
+        })
+    }
+
+    fn transferable_changes(&self, ws: &Workspace) -> Result<Vec<FileChange>> {
+        trace::time("scan", || {
+            crate::changes::collect_transferable_clone_changes(ws)
+        })
     }
 
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {

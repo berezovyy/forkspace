@@ -49,6 +49,14 @@ impl ChangeFilter {
         Self { gitignore }
     }
 
+    /// A filter with no ignore rules: it hides only runtime and internal paths, the ones that
+    /// never move between a workspace and its base.
+    pub fn transferable_only() -> Self {
+        Self {
+            gitignore: Gitignore::empty(),
+        }
+    }
+
     pub fn is_ignored(&self, rel_path: &Path, is_dir: bool) -> bool {
         self.gitignore
             .matched_path_or_any_parents(rel_path, is_dir)

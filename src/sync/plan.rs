@@ -89,7 +89,11 @@ pub fn build_with(workspace: &Workspace, options: PlanOptions) -> Result<MergePl
     } else {
         backend.view_path(workspace)
     };
-    let all = backend.changes(workspace, true, false)?;
+    // A merge transfers only what `diff` shows. Snapshot backends walk the whole view, so
+    // they skip ignored directories while walking; an overlay reads only its upper layer and
+    // keeps the full list, so the plan can count what it leaves out.
+    let include_ignored = !workspace.backend_kind.stacking_is_snapshot();
+    let all = backend.changes(workspace, include_ignored, false)?;
     trace::time("plan", || plan_changes(workspace, source, all, options))
 }
 

@@ -6,7 +6,7 @@
 //! processes are "owned": `drop --kill` may stop them. A process that only has files open or
 //! mapped there (an editor, say) blocks a drop too, but is never killed.
 //!
-//! Linux reads `/proc/<pid>/{cwd,root,fd,maps}`; macOS uses libproc
+//! Linux reads `/proc/<pid>/{cwd,root,fd}`; macOS uses libproc
 //! (`proc_listallpids`, `proc_pidinfo`, `proc_pidfdinfo`), which needs no privileges for the
 //! user's own processes.
 
@@ -182,7 +182,7 @@ fn own_lineage() -> HashSet<u32> {
 #[cfg(target_os = "linux")]
 mod os {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     use super::inside;
 
@@ -209,17 +209,13 @@ mod os {
         if !deep {
             return None;
         }
-        if let Ok(entries) = fs::read_dir(proc.join("fd")) {
-            for entry in entries.flatten() {
-                if fs::read_link(entry.path()).is_ok_and(|path| inside(&clean(path), roots)) {
-                    return Some(false);
-                }
-            }
-        }
-        let maps = fs::read_to_string(proc.join("maps")).unwrap_or_default();
-        maps.lines()
-            .filter_map(|line| line.split_whitespace().nth(5))
-            .any(|path| inside(Path::new(path), roots))
+        // Open files only: a process running a program from the workspace has it open or
+        // works there too, and parsing every process's memory maps would cost more than
+        // the rest of the scan together.
+        let entries = fs::read_dir(proc.join("fd")).ok()?;
+        entries
+            .flatten()
+            .any(|entry| fs::read_link(entry.path()).is_ok_and(|path| inside(&clean(path), roots)))
             .then_some(false)
     }
 

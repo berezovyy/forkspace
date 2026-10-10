@@ -8,14 +8,12 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use walkdir::WalkDir;
-
 use super::content::{compute_line_diff, count_lines, is_binary};
 use super::filter::ChangeFilter;
 use super::manifest::{self, written_after_fork, ManifestKind, ManifestRow, ManifestStatus};
 use super::{ChangeKind, FileChange, OldContent};
-use crate::error::{ForkspaceError, Result};
-use crate::util::{IoContext, WalkDirExt};
+use crate::error::Result;
+use crate::util::walk::Step;
 use crate::workspace::Workspace;
 
 /// Changes in a snapshot workspace's view relative to its fork manifest. Without a readable
@@ -25,10 +23,31 @@ pub fn collect_clone_changes(
     include_ignored: bool,
     need_line_counts: bool,
 ) -> Result<Vec<FileChange>> {
+    let filter = (!include_ignored).then(|| ChangeFilter::build(&workspace.base));
+    collect(workspace, filter, include_ignored, need_line_counts)
+}
+
+/// Changes that can move between the workspace and its base (everything but runtime and
+/// internal paths). `node_modules` and `.git` are not walked at all.
+pub fn collect_transferable_clone_changes(workspace: &Workspace) -> Result<Vec<FileChange>> {
+    collect(
+        workspace,
+        Some(ChangeFilter::transferable_only()),
+        true,
+        false,
+    )
+}
+
+fn collect(
+    workspace: &Workspace,
+    filter: Option<ChangeFilter>,
+    include_ignored: bool,
+    need_line_counts: bool,
+) -> Result<Vec<FileChange>> {
     let baseline = load_baseline(workspace, include_ignored)?;
     let scan = CloneScan {
         workspace,
-        filter: (!include_ignored).then(|| ChangeFilter::build(&workspace.base)),
+        filter,
         baseline_known: baseline.is_some(),
         baseline: baseline.unwrap_or_default(),
         need_line_counts,
@@ -79,6 +98,16 @@ struct CloneScan<'a> {
     need_line_counts: bool,
 }
 
+/// One entry of the view walk.
+enum Seen {
+    /// An invisible directory, not descended into.
+    Pruned,
+    /// An invisible entry.
+    Hidden,
+    /// A visible entry, with its change if it changed.
+    Visible(Option<FileChange>),
+}
+
 /// What the view walk found.
 struct ViewWalk {
     changes: Vec<FileChange>,
@@ -95,55 +124,44 @@ impl CloneScan<'_> {
             .is_none_or(|filter| filter.is_visible(path, is_dir))
     }
 
-    /// Walk the view, skipping invisible directories, and report every visible entry that
-    /// changed since the fork.
+    /// Walk the view on several threads, skipping invisible directories, and report every
+    /// visible entry that changed since the fork.
     fn walk_view(&self) -> Result<ViewWalk> {
         let root = &self.workspace.view_path;
+        let found = crate::util::walk::parallel_with(root, |relative, path, metadata| {
+            let is_dir = metadata.is_dir();
+            if !self.is_visible(relative, is_dir) {
+                return Ok(if is_dir {
+                    Step::Prune(Some(Seen::Pruned))
+                } else {
+                    Step::Descend(Some(Seen::Hidden))
+                });
+            }
+            let row = self.baseline.get(relative);
+            // Directories are reported only when they replace a non-directory entry.
+            let reportable = !is_dir || row.is_some_and(|row| row.kind != ManifestKind::Dir);
+            let change = (reportable && self.changed(path, metadata, row))
+                .then(|| self.change(relative.to_path_buf(), Some(path), row));
+            Ok(Step::Descend(Some(Seen::Visible(change))))
+        })?;
+
         let mut seen = BTreeSet::new();
         let mut pruned = BTreeSet::new();
         let mut changes = Vec::new();
-
-        let walker = WalkDir::new(root)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|entry| {
-                if entry.depth() == 0 || !entry.file_type().is_dir() {
-                    return true;
+        for (path, item) in found {
+            match item {
+                Seen::Pruned => {
+                    pruned.insert(path);
                 }
-                let Ok(relative) = entry.path().strip_prefix(root) else {
-                    return true;
-                };
-                let visible = self.is_visible(relative, true);
-                if !visible {
-                    pruned.insert(relative.to_path_buf());
+                Seen::Hidden | Seen::Visible(None) => {
+                    seen.insert(path);
                 }
-                visible
-            });
-        for entry in walker.skip(1) {
-            let entry = entry.walk_context(root)?;
-            let relative = entry
-                .path()
-                .strip_prefix(root)
-                .map_err(|_| {
-                    ForkspaceError::StateFailed("clone scan escaped the workspace".to_string())
-                })?
-                .to_path_buf();
-            seen.insert(relative.clone());
-            if !self.is_visible(&relative, entry.file_type().is_dir()) {
-                continue;
-            }
-
-            let metadata = fs::symlink_metadata(entry.path())
-                .io_context(|| format!("scan clone metadata for {}", entry.path().display()))?;
-            let row = self.baseline.get(&relative);
-            // Directories are reported only when they replace a non-directory entry.
-            let reportable =
-                !metadata.is_dir() || row.is_some_and(|row| row.kind != ManifestKind::Dir);
-            if reportable && self.changed(entry.path(), &metadata, row) {
-                changes.push(self.change(relative, Some(entry.path()), row));
+                Seen::Visible(Some(change)) => {
+                    seen.insert(path);
+                    changes.push(change);
+                }
             }
         }
-
         Ok(ViewWalk {
             changes,
             seen,

@@ -122,10 +122,13 @@ fn record_fork_time_files(workspace: &Workspace) {
 
 /// When the base's `.git` points outside it (a linked worktree or submodule), give the view a
 /// repository of its own, so commits in the workspace cannot move the project's branches.
+///
+/// Also records the `HEAD` commit at fork time, so `merge` can tell cheaply whether the
+/// workspace made commits that a file-level merge would flatten.
 fn give_private_git(workspace: &mut Workspace) -> Result {
-    if super::private_git::privatize(&workspace.base, &workspace.view_path)? {
-        workspace.git_head_at_fork =
-            Some(crate::git::rev_parse(&workspace.view_path, "HEAD").unwrap_or_default());
+    let private = super::private_git::privatize(&workspace.base, &workspace.view_path)?;
+    if private || workspace.view_path.join(".git").exists() {
+        workspace.git_head_at_fork = crate::git::rev_parse(&workspace.view_path, "HEAD").ok();
     }
     Ok(())
 }

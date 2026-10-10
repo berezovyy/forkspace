@@ -23,7 +23,7 @@ pub use content::is_binary;
 pub use cumulative::{collect_cumulative_changes, collect_cumulative_changes_fast};
 pub use overlay::{collect_changes, collect_changes_fast};
 pub use render::{format_diff, generate_unified_diff, DiffFormat, DiffOutput};
-pub use snapshot::collect_clone_changes;
+pub use snapshot::{collect_clone_changes, collect_transferable_clone_changes};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
