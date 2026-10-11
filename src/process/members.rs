@@ -89,8 +89,10 @@ pub fn counts<'a>(workspaces: impl IntoIterator<Item = &'a Workspace>) -> HashMa
         if excluded.contains(&pid) {
             continue;
         }
+        // Read each process's directories once, then match them against every workspace.
+        let directories = os::working_dirs(pid);
         for (name, roots) in &roots {
-            if os::usage(pid, roots, false).is_some() {
+            if directories.iter().any(|directory| inside(directory, roots)) {
                 counted.entry(name.clone()).or_default().insert(pid);
             }
         }
@@ -199,6 +201,15 @@ mod os {
 
     /// `Some(true)` when the working directory or root is inside `roots`, `Some(false)` when
     /// (with `deep`) only an open file or mapping is, `None` otherwise.
+    /// The working directory and root of `pid`.
+    pub fn working_dirs(pid: u32) -> Vec<PathBuf> {
+        ["cwd", "root"]
+            .iter()
+            .filter_map(|link| fs::read_link(format!("/proc/{pid}/{link}")).ok())
+            .map(clean)
+            .collect()
+    }
+
     pub fn usage(pid: u32, roots: &[PathBuf], deep: bool) -> Option<bool> {
         let proc = PathBuf::from(format!("/proc/{pid}"));
         for link in ["cwd", "root"] {
@@ -315,6 +326,28 @@ mod os {
             .filter_map(|pid| u32::try_from(pid).ok())
             .filter(|pid| *pid > 0)
             .collect()
+    }
+
+    /// The working directory of `pid`.
+    pub fn working_dirs(pid: u32) -> Vec<PathBuf> {
+        let Ok(pid) = libc::c_int::try_from(pid) else {
+            return Vec::new();
+        };
+        let mut info = MaybeUninit::<libc::proc_vnodepathinfo>::zeroed();
+        let size = size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
+        let read = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDVNODEPATHINFO,
+                0,
+                info.as_mut_ptr().cast(),
+                size,
+            )
+        };
+        if read != size {
+            return Vec::new();
+        }
+        vec![vnode_path(&unsafe { info.assume_init() }.pvi_cdir)]
     }
 
     pub fn usage(pid: u32, roots: &[PathBuf], deep: bool) -> Option<bool> {
@@ -443,6 +476,9 @@ mod os {
     use std::path::PathBuf;
 
     pub fn all_pids() -> Vec<u32> {
+        Vec::new()
+    }
+    pub fn working_dirs(_pid: u32) -> Vec<PathBuf> {
         Vec::new()
     }
     pub fn usage(_pid: u32, _roots: &[PathBuf], _deep: bool) -> Option<bool> {
