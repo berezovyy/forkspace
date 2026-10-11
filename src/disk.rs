@@ -72,7 +72,7 @@ pub struct StoreUsage {
 impl StoreUsage {
     pub fn measure() -> Result<Self> {
         Ok(Self {
-            frozen: tree_private_bytes(&paths::frozen_root())?,
+            frozen: frozen_bytes()?,
             history: tree_private_bytes(&paths::undo_root())?
                 + tree_private_bytes(&paths::checkpoint_root())?,
             other: tree_private_bytes(&paths::ancestor_root())?
@@ -80,6 +80,36 @@ impl StoreUsage {
                 + tree_private_bytes(&paths::journal_dir())?,
         })
     }
+}
+
+/// The private bytes of all frozen copies together (hard links between them count once).
+/// Frozen copies never change, so the total is cached in `frozen/.usage` and measured again
+/// only when the set of copies changes.
+fn frozen_bytes() -> Result<u64> {
+    let root = paths::frozen_root();
+    let Ok(entries) = fs::read_dir(&root) else {
+        return Ok(0);
+    };
+    let mut ids: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .collect();
+    ids.sort();
+    let key = ids.join(",");
+    let cache = root.join(".usage");
+    if let Ok(text) = fs::read_to_string(&cache) {
+        if let Some((cached_key, bytes)) = text.trim_end().rsplit_once(' ') {
+            if cached_key == key {
+                if let Ok(bytes) = bytes.parse() {
+                    return Ok(bytes);
+                }
+            }
+        }
+    }
+    let bytes = tree_private_bytes(&root)?;
+    let _ = fs::write(&cache, format!("{key} {bytes}\n"));
+    Ok(bytes)
 }
 
 /// `1.2 GB`, `340 MB`, `12 KB`, decimal units like most file managers.
