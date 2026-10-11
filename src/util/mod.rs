@@ -1,5 +1,6 @@
 //! Small, dependency-free helpers shared across modules.
 
+mod bulk;
 pub mod fs;
 mod glob;
 pub mod trace;

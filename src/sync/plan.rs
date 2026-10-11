@@ -17,6 +17,7 @@ use crate::sync::journal::{self, MergedStep, OperationKind};
 use crate::sync::three_way::{has_conflict_markers, reconcile, Favor, Policy};
 use crate::sync::{display_paths, is_transferable, render_plan};
 use crate::util::fs::mtime_ns;
+use crate::util::walk::Entry;
 use crate::util::{trace, IoContext};
 use crate::workspace::Workspace;
 
@@ -242,8 +243,9 @@ pub fn render(plan: &MergePlan) -> String {
 /// Stricter than [`ManifestRow::matches`]: a re-created symlink (same target, new mtime) also
 /// counts as a base-side change.
 pub(crate) fn matches_ancestor(path: &Path, row: &ManifestRow) -> bool {
-    fs::symlink_metadata(path)
-        .is_ok_and(|metadata| row.matches(path, &metadata) && mtime_ns(&metadata) == row.mtime_ns)
+    fs::symlink_metadata(path).is_ok_and(|metadata| {
+        row.matches(path, &Entry::of(&metadata)) && mtime_ns(&metadata) == row.mtime_ns
+    })
 }
 
 fn ensure_manifest_usable(workspace: &Workspace) -> Result {

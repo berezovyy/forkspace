@@ -22,7 +22,7 @@ use crate::backend::ChangeCount;
 use crate::changes::filter::ChangeFilter;
 use crate::error::{ForkspaceError, Result};
 use crate::state::State;
-use crate::util::fs::{ctime_ns, mode_bits, mtime_ns};
+use crate::util::walk::{Entry, Kind};
 use crate::util::{IoContext, WalkDirExt};
 use crate::workspace::Workspace;
 
@@ -59,6 +59,15 @@ impl ManifestKind {
             Self::File
         }
     }
+
+    /// The kind of a walked entry.
+    pub fn of_entry(entry: &Entry) -> Self {
+        match entry.kind {
+            Kind::Symlink => Self::Symlink,
+            Kind::Dir => Self::Dir,
+            Kind::File | Kind::Other => Self::File,
+        }
+    }
 }
 
 /// One manifest line: an entry's identity at fork time.
@@ -90,14 +99,14 @@ fn is_zero(value: &u32) -> bool {
 }
 
 impl ManifestRow {
-    /// Whether the entry at `path`, with `metadata` from `symlink_metadata`, still looks like
-    /// this row: same kind, size, mode (when recorded), symlink target, and mtime. Symlink
-    /// mtimes are not compared because snapshot copies do not preserve them.
-    pub(crate) fn matches(&self, path: &Path, metadata: &fs::Metadata) -> bool {
-        if ManifestKind::of(metadata) != self.kind
-            || metadata.len() != self.size
-            || (self.kind != ManifestKind::Symlink && mtime_ns(metadata) != self.mtime_ns)
-            || (self.mode != 0 && mode_bits(metadata) != self.mode)
+    /// Whether the entry at `path`, with `lstat` facts `entry`, still looks like this row:
+    /// same kind, size, mode (when recorded), symlink target, and mtime. Symlink mtimes are
+    /// not compared because snapshot copies do not preserve them.
+    pub(crate) fn matches(&self, path: &Path, entry: &Entry) -> bool {
+        if ManifestKind::of_entry(entry) != self.kind
+            || entry.len != self.size
+            || (self.kind != ManifestKind::Symlink && entry.mtime_ns != self.mtime_ns)
+            || (self.mode != 0 && entry.mode != self.mode)
         {
             return false;
         }
@@ -110,9 +119,9 @@ impl ManifestRow {
     }
 }
 
-/// Whether `metadata` shows a write after the fork instant (`ctime > fork_time_ns`).
-pub(crate) fn written_after_fork(metadata: &fs::Metadata, fork_time_ns: u128) -> bool {
-    ctime_ns(metadata) > i128::try_from(fork_time_ns).unwrap_or(i128::MAX)
+/// Whether `entry` shows a write after the fork instant (`ctime > fork_time_ns`).
+pub(crate) fn written_after_fork(entry: &Entry, fork_time_ns: u128) -> bool {
+    entry.ctime_ns > i128::try_from(fork_time_ns).unwrap_or(i128::MAX)
 }
 
 pub fn manifest_path(name: &str) -> PathBuf {
@@ -171,18 +180,12 @@ fn row(root: &Path, entry: &walkdir::DirEntry, fork_time_ns: u128) -> Result<Man
             root.display()
         ))
     })?;
-    row_of(relative, path, &metadata, fork_time_ns)
+    row_of(relative, path, &Entry::of(&metadata), fork_time_ns)
 }
 
-/// The manifest row of the entry at `path` (`relative` to the view) with `lstat` `metadata`.
-fn row_of(
-    relative: &Path,
-    path: &Path,
-    metadata: &fs::Metadata,
-    fork_time_ns: u128,
-) -> Result<ManifestRow> {
-    let metadata = metadata.clone();
-    let kind = ManifestKind::of(&metadata);
+/// The manifest row of the entry at `path` (`relative` to the view) with facts `entry`.
+fn row_of(relative: &Path, path: &Path, entry: &Entry, fork_time_ns: u128) -> Result<ManifestRow> {
+    let kind = ManifestKind::of_entry(entry);
     let target = if kind == ManifestKind::Symlink {
         let target =
             fs::read_link(path).io_context(|| format!("read symlink {}", path.display()))?;
@@ -193,11 +196,11 @@ fn row_of(
     Ok(ManifestRow {
         path: encode_path(relative),
         kind,
-        size: metadata.len(),
-        mtime_ns: mtime_ns(&metadata),
-        mode: mode_bits(&metadata),
+        size: entry.len,
+        mtime_ns: entry.mtime_ns,
+        mode: entry.mode,
         target,
-        dirty: written_after_fork(&metadata, fork_time_ns),
+        dirty: written_after_fork(entry, fork_time_ns),
     })
 }
 
@@ -278,7 +281,7 @@ fn write_rows(
         let changed_dir = entry.file_type().is_dir()
             && entry
                 .metadata()
-                .is_ok_and(|metadata| written_after_fork(&metadata, fork_time_ns));
+                .is_ok_and(|metadata| written_after_fork(&Entry::of(&metadata), fork_time_ns));
         if changed_dir {
             let relative = entry.path().strip_prefix(view).unwrap_or(Path::new(""));
             for missing in entries_missing_from_view(view, base, relative, fork_time_ns)? {
@@ -310,7 +313,7 @@ fn entries_missing_from_view(
         let unchanged_since_fork = |entry: &walkdir::DirEntry| {
             entry
                 .metadata()
-                .is_ok_and(|metadata| !written_after_fork(&metadata, fork_time_ns))
+                .is_ok_and(|metadata| !written_after_fork(&Entry::of(&metadata), fork_time_ns))
         };
         for entry in WalkDir::new(child.path())
             .follow_links(false)
@@ -462,7 +465,7 @@ fn has_post_fork_writes(workspace: &Workspace) -> Result<bool> {
         let entry = entry.walk_context(view)?;
         let metadata = fs::symlink_metadata(entry.path())
             .io_context(|| format!("inspect {} for manifest recovery", entry.path().display()))?;
-        if written_after_fork(&metadata, workspace.fork_time_ns) {
+        if written_after_fork(&Entry::of(&metadata), workspace.fork_time_ns) {
             return Ok(true);
         }
     }

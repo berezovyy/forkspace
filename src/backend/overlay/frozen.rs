@@ -25,7 +25,8 @@ use crate::backend::snapshot::{materialize_tree, Placed};
 use crate::error::{ForkspaceError, Result};
 use crate::paths;
 use crate::process::watch::is_alive;
-use crate::util::fs::{ctime_ns, ensure_private_dir, mode_bits, mtime_ns, sync_dir, write_atomic};
+use crate::util::fs::{ensure_private_dir, sync_dir, write_atomic};
+use crate::util::walk::Entry;
 use crate::util::{now_unix_ns, IoContext};
 
 const META: &str = "meta.json";
@@ -95,9 +96,9 @@ pub(crate) fn freeze(source: &Path, basis: Basis<'_>) -> Result<Frozen> {
                     return None;
                 };
                 let candidate = tree.join(relative);
-                let source_meta = fs::symlink_metadata(path).ok()?;
-                let copy_meta = fs::symlink_metadata(&candidate).ok()?;
-                same_file(&source_meta, &copy_meta, meta.started_ns).then_some(candidate)
+                let source_entry = Entry::lstat(path).ok()?;
+                let copy_entry = Entry::lstat(&candidate).ok()?;
+                same_file(&source_entry, &copy_entry, meta.started_ns).then_some(candidate)
             })
         }
         Basis::Workspace { lower, upper } => build(&root, &source, started_ns, |relative, _| {
@@ -246,11 +247,11 @@ fn unchanged_since(source: &Path, tree: &Path, meta: &Meta) -> Result<bool> {
         if differs.load(Ordering::Relaxed) {
             return Ok(None);
         }
-        let same = fs::symlink_metadata(tree.join(relative)).is_ok_and(|frozen| {
+        let same = Entry::lstat(&tree.join(relative)).is_ok_and(|frozen| {
             if current.is_dir() {
-                frozen.is_dir() && mode_bits(current) == mode_bits(&frozen)
-            } else if current.file_type().is_symlink() {
-                frozen.file_type().is_symlink()
+                frozen.is_dir() && current.mode == frozen.mode
+            } else if current.is_symlink() {
+                frozen.is_symlink()
                     && fs::read_link(path).ok() == fs::read_link(tree.join(relative)).ok()
             } else {
                 same_file(current, &frozen, meta.started_ns)
@@ -266,13 +267,13 @@ fn unchanged_since(source: &Path, tree: &Path, meta: &Meta) -> Result<bool> {
 
 /// Whether a project file (`current`) is still identical to its frozen copy (`frozen`): a
 /// regular file with the same size, mtime, and mode, not changed since the copy was taken.
-fn same_file(current: &fs::Metadata, frozen: &fs::Metadata, started_ns: u128) -> bool {
+fn same_file(current: &Entry, frozen: &Entry, started_ns: u128) -> bool {
     current.is_file()
         && frozen.is_file()
-        && ctime_ns(current) < i128::try_from(started_ns).unwrap_or(i128::MAX)
-        && current.len() == frozen.len()
-        && mtime_ns(current) == mtime_ns(frozen)
-        && mode_bits(current) == mode_bits(frozen)
+        && current.ctime_ns < i128::try_from(started_ns).unwrap_or(i128::MAX)
+        && current.len == frozen.len
+        && current.mtime_ns == frozen.mtime_ns
+        && current.mode == frozen.mode
 }
 
 /// An exclusive lock on the frozen store; `blocking: false` fails instead of waiting.

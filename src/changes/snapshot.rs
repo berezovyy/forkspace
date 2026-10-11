@@ -13,7 +13,7 @@ use super::filter::ChangeFilter;
 use super::manifest::{self, written_after_fork, ManifestKind, ManifestRow, ManifestStatus};
 use super::{ChangeKind, FileChange, OldContent};
 use crate::error::Result;
-use crate::util::walk::Step;
+use crate::util::walk::{Entry, Step};
 use crate::workspace::Workspace;
 
 /// Changes in a snapshot workspace's view relative to its fork manifest. Without a readable
@@ -169,7 +169,7 @@ impl CloneScan<'_> {
         })
     }
 
-    fn changed(&self, path: &Path, metadata: &fs::Metadata, row: Option<&ManifestRow>) -> bool {
+    fn changed(&self, path: &Path, metadata: &Entry, row: Option<&ManifestRow>) -> bool {
         let written = written_after_fork(metadata, self.workspace.fork_time_ns);
         match row {
             Some(row) => row.dirty || written || !row.matches(path, metadata),
@@ -271,5 +271,6 @@ impl CloneScan<'_> {
 /// Whether the base entry still matches the fork-time manifest row, i.e. the base still
 /// holds the ancestor content.
 fn base_matches(base_path: &Path, row: &ManifestRow) -> bool {
-    fs::symlink_metadata(base_path).is_ok_and(|metadata| row.matches(base_path, &metadata))
+    fs::symlink_metadata(base_path)
+        .is_ok_and(|metadata| row.matches(base_path, &crate::util::walk::Entry::of(&metadata)))
 }

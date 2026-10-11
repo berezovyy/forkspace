@@ -13,7 +13,6 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -29,19 +28,20 @@ pub fn tree_private_bytes(root: &Path) -> Result<u64> {
     }
     let shared_aware = os::shares_blocks(root);
     let seen = Mutex::new(HashSet::new());
-    let sizes = crate::util::walk::parallel(root, |_, path, metadata| {
-        if metadata.nlink() > 1
+    let sizes = crate::util::walk::parallel(root, |_, path, entry| {
+        if entry.nlink > 1
             && !seen
                 .lock()
                 .expect("hard link set")
-                .insert((metadata.dev(), metadata.ino()))
+                .insert((entry.dev, entry.ino))
         {
             return Ok(None);
         }
-        let bytes = if shared_aware && metadata.is_file() {
-            os::private_bytes(path).unwrap_or_else(|| allocated(metadata))
+        let allocated = entry.blocks * 512;
+        let bytes = if shared_aware && entry.is_file() {
+            os::private_bytes(path).unwrap_or(allocated)
         } else {
-            allocated(metadata)
+            allocated
         };
         Ok(Some(bytes))
     })?;
@@ -145,10 +145,6 @@ pub fn exclude_from_backups(directory: &Path) {
          # For information about cache directory tags see https://bford.info/cachedir/\n",
     );
     os::exclude_from_time_machine(directory);
-}
-
-fn allocated(metadata: &fs::Metadata) -> u64 {
-    metadata.blocks() * 512
 }
 
 #[cfg(target_os = "linux")]
