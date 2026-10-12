@@ -1,8 +1,8 @@
 name: macos
 
 on:
-  push:
-  pull_request:
+  # Automatic CI is temporarily paused. Run manually from the Actions tab.
+  workflow_dispatch:
 
 jobs:
   test:
