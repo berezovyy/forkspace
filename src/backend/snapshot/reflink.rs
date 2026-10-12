@@ -16,7 +16,7 @@ use crate::error::{ForkspaceError, Result};
 use crate::util::{now_unix_ns, IoContext};
 
 /// `_IOW(0x94, 9, int)` from `linux/fs.h`.
-const FICLONE: libc::c_ulong = 0x4004_9409;
+const FICLONE: libc::Ioctl = 0x4004_9409;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ReflinkPrimitive;
