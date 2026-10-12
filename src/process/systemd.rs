@@ -300,3 +300,29 @@ mod tests {
         assert!(slice.starts_with("forkspace-") && slice.ends_with("_agent\\x2d1.slice"));
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    /// Commands started for `run` and `enter -- <command>` are in the Darwin background state.
+    #[test]
+    fn background_commands_run_at_background_priority() {
+        let mut command = std::process::Command::new("sleep");
+        command.arg("5");
+        let mut child = super::lowered(command, true).spawn().unwrap();
+        let pid = child.id() as libc::id_t;
+        // XNU reports the process's background state (non-zero when backgrounded).
+        let state = unsafe { libc::getpriority(libc::PRIO_DARWIN_PROCESS, pid) };
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(state > 0, "getpriority(PRIO_DARWIN_PROCESS) = {state}");
+
+        let mut command = std::process::Command::new("sleep");
+        command.arg("5");
+        let mut child = super::lowered(command, false).spawn().unwrap();
+        let state =
+            unsafe { libc::getpriority(libc::PRIO_DARWIN_PROCESS, child.id() as libc::id_t) };
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(state, 0, "an interactive shell keeps normal priority");
+    }
+}
