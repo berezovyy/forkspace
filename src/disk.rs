@@ -316,3 +316,33 @@ mod os {
     }
     pub fn exclude_from_time_machine(_directory: &Path) {}
 }
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    /// A clone of a file costs (almost) nothing until it is changed.
+    #[test]
+    fn apfs_clones_have_no_private_size() {
+        let root = tempfile::tempdir().unwrap();
+        if !super::os::shares_blocks(root.path()) {
+            eprintln!("skipping: the temporary directory is not on APFS");
+            return;
+        }
+        let original = root.path().join("original");
+        std::fs::write(&original, vec![3_u8; 4 << 20]).unwrap();
+        let clones = root.path().join("clones");
+        std::fs::create_dir(&clones).unwrap();
+        let cloned = std::process::Command::new("cp")
+            .arg("-c")
+            .arg(&original)
+            .arg(clones.join("copy"))
+            .status()
+            .unwrap();
+        assert!(cloned.success());
+        let private = super::tree_private_bytes(&clones).unwrap();
+        assert!(
+            private < 64 * 1024,
+            "clone counted as {private} private bytes"
+        );
+        assert!(super::tree_private_bytes(root.path()).unwrap() >= 4 << 20);
+    }
+}

@@ -494,3 +494,31 @@ mod os {
         None
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use crate::workspace::Workspace;
+
+    /// libproc finds a process by its working directory.
+    #[test]
+    fn libproc_finds_a_process_working_in_the_view() {
+        let view = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .current_dir(view.path())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let mut workspace = Workspace::new("libproc-test", view.path().to_path_buf(), None);
+        workspace.view_path = view.path().to_path_buf();
+        let found = super::find(&workspace);
+        let _ = child.kill();
+        let _ = child.wait();
+        let member = found
+            .iter()
+            .find(|member| member.pid == child.id())
+            .expect("sleep listed");
+        assert!(member.owned);
+        assert_eq!(member.name, "sleep");
+    }
+}

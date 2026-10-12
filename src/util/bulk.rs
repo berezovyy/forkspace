@@ -365,7 +365,11 @@ mod tests {
         let names: Vec<PathBuf> = entries.iter().map(|(name, _)| name.clone()).collect();
         assert_eq!(names, ["dir", "file", "hard", "link"].map(PathBuf::from));
         for (name, entry) in entries {
-            assert_eq!(entry, Entry::lstat(&root.path().join(&name)).unwrap(), "{name:?}");
+            assert_eq!(
+                entry,
+                Entry::lstat(&root.path().join(&name)).unwrap(),
+                "{name:?}"
+            );
         }
     }
 }
