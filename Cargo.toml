@@ -6,6 +6,10 @@ description = "Disposable project workspaces with capability-selected CoW and co
 license = "MIT"
 repository = "https://github.com/berezovyy/forkspace"
 readme = "README.md"
+keywords = ["workspace", "overlayfs", "copy-on-write", "git", "agents"]
+categories = ["command-line-utilities", "development-tools", "filesystem"]
+# The README's films and the docs stay on GitHub; the crate is the source and tests' fixtures.
+include = ["/src", "/tests", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -23,3 +27,6 @@ time = { version = "0.3", features = ["formatting", "parsing"] }
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"
+
+[profile.release]
+strip = true
