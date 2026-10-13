@@ -1,0 +1,365 @@
+/* Shared look for the forkspace README films: tokens, type, the stage, windows and the terminal.
+
+   A frame within a frame: a rounded pixel-art stage (shared/stage.png, drawn by stage.py) holds
+   one card, a window with a soft shadow, and that card holds the film's sub-cards on a grid. Outside the stage the frame is
+   transparent, so the film's corners sit cleanly on any page colour.
+
+   Inside the windows the palette is Ayu (v9.1) kept almost monochrome. Colour appears only where
+   it carries meaning: Ayu's VCS colours for added, modified and deleted, its amber accent for the
+   text cursor, and coloured window controls only on the window that has focus. */
+
+@font-face {
+  font-family: "Geist";
+  src: url("fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+}
+
+:root,
+[data-theme="dark"] {
+  --bg: #0d1017;
+  --surface: #10141c;
+  --surface-2: #161a24;
+  --line: #1b1f29;
+  --line-2: #2a303b;
+  --ink: #cfcdc6;
+  --ink-2: #878e9a;
+  --ink-3: #565f70;
+  --accent: #e6b450;
+  --add: #70bf56;
+  --mod: #73b8ff;
+  --del: #f26d78;
+}
+
+[data-theme="light"] {
+  --bg: #f8f9fa;
+  --surface: #fcfcfc;
+  --surface-2: #f3f4f5;
+  --line: #e6e9ec;
+  --line-2: #d3d8de;
+  --ink: #4a4f55;
+  --ink-2: #7f8a99;
+  --ink-3: #aab1bb;
+  --accent: #f29718;
+  --add: #6cbf43;
+  --mod: #478acc;
+  --del: #ff7383;
+}
+
+html,
+body {
+  margin: 0;
+  background: transparent;
+}
+
+#root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  color: var(--ink);
+  font-family: "Geist", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.stage {
+  position: absolute;
+  inset: 0;
+}
+
+/* The card fills the canvas but for a 48px band of stage on every side: films place their
+   #shell at 48, 48, 1824 x 984 and lay out 1:1, never scaled, so text renders at its true size. */
+
+/* One layer for the whole scene, at 1:1. Without it Chrome draws resting text with LCD
+   (colour-fringed) antialiasing and switches to grayscale whenever something fades, so text
+   shimmers at every fade and loops stop closing. A single unscaled layer stays crisp. */
+#scene {
+  will-change: transform;
+}
+
+/* ---------- Stage ---------- */
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  border-radius: 28px;
+  overflow: hidden;
+  background: url("stage.png") center / cover no-repeat;
+  image-rendering: pixelated;
+}
+
+.mono,
+.panel,
+.term {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-feature-settings: "zero", "tnum";
+}
+
+/* ---------- Captions ---------- */
+
+.caption {
+  font-size: 50px;
+  font-weight: 500;
+  line-height: 1.16;
+  letter-spacing: -0.022em;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.caption-sub {
+  margin-top: 22px;
+  font-size: 30px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* ---------- The card and its sub-cards ---------- */
+
+/* Each film is one card on the stage: a single window with the title bar, the window controls
+   and the shadow. Everything inside it is a flat sub-card on a shared grid, never overlapping. */
+.shell {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 20px;
+  background: var(--bg);
+  border: 1px solid var(--rim);
+  box-shadow: var(--shadow);
+}
+
+.shell-bar {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  height: 56px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 22px;
+  color: var(--ink-2);
+}
+
+.shell-bar .tag {
+  margin-left: auto;
+  font-size: 20px;
+  color: var(--ink-3);
+}
+
+.panel,
+.term {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--card-line);
+}
+
+/* Sub-cards are not windows: only the card's title bar carries window controls. */
+.panel .lights,
+.term .lights {
+  display: none;
+}
+
+:root,
+[data-theme="dark"] {
+  --rim: #2a2f3a;
+  --card-line: #20252f;
+  --shadow: 0 0 0 1px rgba(6, 9, 14, 0.55), 0 2px 6px rgba(6, 9, 14, 0.28), 0 30px 80px rgba(6, 9, 14, 0.45);
+  --light-idle: #353b47;
+}
+
+[data-theme="light"] {
+  --rim: #dfe3e8;
+  --card-line: #e3e6ea;
+  --shadow: 0 0 0 1px rgba(20, 28, 40, 0.1), 0 2px 6px rgba(20, 28, 40, 0.1), 0 30px 80px rgba(20, 28, 40, 0.24);
+  --light-idle: #d5d9df;
+}
+
+/* A neutral focus outline, drawn above the border so it can fade in and out. */
+/* Drawn just inside the edge, so sub-cards that clip their overflow still show it. */
+.panel .focus,
+.term .focus {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  border: 1px solid var(--ink-3);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Title bar: window controls, a title, and an optional quiet tag on the right. */
+.panel-head,
+.term-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  height: 56px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--card-line);
+  font-size: 23px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.panel-head .tag,
+.term-head .tag {
+  margin-left: auto;
+  font-size: 21px;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+/* Window controls: grey when the window is in the background, coloured when it has focus.
+   Both sets are drawn; only the coloured set's opacity animates. */
+.lights {
+  position: relative;
+  flex: none;
+  width: 68px;
+  height: 16px;
+}
+
+.lights span {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  gap: 10px;
+}
+
+.lights i {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--light-idle);
+}
+
+.lights .live i:nth-child(1) { background: #ff5f57; }
+.lights .live i:nth-child(2) { background: #febc2e; }
+.lights .live i:nth-child(3) { background: #28c840; }
+
+/* ---------- Pointer ---------- */
+
+.pointer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 34px;
+  height: 50px;
+  z-index: 50;
+  transform-origin: 4px 3px;
+  will-change: transform;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+}
+
+/* ---------- File rows ---------- */
+
+.tree {
+  position: relative;
+  padding: 14px 0;
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 54px;
+  padding: 0 28px;
+  font-size: 26px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.row.ignored .name {
+  color: var(--ink-3);
+}
+
+.row .name {
+  position: relative;
+}
+
+.row .meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 22px;
+  color: var(--ink-3);
+}
+
+.row .strike {
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  top: 52%;
+  height: 2px;
+  background: var(--ink-3);
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+
+.letter {
+  display: block;
+  width: 18px;
+  text-align: center;
+  font-size: 23px;
+  font-weight: 600;
+}
+
+.add { color: var(--add); }
+.mod { color: var(--mod); }
+.del { color: var(--del); }
+
+/* ---------- Terminal ---------- */
+
+.term {
+  overflow: hidden;
+}
+
+.term-head {
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+.term-screen {
+  position: absolute;
+  top: 80px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+}
+
+.term-body {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 0 32px;
+  font-size: 27px;
+  line-height: 46px;
+  color: var(--ink);
+  white-space: pre;
+}
+
+.term-line {
+  height: 46px;
+}
+
+.term .prompt { color: var(--ink-3); }
+.term .muted { color: var(--ink-2); }
+.term .b { font-weight: 600; color: var(--ink); }
+
+.caret {
+  display: inline-block;
+  width: 0.56em;
+  height: 1.15em;
+  margin-left: 1px;
+  vertical-align: -0.22em;
+  background: var(--accent);
+}

@@ -1,0 +1,416 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-variables='[{"id":"theme","type":"enum","label":"Theme","default":"dark","options":[{"value":"dark","label":"Dark"},{"value":"light","label":"Light"}]}]'
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>forkspace: dev servers</title>
+    <script src="shared/vendor/gsap.min.js"></script>
+    <script src="shared/vendor/CustomEase.min.js"></script>
+    <link rel="stylesheet" href="shared/forkspace.css" />
+    <style>
+      /* One card (x 48..1872, y 48..1032) holds a 20px-gutter grid: terminal and browser side
+         by side, the proxy strip below spanning both. Nothing overlaps. */
+      #shell { left: 48px; top: 48px; width: 1824px; height: 984px; }
+      #term { left: 72px; top: 128px; width: 878px; height: 590px; }
+      #term .term-body { font-size: 24px; line-height: 42px; }
+      #term .term-line { height: 42px; }
+
+      /* ---------- Browser ---------- */
+      #browser { left: 970px; top: 128px; width: 878px; height: 590px; overflow: hidden; }
+      .chrome {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        height: 56px;
+        padding: 0 16px 0 22px;
+        border-bottom: 1px solid var(--card-line);
+      }
+      .chrome .reload { width: 22px; height: 22px; color: var(--ink-3); flex: none; }
+      .url {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        height: 36px;
+        padding: 0 16px;
+        border-radius: 8px;
+        background: var(--surface-2);
+        font-family: "Geist Mono", ui-monospace, monospace;
+        font-size: 20px;
+        color: var(--ink-3);
+      }
+      .url b { color: var(--ink); font-weight: 400; }
+      .progress {
+        position: absolute;
+        left: 0;
+        bottom: -1px;
+        width: 100%;
+        height: 2px;
+        background: var(--ink-2);
+        transform-origin: left center;
+      }
+      .viewport { position: absolute; top: 57px; left: 0; right: 0; bottom: 0; }
+      .page { position: absolute; inset: 0; background: var(--bg); }
+      .err-box { position: absolute; left: 64px; top: 120px; width: 620px; }
+      .err-box h3 { margin: 0 0 14px; font-size: 32px; font-weight: 500; letter-spacing: -0.015em; color: var(--ink); }
+      .err-box p { margin: 0; font-size: 22px; line-height: 1.6; color: var(--ink-2); }
+      .err-box code { font-family: "Geist Mono", ui-monospace, monospace; font-size: 19px; color: var(--ink-3); }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 60px;
+        padding: 0 30px;
+        border-bottom: 1px solid var(--line);
+        font-size: 21px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .nav .logo { width: 22px; height: 22px; border-radius: 6px; background: var(--ink-3); }
+      .nav .links { margin-left: auto; display: flex; gap: 26px; font-size: 18px; font-weight: 400; color: var(--ink-3); }
+      .card { position: absolute; left: 50%; width: 380px; margin-left: -190px; }
+      #page-a .card { top: 128px; }
+      #page-b .card { top: 92px; }
+      .card h4 { margin: 0 0 22px; font-size: 26px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink); }
+      .field { margin-bottom: 14px; }
+      .field label { display: block; margin-bottom: 7px; font-size: 16px; color: var(--ink-2); }
+      .field .box { height: 40px; box-sizing: border-box; border-radius: 8px; border: 1px solid var(--line-2); }
+      .digits { display: flex; gap: 8px; }
+      .digits .box { flex: 1; }
+      .btn {
+        height: 44px;
+        margin-top: 22px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        font-size: 17px;
+        font-weight: 600;
+        background: var(--ink);
+        color: var(--bg);
+      }
+
+      /* ---------- Proxy window: the route lives inside it, never on the stage ---------- */
+      #proxy { left: 72px; top: 738px; width: 1776px; height: 270px; overflow: hidden; }
+      .proxy-body { position: absolute; top: 57px; left: 0; right: 0; bottom: 0; }
+      #idle-note {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        font-family: "Geist Mono", ui-monospace, monospace;
+        font-size: 22px;
+        color: var(--ink-3);
+      }
+      svg.route { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+      svg.route path { fill: none; stroke-linecap: round; }
+      svg.route .idle { stroke: var(--line-2); stroke-width: 2; }
+      svg.route .live { stroke: var(--ink-2); stroke-width: 2.5; }
+      .node {
+        position: absolute;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        height: 72px;
+        padding: 0 26px;
+        box-sizing: border-box;
+        border-radius: 10px;
+        background: var(--surface-2);
+        border: 1px solid var(--line-2);
+        font-family: "Geist Mono", ui-monospace, monospace;
+        font-size: 24px;
+        color: var(--ink-2);
+        white-space: nowrap;
+      }
+      .node .muted { color: var(--ink-3); }
+      #n-proxy { left: 40px; top: 70px; width: 330px; }
+      #n-a { left: 1434px; top: 22px; width: 300px; }
+      #n-b { left: 1434px; top: 118px; width: 300px; }
+
+      /* In-card focus: a quiet ring over the sub-card being used. It sits outside the sub-card
+         because the terminal and browser clip their own edges. */
+      .ring {
+        position: absolute;
+        box-sizing: border-box;
+        border: 1px solid var(--ink-3);
+        border-radius: 12px;
+        pointer-events: none;
+        opacity: 0;
+      }
+      #ring-term { left: 72px; top: 128px; width: 878px; height: 590px; }
+      #ring-browser { left: 970px; top: 128px; width: 878px; height: 590px; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="servers"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="18.9"
+    >
+      <div class="backdrop"></div>
+      <div id="scene" class="clip stage" data-start="0" data-duration="18.9">
+        <div class="shell" id="shell">
+          <div class="shell-bar"><span class="lights-slot"></span>acme-web<span class="tag">dev servers</span></div>
+        </div>
+
+        <div class="term" id="term">
+          <div class="term-head">~/acme-web</div>
+          <div class="term-screen"><div class="term-body" id="term-body"></div></div>
+        </div>
+
+        <div class="panel" id="browser">
+          <div class="chrome">
+            <svg class="reload" id="reload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/></svg>
+            <div class="url"><b>localhost</b>:4000/login</div>
+            <div class="progress" id="progress"></div>
+          </div>
+          <div class="viewport">
+            <div class="page" id="page-err">
+              <div class="err-box">
+                <h3>This site can’t be reached</h3>
+                <p>localhost refused to connect.</p>
+                <p><code>ERR_CONNECTION_REFUSED</code></p>
+              </div>
+            </div>
+            <div class="page" id="page-a">
+              <div class="nav"><span class="logo"></span>Acme<span class="links"><span>Pricing</span><span>Docs</span></span></div>
+              <div class="card">
+                <h4>Sign in</h4>
+                <div class="field"><label>Email</label><div class="box"></div></div>
+                <div class="field"><label>Password</label><div class="box"></div></div>
+                <div class="btn">Sign in</div>
+              </div>
+            </div>
+            <div class="page" id="page-b">
+              <div class="nav"><span class="logo"></span>Acme<span class="links"><span>Pricing</span><span>Docs</span></span></div>
+              <div class="card">
+                <h4>Sign in</h4>
+                <div class="field"><label>Email</label><div class="box"></div></div>
+                <div class="field"><label>Password</label><div class="box"></div></div>
+                <div class="field"><label>One-time code</label><div class="digits"><div class="box"></div><div class="box"></div><div class="box"></div><div class="box"></div><div class="box"></div><div class="box"></div></div></div>
+                <div class="btn">Verify and sign in</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" id="proxy">
+          <div class="panel-head">forkspace proxy</div>
+          <div class="proxy-body">
+            <div id="idle-note">no servers running</div>
+            <svg class="route" id="route" viewBox="0 0 1774 211">
+              <path class="idle" id="idle-a" d="M 370 106 C 902 106, 902 58, 1434 58" />
+              <path class="idle" id="idle-b" d="M 370 106 C 902 106, 902 154, 1434 154" />
+              <path class="live" id="live-a" d="M 370 106 C 902 106, 902 58, 1434 58" />
+              <path class="live" id="live-b" d="M 370 106 C 902 106, 902 154, 1434 154" />
+            </svg>
+            <div class="node" id="n-proxy"><span class="muted">proxy</span>localhost:4000</div>
+            <div class="node" id="n-a">feature-a<span class="muted">:3000</span></div>
+            <div class="node" id="n-b">feature-b<span class="muted">:5501</span></div>
+          </div>
+        </div>
+
+        <div class="ring" id="ring-term"></div>
+        <div class="ring" id="ring-browser"></div>
+      </div>
+    </div>
+
+    <script src="shared/forkspace.js"></script>
+    <script>
+      (function () {
+        const D = 18.9;
+        const root = document.getElementById("root");
+        FS.applyTheme(root);
+        const { h } = FS;
+        const css = (name) => getComputedStyle(root).getPropertyValue(name).trim();
+        const INK = css("--ink");
+        const INK_2 = css("--ink-2");
+        const EDGE = css("--line-2");
+        const EDGE_ON = css("--ink-3");
+
+        for (const slot of document.querySelectorAll(".lights-slot")) slot.outerHTML = FS.LIGHTS;
+        const pointer = FS.pointer(document.getElementById("scene"));
+
+        const live = { a: document.getElementById("live-a"), b: document.getElementById("live-b") };
+        const len = { a: live.a.getTotalLength(), b: live.b.getTotalLength() };
+        for (const k of ["a", "b"]) live[k].style.strokeDasharray = len[k] + " " + len[k];
+
+        // ---- Terminal ----
+        // Each command is typed after the hand clicks the terminal; after its output, the hand
+        // goes to the browser and reloads. CLICK_TO_TYPE is the beat between click and typing.
+        const CLICK_TO_TYPE = 0.25;
+        const TO_RELOAD = 0.8; // output -> reload click
+        const BACK = 1.45; // reload click -> terminal click
+        const term = new FS.Terminal(document.getElementById("term-body"), {
+          prompt: '<span class="prompt">$ </span>',
+          rows: 12,
+          lineHeight: 42,
+          seed: 57,
+        });
+        const click0 = 0.85;
+        const runA = term.at(click0 + CLICK_TO_TYPE).type("forkspace run feature-a -- npm run dev", 1.2).enter(
+          [h.esc("running 'npm run dev' on port 3000 (PID 48211)"), h.muted("proxy: http://localhost:4000")],
+          0.35,
+        );
+        const tRunA = runA.end - 0.35;
+        const rA = runA.end + TO_RELOAD;
+        const click1 = rA + BACK;
+        const runB = term.at(click1 + CLICK_TO_TYPE).type("forkspace run feature-b -- npm run dev", 1.4).enter(
+          [h.esc("running 'npm run dev' on port 5501 (PID 48297)"), h.muted("proxy: http://localhost:4000")],
+          0.3,
+        );
+        const tRunB = runB.end - 0.3;
+        const rB = runB.end + TO_RELOAD;
+        const click2 = rB + BACK;
+        const swA = term.at(click2 + CLICK_TO_TYPE).type("forkspace switch feature-a", 1.2).enter([h.esc("switched to 'feature-a' (port 3000)")]);
+        const tSwA = swA.end - 0.06;
+        const rSwA = swA.end + TO_RELOAD - 0.2;
+        const click3 = rSwA + BACK;
+        const swB = term.at(click3 + CLICK_TO_TYPE).type("forkspace switch feature-b", 1.3).enter([h.esc("switched to 'feature-b' (port 5501)")]);
+        const tSwB = swB.end - 0.06;
+        const rSwB = swB.end + TO_RELOAD - 0.2;
+
+        // Which server the proxy points at, over time.
+        const routes = [
+          [tRunA + 0.3, "a"],
+          [tRunB + 0.3, "b"],
+          [tSwA + 0.05, "a"],
+          [tSwB + 0.05, "b"],
+        ];
+        const tReset = D - 0.7;
+        const tR = tReset + 0.33;
+
+        const tl = gsap.timeline({ paused: true });
+        const init = (target, vars) => {
+          gsap.set(target, vars);
+          tl.set(target, vars, 0);
+        };
+
+        FS.drive(tl, D, (t) => {
+          term.render(t);
+          // A switch redraws the route: the new path fills while the old one drains.
+          for (const k of ["a", "b"]) {
+            let on = 0;
+            for (const [at, who] of routes) {
+              if (t >= at) on = who === k ? FS.smooth((t - at) / 0.7) : on * (1 - FS.smooth((t - at) / 0.3));
+            }
+            if (t >= tR) on = 0;
+            live[k].style.strokeDashoffset = (len[k] * (1 - on)).toFixed(1);
+            // An undrawn path is hidden outright: a zero-length dash still paints its round cap.
+            live[k].style.opacity = on > 0.001 ? "1" : "0";
+          }
+        });
+
+        function opening(at) {
+          const set = at === 0 ? init : (target, vars) => tl.set(target, vars, at);
+          set("#page-err", { opacity: 1 });
+          set("#page-a, #page-b", { opacity: 0 });
+          set(".node", { opacity: 0, x: 0, color: INK_2, borderColor: EDGE });
+          set("#idle-note", { opacity: 1 });
+          set("svg.route .idle", { opacity: 0 });
+          set("#progress", { scaleX: 0, opacity: 0 });
+          set("#reload", { rotation: 0 });
+          set(".lights .live", { opacity: 0 });
+          set(".ring", { opacity: 0 });
+        }
+        // Only the windows' contents dip at the loop; the windows and their shadows stay put.
+        const DIP = "#term .term-screen, #browser .viewport, #proxy .proxy-body";
+        init("#scene, " + DIP, { opacity: 1 });
+        opening(0);
+
+        // A reload: the icon turns, the bar runs, and the new page replaces the old one at once.
+        function reload(at, from, to) {
+          tl.fromTo("#reload", { rotation: 0 }, { rotation: 360, duration: 0.6, ease: "fs.swap" }, at);
+          tl.fromTo("#progress", { scaleX: 0, opacity: 1 }, { scaleX: 0.7, duration: 0.35, ease: "fs.out" }, at + 0.05);
+          tl.to("#progress", { scaleX: 1, duration: 0.18, ease: "fs.swap" }, at + 0.4);
+          tl.to("#progress", { opacity: 0, duration: 0.2, ease: "fs.swap" }, at + 0.6);
+          tl.set(from, { opacity: 0 }, at + 0.5);
+          tl.set(to, { opacity: 1 }, at + 0.5);
+        }
+        function focus(node, at) {
+          tl.to(node, { color: INK, borderColor: EDGE_ON, duration: 0.35, ease: "fs.swap" }, at);
+        }
+        function unfocus(node, at) {
+          tl.to(node, { color: INK_2, borderColor: EDGE, duration: 0.3, ease: "fs.swap" }, at);
+        }
+        function appear(node, at) {
+          tl.fromTo(node, { opacity: 0, x: -10 }, { opacity: 1, x: 0, duration: 0.5, ease: "fs.out" }, at);
+        }
+        // Focus follows the clicks. The card is the window: its controls colour at the first
+        // click. Inside it, a quiet ring marks the sub-card in use.
+        function focusWindow(win, at) {
+          const other = win === "#term" ? "#browser" : "#term";
+          tl.to("#shell .lights .live", { opacity: 1, duration: 0.15, ease: "fs.swap" }, at);
+          tl.to("#ring-" + win.slice(1), { opacity: 1, duration: 0.2, ease: "fs.swap" }, at);
+          tl.to("#ring-" + other.slice(1), { opacity: 0, duration: 0.2, ease: "fs.swap" }, at);
+        }
+
+        // run feature-a: the proxy and the first server come up.
+        tl.to("#idle-note", { opacity: 0, duration: 0.3, ease: "fs.swap" }, tRunA - 0.05);
+        appear("#n-proxy", tRunA);
+        appear("#n-a", tRunA + 0.1);
+        tl.to("#idle-a", { opacity: 1, duration: 0.4, ease: "fs.swap" }, tRunA + 0.15);
+        focus("#n-a", tRunA + 0.4);
+        reload(rA + 0.04, "#page-err", "#page-a");
+
+        // run feature-b: the newest server takes the route.
+        appear("#n-b", tRunB);
+        tl.to("#idle-b", { opacity: 1, duration: 0.4, ease: "fs.swap" }, tRunB + 0.05);
+        unfocus("#n-a", tRunB + 0.3);
+        focus("#n-b", tRunB + 0.4);
+        reload(rB + 0.04, "#page-a", "#page-b");
+
+        // switch back and forth; nothing restarts.
+        unfocus("#n-b", tSwA + 0.05);
+        focus("#n-a", tSwA + 0.15);
+        reload(rSwA + 0.04, "#page-b", "#page-a");
+        unfocus("#n-a", tSwB + 0.05);
+        focus("#n-b", tSwB + 0.15);
+        reload(rSwB + 0.04, "#page-a", "#page-b");
+
+        // The hand: clicks the terminal, types, reloads the browser, and back again. It rests in
+        // the browser's empty lower-right corner; the card's focus fades out with the loop dip.
+        const REST = [1760, 660];
+        const RELOAD = [1004, 156];
+        const TERM_SPOTS = [
+          [520, 430],
+          [560, 480],
+          [500, 515],
+          [540, 555],
+        ];
+        const hand = FS.hand(tl, pointer);
+        hand.place(0, REST[0], REST[1]);
+        const clicks = [click0, click1, click2, click3];
+        const reloads = [rA, rB, rSwA, rSwB];
+        let from = 0.15;
+        clicks.forEach((c, i) => {
+          hand.move(Math.max(from, c - 0.72), TERM_SPOTS[i][0], TERM_SPOTS[i][1], 0.65);
+          hand.click(c - 0.05);
+          focusWindow("#term", c);
+          hand.move(reloads[i] - 0.72, RELOAD[0], RELOAD[1], 0.65);
+          hand.click(reloads[i] - 0.05);
+          focusWindow("#browser", reloads[i]);
+          from = reloads[i] + 0.3;
+        });
+        const tHome = rSwB + 1.0;
+        hand.move(tHome, REST[0], REST[1], 0.8);
+        tl.to("#shell .lights .live, .ring", { opacity: 0, duration: 0.3, ease: "fs.swap" }, tReset);
+
+        // Loop back to the opening frame: only the sub-cards' contents dip.
+        tl.to(DIP, { opacity: 0, duration: 0.32, ease: "fs.in" }, tReset);
+        term.clear(tR);
+        opening(tR);
+        tl.to(DIP, { opacity: 1, duration: 0.34, ease: "fs.out" }, tR + 0.01);
+
+        window.__termEnd = { tRunA, rA, tRunB, rB, tSwA, rSwA, tSwB, rSwB, tHome };
+        window.__timelines["servers"] = tl;
+      })();
+    </script>
+  </body>
+</html>

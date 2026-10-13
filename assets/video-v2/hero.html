@@ -1,0 +1,303 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-variables='[{"id":"theme","type":"enum","label":"Theme","default":"dark","options":[{"value":"dark","label":"Dark"},{"value":"light","label":"Light"}]}]'
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>forkspace: new, diff, merge, drop</title>
+    <script src="shared/vendor/gsap.min.js"></script>
+    <script src="shared/vendor/CustomEase.min.js"></script>
+    <link rel="stylesheet" href="shared/forkspace.css" />
+    <style>
+      #shell { left: 48px; top: 48px; width: 1824px; height: 984px; }
+      .panel { top: 128px; width: 429px; height: 404px; overflow: hidden; }
+      #base { left: 72px; }
+      .slot {
+        position: absolute;
+        top: 128px;
+        width: 429px;
+        height: 404px;
+        box-sizing: border-box;
+        border: 1px dashed var(--card-line);
+        border-radius: 12px;
+      }
+      #term { left: 72px; top: 552px; width: 1316px; height: 456px; }
+      #term .term-body { font-size: 25px; line-height: 42px; }
+      #term .term-line { height: 42px; }
+      #stats { left: 1408px; top: 552px; width: 440px; height: 456px; }
+      #stats .body { padding: 30px 28px 0; font-family: "Geist", system-ui, sans-serif; }
+      #stats .name { font-size: 21px; color: var(--ink-2); }
+      #stats .value { margin-top: 6px; font-size: 46px; font-weight: 500; letter-spacing: -0.02em; color: var(--ink); font-feature-settings: "tnum"; }
+      #stats .bar { position: relative; margin-top: 14px; height: 6px; border-radius: 3px; background: var(--card-line); }
+      #stats .bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--ink); transform-origin: left center; }
+      #stats .slow .value { color: var(--ink-3); }
+      #stats .slow .bar i { background: var(--ink-3); }
+      #stats .slow { margin-top: 40px; }
+      #stats .foot { position: absolute; left: 28px; right: 28px; bottom: 26px; text-wrap: balance; font-family: "Geist", system-ui, sans-serif; font-size: 20px; line-height: 1.45; color: var(--ink-3); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="hero"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="20.05"
+    >
+      <div class="backdrop"></div>
+      <div id="scene" class="clip stage" data-start="0" data-duration="20.05">
+        <div class="shell" id="shell">
+          <div class="shell-bar"><span class="lights-slot"></span>acme-web<span class="tag">forkspace</span></div>
+        </div>
+        <div class="slot" style="left: 521px"></div>
+        <div class="slot" style="left: 970px"></div>
+        <div class="slot" style="left: 1419px"></div>
+        <div class="panel" id="base">
+          <div class="panel-head">acme-web<span class="tag">project</span></div>
+          <div class="tree" id="base-tree"></div>
+        </div>
+        <div class="panel ws" id="ws-a"></div>
+        <div class="panel ws" id="ws-b"></div>
+        <div class="panel ws" id="ws-c"></div>
+
+        <div class="term" id="term">
+          <div class="term-head">~/acme-web</div>
+          <div class="term-screen"><div class="term-body" id="term-body"></div></div>
+        </div>
+
+        <!-- Measured on a Next.js 15 app (324 packages, 424 MB node_modules): forkspace new takes
+             75-86 ms; git worktree add plus a warm-cache npm install takes 4.5-4.8 s.
+             See docs/benchmarks.md. -->
+        <div class="panel" id="stats">
+          <div class="panel-head">time to ready<span class="tag">3 workspaces</span></div>
+          <div class="body">
+            <div class="fast">
+              <div class="name">forkspace new</div>
+              <div class="value" id="v-fast">0.23 s</div>
+              <div class="bar"><i id="b-fast" style="width: 6px"></i></div>
+            </div>
+            <div class="slow">
+              <div class="name">git worktree + npm install</div>
+              <div class="value" id="v-slow">14 s</div>
+              <div class="bar"><i id="b-slow" style="width: 100%"></i></div>
+            </div>
+          </div>
+          <div class="foot">node_modules and .env included, nothing copied</div>
+        </div>
+      </div>
+    </div>
+
+    <script src="shared/forkspace.js"></script>
+    <script>
+      (function () {
+        const D = 20.05;
+        const root = document.getElementById("root");
+        FS.applyTheme(root);
+        const { h } = FS;
+        const css = (name) => getComputedStyle(root).getPropertyValue(name).trim();
+        const INK = css("--ink");
+        const INK_2 = css("--ink-2");
+
+        // ---- Panels ----
+        const ROWS = [
+          { id: "auth", name: "src/auth.ts" },
+          { id: "otp", name: "src/otp.ts" },
+          { id: "api", name: "src/api.ts" },
+          { id: "nm", name: "node_modules/", ignored: true },
+          { id: "env", name: ".env", ignored: true },
+          { id: "pkg", name: "package.json" },
+        ];
+        const ROW_H = 54;
+        const base = FS.tree(document.getElementById("base-tree"), ROWS, "base");
+
+        const WS = [
+          { key: "a", x: 521, ms: 76 },
+          { key: "b", x: 970, ms: 75 },
+          { key: "c", x: 1419, ms: 77 },
+        ];
+        const rows = {};
+        for (const w of WS) {
+          const el = document.getElementById("ws-" + w.key);
+          el.style.left = w.x + "px";
+          el.innerHTML =
+            '<div class="panel-head">agent-' + w.key +
+            '<span class="tag">' + w.ms + ' ms</span></div><div class="tree"></div><div class="focus"></div>';
+          rows[w.key] = FS.tree(el.querySelector(".tree"), ROWS, "ws-" + w.key);
+          // Dependencies and secrets are there from the first moment, read from the project.
+          for (const id of ["nm", "env"]) rows[w.key][id].querySelector(".meta").innerHTML = '<span class="shared">shared</span>';
+        }
+        base.nm.querySelector(".meta").innerHTML = '<span class="keep">424 MB</span>';
+        for (const slot of document.querySelectorAll(".lights-slot")) slot.outerHTML = FS.LIGHTS;
+        const pointer = FS.pointer(document.getElementById("scene"));
+
+        // Change markers live in the DOM from the start; only their opacity animates.
+        function mark(row, kind, letter, counts) {
+          row.querySelector(".meta").innerHTML =
+            (counts ? '<span class="counts">' + counts + "</span>" : "") +
+            '<span class="letter ' + kind + '">' + letter + "</span>";
+        }
+        mark(rows.a.auth, "mod", "M", "+2 −1");
+        mark(rows.a.otp, "add", "A", "+1");
+        mark(rows.b.api, "mod", "M", "+1 −1");
+        mark(rows.c.api, "del", "D");
+        mark(base.auth, "mod", "M");
+        mark(base.otp, "add", "A");
+
+        // ---- Terminal ----
+        const term = new FS.Terminal(document.getElementById("term-body"), {
+          prompt: '<span class="prompt">$ </span>',
+          rows: 8,
+          lineHeight: 42,
+          seed: 11,
+        });
+        const created = (n) => h.esc("created workspace '" + n + "' at /home/dev/.forkspace/" + n + "/merged");
+        const newCmd = "forkspace new agent-";
+
+        // The hand clicks into the terminal first, then the typing starts.
+        const tClick = 0.9;
+        const c1 = term.at(tClick + 0.2).type(newCmd + "a").enter([created("agent-a")]);
+        const tA = c1.end;
+        const c2 = term.at(tA + 0.5).recall(newCmd + "a").pause(0.22).back(1).type("b").enter([created("agent-b")]);
+        const tB = c2.end;
+        const c3 = term.at(tB + 0.38).recall(newCmd + "b").pause(0.16).back(1).type("c").enter([created("agent-c")]);
+        const tC = c3.end;
+
+        const tWork = tC + 0.75;
+        // Tests run in the fresh workspace straight away: nothing to install first.
+        const cTest = term.at(tWork + 1.55).type("forkspace enter agent-a -- npm test", 1.3).enter(
+          [
+            " Test Files  " + h.add("3 passed") + " (3)",
+            "      Tests  " + h.add("14 passed") + " (14)",
+            h.muted("left 'agent-a'"),
+          ],
+          0.7,
+        );
+        const tTest = cTest.end - 0.7;
+        const c4 = term.at(cTest.end + 0.6).type("forkspace diff agent-a").enter([
+          h.mod("M") + "  src/auth.ts " + h.add("(+2)") + " " + h.del("(-1)"),
+          h.add("A") + "  src/otp.ts " + h.add("(+1)"),
+        ]);
+        const tDiff = c4.end;
+        const c5 = term.at(tDiff + 0.85).type("forkspace merge agent-a --quiet").enter(
+          [h.esc("merged 2 files (1 added, 1 modified, 0 deleted)")],
+          0.5,
+        );
+        const tMerge = c5.end - 0.5;
+        const c6 = term.at(c5.end + 0.95).type("forkspace drop --all").enter([h.esc("removed all 3 workspaces")], 0.12);
+        const tDrop = c6.end - 0.12;
+
+        // ---- Timeline ----
+        const tl = gsap.timeline({ paused: true });
+        const init = (target, vars) => {
+          gsap.set(target, vars);
+          tl.set(target, vars, 0);
+        };
+        FS.drive(tl, D, (t) => term.render(t));
+
+        const below = (r) => [r.api, r.nm, r.env, r.pkg];
+        init("#scene, #base .tree, #term .term-screen", { opacity: 1 });
+        init(".ws", { opacity: 0, x: 0, y: 0 });
+        init(".focus", { opacity: 0 });
+        init(".ws .tree, .ws .panel-head", { opacity: 1 });
+        init(".lights .live", { opacity: 0 });
+        init("#v-fast, #v-slow", { opacity: 0 });
+        init("#b-fast, #b-slow", { scaleX: 0 });
+        init(".row .meta > *:not(.keep)", { opacity: 0 });
+        init(".ws .tag", { opacity: 0 });
+        const touched = [rows.a.auth, rows.a.otp, rows.b.api, base.auth, base.otp].map((r) => r.querySelector(".name"));
+        init(touched, { color: INK_2 });
+        init(".strike", { scaleX: 0 });
+        for (const r of [base, rows.a, rows.b, rows.c]) {
+          init(r.otp, { opacity: 0 });
+          init(below(r), { y: -ROW_H });
+        }
+
+        // new: each workspace window opens in its own place the moment the terminal answers,
+        // with its fork time; the shared rows settle in right after.
+        const made = { a: tA, b: tB, c: tC };
+        for (const w of WS) {
+          const el = "#ws-" + w.key;
+          const t0 = made[w.key] - 0.04;
+          tl.fromTo(el, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.42, ease: "fs.out" }, t0);
+          tl.to(el + " .tag", { opacity: 1, duration: 0.3, ease: "fs.swap" }, made[w.key] + 0.02);
+          tl.to(el + " .shared", { opacity: 1, duration: 0.45, ease: "fs.swap" }, t0 + 0.35);
+        }
+        // Time to ready: forkspace's three forks, then the usual way, drawn to the same scale.
+        tl.to("#v-fast", { opacity: 1, duration: 0.3, ease: "fs.swap" }, tC + 0.25);
+        tl.to("#b-fast", { scaleX: 1, duration: 0.3, ease: "fs.out" }, tC + 0.25);
+        tl.to("#v-slow", { opacity: 1, duration: 0.3, ease: "fs.swap" }, tC + 0.8);
+        tl.to("#b-slow", { scaleX: 1, duration: 1.4, ease: "fs.swap" }, tC + 0.8);
+
+        // Work: each agent edits its own copy, on its own schedule.
+        function change(row, at) {
+          tl.to(row.querySelector(".name"), { color: INK, duration: 0.3, ease: "fs.swap" }, at);
+          tl.fromTo(row.querySelectorAll(".meta > *"), { opacity: 0, x: 6 }, { opacity: 1, x: 0, duration: 0.45, ease: "fs.out", stagger: 0.05 }, at);
+        }
+        function insert(r, at) {
+          tl.to(below(r), { y: 0, duration: 0.55, ease: "fs.out", stagger: 0.02 }, at);
+          tl.fromTo(r.otp, { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "fs.swap" }, at + 0.12);
+        }
+        change(rows.a.auth, tWork);
+        change(rows.b.api, tWork + 0.45);
+        tl.to(rows.c.api.querySelector(".strike"), { scaleX: 1, duration: 0.45, ease: "fs.swap" }, tWork + 0.95);
+        tl.fromTo(rows.c.api.querySelector(".letter"), { opacity: 0, x: 6 }, { opacity: 1, x: 0, duration: 0.45, ease: "fs.out" }, tWork + 1.0);
+        insert(rows.a, tWork + 1.35);
+        change(rows.a.otp, tWork + 1.5);
+
+        // diff: agent-a is outlined; the other workspaces' contents step back.
+        tl.to("#ws-a .focus", { opacity: 1, duration: 0.4, ease: "fs.swap" }, tDiff - 0.05);
+        tl.to("#ws-b .tree, #ws-b .panel-head, #ws-c .tree, #ws-c .panel-head", { opacity: 0.4, duration: 0.5, ease: "fs.swap" }, tDiff);
+
+        // merge: the project takes agent-a's changes; the markers settle away.
+        insert(base, tMerge + 0.1);
+        change(base.auth, tMerge + 0.1);
+        change(base.otp, tMerge + 0.3);
+        tl.to([base.auth, base.otp].map((r) => r.querySelector(".letter")), { opacity: 0, duration: 0.8, ease: "fs.swap" }, tMerge + 2.0);
+        tl.to([base.auth, base.otp].map((r) => r.querySelector(".name")), { color: INK_2, duration: 0.8, ease: "fs.swap" }, tMerge + 2.0);
+
+        // drop: every workspace goes; the project keeps what was merged.
+        ["c", "b", "a"].forEach((k, i) => {
+          tl.to("#ws-" + k, { opacity: 0, y: 10, duration: 0.28, ease: "fs.in" }, tDrop + 0.02 + i * 0.04);
+        });
+        tl.to("#v-fast, #v-slow, #b-fast, #b-slow", { opacity: 0, duration: 0.4, ease: "fs.swap" }, tDrop + 0.1);
+
+        // The hand: rests below the windows, clicks the terminal into focus, steps aside while
+        // commands run, points at what each command is about, and comes back to rest.
+        const REST = [1310, 962];
+        const hand = FS.hand(tl, pointer);
+        hand.place(0, REST[0], REST[1]);
+        hand.move(0.2, 820, 860, 0.62);
+        hand.click(tClick - 0.05);
+        tl.to("#shell .lights .live", { opacity: 1, duration: 0.18, ease: "fs.swap" }, tClick);
+        hand.move(tClick + 0.45, 1290, 720, 0.8);
+        hand.move(tDiff - 0.7, 740, 330, 0.8);
+        hand.move(tMerge - 0.15, 300, 300, 0.75);
+        hand.move(tDrop + 0.35, REST[0], REST[1], 0.95);
+
+        // Loop: dip, then return to the opening frame.
+        const tReset = D - 0.7;
+        const tR = tReset + 0.33;
+        // Only the windows' contents dip: the windows and their shadows stay where they are.
+        const DIP = "#base .tree, #term .term-screen";
+        tl.to(DIP, { opacity: 0, duration: 0.32, ease: "fs.in" }, tReset);
+        term.clear(tR);
+        tl.set(base.otp, { opacity: 0 }, tR);
+        tl.set(below(base), { y: -ROW_H }, tR);
+        tl.set(".row .meta > *:not(.keep)", { opacity: 0 }, tR);
+        tl.set("#v-fast, #v-slow", { opacity: 0 }, tR);
+        tl.set("#b-fast, #b-slow", { scaleX: 0, opacity: 1 }, tR);
+        tl.set("#shell .lights .live", { opacity: 0 }, tR);
+        tl.set(".focus", { opacity: 0 }, tR);
+        tl.set(".ws .tree, .ws .panel-head", { opacity: 1 }, tR);
+        tl.set(touched, { color: INK_2 }, tR);
+        tl.to(DIP, { opacity: 1, duration: 0.34, ease: "fs.out" }, tR + 0.01);
+
+        window.__termEnd = { tA, tB, tC, tTest, tDiff, tMerge, tDrop };
+        window.__timelines["hero"] = tl;
+      })();
+    </script>
+  </body>
+</html>

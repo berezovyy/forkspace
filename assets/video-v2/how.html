@@ -1,0 +1,409 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-variables='[{"id":"theme","type":"enum","label":"Theme","default":"dark","options":[{"value":"dark","label":"Dark"},{"value":"light","label":"Light"}]}]'
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>forkspace: how a workspace works</title>
+    <script src="shared/vendor/gsap.min.js"></script>
+    <script src="shared/vendor/CustomEase.min.js"></script>
+    <link rel="stylesheet" href="shared/forkspace.css" />
+    <style>
+      /* One card holds everything: notes and terminal stacked on the left, the diagram on the
+         right, 20px gutters, no overlaps. */
+      #shell { left: 48px; top: 48px; width: 1824px; height: 984px; }
+
+      #notes {
+        left: 72px; top: 128px; width: 720px; height: 400px; z-index: 2;
+        font-family: "Geist", system-ui, sans-serif;
+      }
+      #notes .inner { position: absolute; inset: 0; }
+      .cap { position: absolute; top: 46px; left: 46px; width: 628px; }
+      #notes .caption { font-size: 40px; line-height: 1.18; }
+      #notes .caption-sub { margin-top: 18px; font-size: 25px; line-height: 1.5; }
+      #note {
+        position: absolute;
+        left: 46px;
+        right: 46px;
+        top: 252px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line-2);
+        font-size: 21px;
+        line-height: 1.5;
+        color: var(--ink-3);
+      }
+      #note b { color: var(--ink-2); font-weight: 500; }
+
+      #term { left: 72px; top: 548px; width: 720px; height: 460px; z-index: 2; }
+      #term .term-body { font-size: 23px; line-height: 40px; padding: 0 24px; }
+      #term .term-line { height: 40px; }
+
+      /* Right: the layer diagram, its own sub-card. */
+      #diagram { left: 812px; top: 128px; width: 1036px; height: 880px; z-index: 1; }
+
+      .label {
+        position: absolute;
+        left: 848px;
+        font-family: "Geist Mono", ui-monospace, monospace;
+        font-size: 24px;
+        color: var(--ink-3);
+        white-space: pre;
+        /* Labels sit over the read lines, which pass behind them. */
+        padding: 2px 14px 2px 0;
+        background: var(--surface);
+        z-index: 4;
+      }
+      .label b { color: var(--ink); font-weight: 500; }
+      .plane {
+        position: absolute;
+        left: 848px;
+        width: 964px;
+        height: 132px;
+        box-sizing: border-box;
+        border-radius: 12px;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        z-index: 2;
+      }
+      #p-up { background: none; border: 1.5px dashed var(--line-2); }
+
+      .layer { position: absolute; inset: 0; }
+      #lines { z-index: 3; }
+      .tiles { z-index: 5; }
+
+      .line {
+        position: absolute;
+        width: 2px;
+        margin-left: -1px;
+        background: var(--line-2);
+        transform-origin: top center;
+      }
+
+      .tile {
+        position: absolute;
+        width: 176px;
+        height: 84px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 10px;
+        background: var(--surface-2);
+        border: 1px solid var(--line-2);
+        font-family: "Geist Mono", ui-monospace, monospace;
+        font-size: 21px;
+        color: var(--ink-2);
+      }
+      .tile.ignored { color: var(--ink-3); }
+      .tile .letter {
+        position: absolute;
+        top: 8px;
+        right: 12px;
+        width: auto;
+        font-size: 19px;
+        opacity: 0;
+      }
+      .tile.wh {
+        background: var(--surface);
+        border: 1.5px dashed color-mix(in srgb, var(--del) 55%, transparent);
+        color: var(--ink-3);
+      }
+      .tile.wh span { text-decoration: line-through; }
+      .tile.wh .letter { opacity: 1; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="how"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="19"
+    >
+      <div class="backdrop"></div>
+      <div id="scene" class="clip stage" data-start="0" data-duration="19">
+        <div class="shell" id="shell">
+          <div class="shell-bar"><span class="lights-slot"></span>how a workspace works</div>
+        </div>
+        <div class="panel" id="notes"><div class="inner">
+        <div class="cap" id="cap-0"><div class="caption">A workspace reads straight from your project.</div><div class="caption-sub">Creating one copies nothing. Every file you open comes from the original.</div></div>
+        <div class="cap" id="cap-1"><div class="caption">Writes land in a separate layer.</div><div class="caption-sub">A file is copied up the first time it changes. New files go there too.</div></div>
+        <div class="cap" id="cap-2"><div class="caption">Deletes leave a marker.</div><div class="caption-sub">The original stays where it is. The workspace stops showing it.</div></div>
+        <div class="cap" id="cap-3"><div class="caption">That layer is the diff.</div><div class="caption-sub">Nothing to scan. What changed is exactly what is in it.</div></div>
+        <div class="cap" id="cap-4"><div class="caption">Merge applies it. Drop throws it away.</div><div class="caption-sub">Your project only changes when you say so.</div></div>
+        <div id="note">
+          On macOS forkspace uses <b>APFS clones</b>, elsewhere <b>reflinks</b> or a <b>plain copy</b>, and tracks changes against a manifest. Same commands, same output.
+        </div>
+        </div></div>
+
+        <div class="panel" id="diagram">
+          <div class="panel-head">how agent-a is built<span class="tag">Linux overlay</span></div>
+          <div class="focus"></div>
+        </div>
+        <div class="label" id="l-view" style="top: 236px"><b>agent-a</b>   what you see</div>
+        <div class="label" id="l-up" style="top: 504px"><b>changes</b>   written by the workspace</div>
+        <div class="label" id="l-low" style="top: 772px"><b>acme-web</b>  your project, read-only</div>
+        <div class="plane" id="p-view" style="top: 282px"></div>
+        <div class="plane" id="p-up" style="top: 550px"></div>
+        <div class="plane" id="p-low" style="top: 818px"></div>
+        <div id="lines" class="layer"></div>
+        <div id="tiles-view" class="layer tiles"></div>
+        <div id="tiles-up" class="layer tiles"></div>
+        <div id="tiles-low" class="layer tiles"></div>
+
+        <div class="term" id="term">
+          <div class="term-head">~/acme-web</div>
+          <div class="term-screen"><div class="term-body" id="term-body"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="shared/forkspace.js"></script>
+    <script>
+      (function () {
+        const D = 19;
+        const root = document.getElementById("root");
+        FS.applyTheme(root);
+        const { h } = FS;
+        const css = (name) => getComputedStyle(root).getPropertyValue(name).trim();
+
+        const Y = { view: 282 + 24, up: 550 + 24, low: 818 + 24 };
+        const TILE_H = 84;
+        const X = (i) => 848 + 18 + i * 188;
+        const FILES = [
+          { key: "auth", name: "auth.ts" },
+          { key: "api", name: "api.ts" },
+          { key: "otp", name: "otp.ts" },
+          { key: "nm", name: "node_modules", ignored: true },
+          { key: "env", name: ".env", ignored: true },
+        ];
+        const index = Object.fromEntries(FILES.map((f, i) => [f.key, i]));
+        const file = (k) => FILES[index[k]];
+
+        function tile(id, f, layer, kind) {
+          const el = document.createElement("div");
+          el.className = "tile" + (f.ignored ? " ignored" : "") + (kind === "del" ? " wh" : "");
+          el.id = id;
+          el.style.left = X(index[f.key]) + "px";
+          el.style.top = Y[layer] + "px";
+          const letter = { mod: "M", add: "A", del: "D" }[kind];
+          el.innerHTML = "<span>" + f.name + "</span>" + (letter ? '<b class="letter ' + kind + '">' + letter + "</b>" : "");
+          document.getElementById("tiles-" + layer).appendChild(el);
+          return el;
+        }
+
+        // Project: everything except the file the agent will create.
+        const low = {
+          auth: tile("low-auth", file("auth"), "low"),
+          api: tile("low-api", file("api"), "low"),
+          nm: tile("low-nm", file("nm"), "low"),
+          env: tile("low-env", file("env"), "low"),
+          otp: tile("low-otp", file("otp"), "low", "add"),
+          authNew: tile("low-auth-new", file("auth"), "low", "mod"),
+        };
+        // Copy-up: a copy of auth.ts rises from the project into the changes layer.
+        const ghost = tile("ghost", file("auth"), "low");
+        // Changes: hidden until written.
+        const up = {
+          auth: tile("up-auth", file("auth"), "up", "mod"),
+          otp: tile("up-otp", file("otp"), "up", "add"),
+          api: tile("up-api", file("api"), "up", "del"),
+        };
+        // The workspace: what you see is the changes layer over the project.
+        const view = {
+          auth: tile("view-auth", file("auth"), "view", "mod"),
+          api: tile("view-api", file("api"), "view"),
+          otp: tile("view-otp", file("otp"), "view", "add"),
+          nm: tile("view-nm", file("nm"), "view"),
+          env: tile("view-env", file("env"), "view"),
+        };
+
+        // Lines: which layer each visible file is read from.
+        const linesEl = document.getElementById("lines");
+        function line(id, k, toY) {
+          const el = document.createElement("div");
+          el.className = "line";
+          el.id = id;
+          el.style.left = X(index[k]) + 88 + "px";
+          el.style.top = Y.view + TILE_H + "px";
+          el.style.height = toY - (Y.view + TILE_H) + "px";
+          linesEl.appendChild(el);
+          return el;
+        }
+        const long = {};
+        const short = {};
+        for (const f of FILES) {
+          long[f.key] = line("long-" + f.key, f.key, Y.low);
+          short[f.key] = line("short-" + f.key, f.key, Y.up);
+        }
+
+        for (const slot of document.querySelectorAll(".lights-slot")) slot.outerHTML = FS.LIGHTS;
+        const pointer = FS.pointer(document.getElementById("scene"));
+
+        // ---- Terminal ----
+        const term = new FS.Terminal(document.getElementById("term-body"), {
+          prompt: '<span class="prompt">$ </span>',
+          rows: 9,
+          lineHeight: 40,
+          seed: 23,
+        });
+        const T_DIFF = 9.0;
+        const diff = term.at(T_DIFF).type("forkspace diff agent-a").enter([
+          h.del("D") + "  src/api.ts",
+          h.mod("M") + "  src/auth.ts " + h.add("(+2)") + " " + h.del("(-1)"),
+          h.add("A") + "  src/otp.ts " + h.add("(+1)"),
+        ]);
+        const tDiff = diff.end;
+        const merge = term.at(tDiff + 2.0).type("forkspace merge agent-a --quiet").enter(
+          [h.esc("merged 3 files (1 added, 1 modified, 1 deleted)")],
+          0.45,
+        );
+        const tMerge = merge.end - 0.45;
+
+        // ---- Timeline ----
+        const tl = gsap.timeline({ paused: true });
+        const init = (target, vars) => {
+          gsap.set(target, vars);
+          tl.set(target, vars, 0);
+        };
+        FS.drive(tl, D, (t) => term.render(t));
+        const letter = (el) => el.querySelector(".letter");
+        const INK = css("--ink");
+        const INK_2 = css("--ink-2");
+        // Everything in the diagram that is not the changes layer, dimmed while the diff is shown.
+        const ASIDE = "#tiles-view, #tiles-low, #lines, #l-view, #l-low";
+
+        const hidden = [up.auth, up.otp, up.api, view.otp, low.otp, low.authNew, ghost];
+        const shown = [low.auth, low.api, view.api];
+        function opening(at) {
+          const set = at === 0 ? init : (target, vars) => tl.set(target, vars, at);
+          set(".cap:not(#cap-0)", { opacity: 0, y: 0 });
+          set("#cap-0", { opacity: 1, y: 0 });
+          set("#note", { opacity: 0, y: 0 });
+          // ASIDE is restored before the merge; setting it again mid-dip would pop the lines in.
+          if (at === 0) set(ASIDE, { opacity: 1 });
+          set("#shell .lights .live", { opacity: 0 });
+          set("#diagram .focus", { opacity: 0 });
+          set(hidden, { opacity: 0, y: 0 });
+          set(shown, { opacity: 1, y: 0 });
+          set([view.auth, view.otp, low.authNew].map(letter), { opacity: 0 });
+          set([view.auth, view.otp], { color: INK_2 });
+          set(Object.values(long), { scaleY: 0, opacity: 1 });
+          set(Object.values(short), { scaleY: 0, opacity: 1 });
+        }
+        init("#scene, #notes .inner, .tiles, #term .term-screen", { opacity: 1 });
+        init(".lights .live", { opacity: 0 });
+        opening(0);
+
+        // Captions.
+        const CAPS = [0, 2.95, 6.15, 8.35, tDiff + 1.7];
+        CAPS.forEach((at, i) => {
+          if (i === 0) return;
+          tl.to("#cap-" + (i - 1), { opacity: 0, duration: 0.25, ease: "fs.in" }, at - 0.25);
+          tl.fromTo("#cap-" + i, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.55, ease: "fs.out" }, at + 0.02);
+        });
+
+        // 1. Reads go straight through the empty changes layer to the project.
+        ["auth", "api", "nm", "env"].forEach((k, i) => {
+          tl.to(long[k], { scaleY: 1, duration: 0.8, ease: "fs.out" }, 0.5 + i * 0.1);
+        });
+
+        // 2. Writing auth.ts copies it up, then changes it there.
+        const tWrite = 3.4;
+        tl.set(ghost, { opacity: 1 }, tWrite);
+        tl.to(ghost, { y: Y.up - Y.low, duration: 0.9, ease: "fs.move" }, tWrite);
+        tl.set(ghost, { opacity: 0 }, tWrite + 0.9);
+        tl.set(up.auth, { opacity: 1 }, tWrite + 0.9);
+        tl.to(up.auth, { color: INK, duration: 0.3, ease: "fs.swap" }, tWrite + 1.0);
+        tl.fromTo(letter(up.auth), { opacity: 0 }, { opacity: 1, duration: 0.35, ease: "fs.swap" }, tWrite + 1.0);
+        tl.to(long.auth, { opacity: 0, duration: 0.3, ease: "fs.swap" }, tWrite + 1.0);
+        tl.to(short.auth, { scaleY: 1, duration: 0.5, ease: "fs.out" }, tWrite + 1.15);
+        tl.to(view.auth, { color: INK, duration: 0.3, ease: "fs.swap" }, tWrite + 1.3);
+        tl.to(letter(view.auth), { opacity: 1, duration: 0.35, ease: "fs.swap" }, tWrite + 1.3);
+
+        // A new file, otp.ts, is created in the changes layer.
+        const tNew = tWrite + 1.95;
+        init(up.otp, { color: INK });
+        init(letter(up.otp), { opacity: 1 });
+        tl.fromTo(up.otp, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: "fs.out" }, tNew);
+        tl.to(short.otp, { scaleY: 1, duration: 0.5, ease: "fs.out" }, tNew + 0.2);
+        tl.fromTo(view.otp, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: "fs.out" }, tNew + 0.35);
+        tl.to(view.otp, { color: INK, duration: 0.01 }, tNew + 0.35);
+        tl.to(letter(view.otp), { opacity: 1, duration: 0.35, ease: "fs.swap" }, tNew + 0.45);
+
+        // 3. Deleting api.ts writes a marker that hides it; the original stays.
+        const tDel = 6.6;
+        tl.fromTo(up.api, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: "fs.out" }, tDel);
+        tl.to(long.api, { opacity: 0, duration: 0.3, ease: "fs.swap" }, tDel + 0.1);
+        tl.to(view.api, { opacity: 0, duration: 0.45, ease: "fs.swap" }, tDel + 0.35);
+
+        // 4. The diff is the changes layer.
+        // The hand clicks the terminal just before typing, and the window takes focus.
+        const tClick = T_DIFF - 0.35;
+        tl.to("#shell .lights .live", { opacity: 1, duration: 0.18, ease: "fs.swap" }, tClick + 0.05);
+        // While the diff is on screen, the diagram is outlined and everything but the changes
+        // layer steps back.
+        tl.to("#diagram .focus", { opacity: 1, duration: 0.4, ease: "fs.swap" }, tDiff);
+        tl.to(ASIDE, { opacity: 0.4, duration: 0.45, ease: "fs.swap" }, tDiff);
+        tl.to(ASIDE, { opacity: 1, duration: 0.45, ease: "fs.swap" }, tMerge - 0.2);
+        tl.to("#diagram .focus", { opacity: 0, duration: 0.4, ease: "fs.swap" }, tMerge - 0.2);
+
+        // 5. Merge: the changes move down into the project, and the layer empties.
+        const tDown = tMerge + 0.05;
+        tl.to(Object.values(short), { opacity: 0, duration: 0.3, ease: "fs.swap" }, tDown);
+        [up.api, up.auth, up.otp].forEach((el, i) => {
+          tl.to(el, { y: Y.low - Y.up, duration: 0.8, ease: "fs.move" }, tDown + i * 0.08);
+          tl.set(el, { opacity: 0 }, tDown + 0.8 + i * 0.08);
+        });
+        const land = tDown + 0.8;
+        tl.set(low.api, { opacity: 0 }, land);
+        tl.set(low.authNew, { opacity: 1, color: INK }, land + 0.08);
+        tl.set(letter(low.authNew), { opacity: 1 }, land + 0.08);
+        tl.set(low.auth, { opacity: 0 }, land + 0.08);
+        tl.set(low.otp, { opacity: 1, color: INK }, land + 0.16);
+        tl.set(letter(low.otp), { opacity: 1 }, land + 0.16);
+        // Once merged, the project is just the project again.
+        tl.to([low.authNew, low.otp, view.auth, view.otp], { color: INK_2, duration: 0.8, ease: "fs.swap" }, land + 0.9);
+        tl.to([low.authNew, low.otp, view.auth, view.otp].map(letter), { opacity: 0, duration: 0.8, ease: "fs.swap" }, land + 0.9);
+        tl.to(long.auth, { opacity: 1, duration: 0.4, ease: "fs.swap" }, land + 0.4);
+        tl.to(long.otp, { scaleY: 1, duration: 0.7, ease: "fs.out" }, land + 0.45);
+
+        tl.fromTo("#note", { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.6, ease: "fs.out" }, land + 1.2);
+
+        // The hand points at whatever each caption is about, clicks the terminal before the
+        // diff, follows the merge down, and comes back to rest before the loop.
+        // At rest the hand sits in the terminal's empty bottom-right corner, inside the card.
+        const REST = [742, 944];
+        const at = (k, layer) => [X(index[k]) + 120, Y[layer] + 62];
+        const hand = FS.hand(tl, pointer);
+        hand.place(0, REST[0], REST[1]);
+        hand.move(0.55, ...at("auth", "low"), 0.85);
+        hand.move(2.85, ...at("auth", "up"), 0.7);
+        hand.move(tNew - 0.35, ...at("otp", "up"), 0.6);
+        hand.move(tDel - 0.45, ...at("api", "up"), 0.5);
+        hand.move(tClick - 0.75, 500, 800, 0.72);
+        hand.click(tClick);
+        hand.move(tDiff + 0.05, 1660, 620, 0.8);
+        hand.move(tDown + 0.1, ...at("otp", "low"), 0.8);
+        hand.move(land + 1.7, REST[0], REST[1], 0.9);
+
+        // Loop back to the opening frame.
+        const tReset = D - 0.7;
+        // Only the sub-cards' contents dip: the card and its sub-cards stay where they are.
+        const DIP = "#notes .inner, .tiles, #lines, #term .term-screen";
+        tl.to(DIP, { opacity: 0, duration: 0.32, ease: "fs.in" }, tReset);
+        term.clear(tReset + 0.33);
+        opening(tReset + 0.33);
+        tl.set([low.otp, low.authNew], { color: INK_2 }, tReset + 0.33);
+        tl.set(letter(low.otp), { opacity: 0 }, tReset + 0.33);
+        tl.to(DIP, { opacity: 1, duration: 0.34, ease: "fs.out" }, tReset + 0.34);
+
+        window.__termEnd = { tClick, tDiff, tMerge, land, handHome: land + 2.6, tReset };
+        window.__timelines["how"] = tl;
+      })();
+    </script>
+  </body>
+</html>

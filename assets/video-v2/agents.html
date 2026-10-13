@@ -1,0 +1,341 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-variables='[{"id":"theme","type":"enum","label":"Theme","default":"dark","options":[{"value":"dark","label":"Dark"},{"value":"light","label":"Light"}]}]'
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>forkspace: parallel agents</title>
+    <script src="shared/vendor/gsap.min.js"></script>
+    <script src="shared/vendor/CustomEase.min.js"></script>
+    <link rel="stylesheet" href="shared/forkspace.css" />
+    <style>
+      /* One card: 24px inside its edges and below its title bar; sub-cards on 20px gutters. */
+      #shell { left: 48px; top: 48px; width: 1824px; height: 984px; }
+      .pane, .slot { top: 128px; width: 578px; height: 352px; }
+      .pane { overflow: hidden; z-index: 2; }
+      #pane-a, #slot-a { left: 72px; }
+      #pane-b, #slot-b { left: 671px; }
+      #pane-c, #slot-c { left: 1270px; }
+      /* An agent's cell before its workspace exists, and after it is dropped. */
+      .slot {
+        position: absolute;
+        box-sizing: border-box;
+        border-radius: 12px;
+        border: 1px dashed var(--line-2);
+        z-index: 1;
+      }
+
+      .status { position: relative; margin-left: auto; height: 56px; width: 240px; font-size: 20px; font-weight: 400; }
+      .status > div {
+        position: absolute;
+        right: 0;
+        top: 0;
+        height: 56px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        white-space: nowrap;
+        color: var(--ink-3);
+      }
+      .status .s-done.ok { color: var(--add); }
+      .status .s-done.bad { color: var(--del); }
+      .status .s-kept { color: var(--ink); }
+      .spin { width: 18px; height: 18px; display: block; }
+      .spin circle { fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; }
+
+      .log { position: absolute; left: 24px; right: 24px; top: 72px; font-size: 22px; }
+      .log .line {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--ink-2);
+        white-space: nowrap;
+      }
+      .log .line.task { color: var(--ink); }
+      .log .line.task i { font-style: normal; color: var(--ink-3); }
+      .log .verb { color: var(--ink); }
+      .log .pass { color: var(--add); }
+      .log .fail { color: var(--del); }
+      .log .n { margin-left: auto; color: var(--ink-3); }
+      .log .work {
+        position: absolute;
+        left: 0;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--ink-3);
+      }
+
+      #term { left: 72px; top: 500px; width: 1776px; height: 508px; z-index: 3; }
+      #term .term-body { font-size: 24px; line-height: 38px; }
+      #term .term-line { height: 38px; }
+      #hl {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 38px;
+        background: var(--surface-2);
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="agents"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="19.6"
+    >
+      <div class="backdrop"></div>
+      <div id="scene" class="clip stage" data-start="0" data-duration="19.6">
+        <div class="shell" id="shell">
+          <div class="shell-bar"><span class="lights-slot"></span>acme-web<span class="tag">3 agents · same task</span></div>
+        </div>
+        <div class="slot" id="slot-a"></div>
+        <div class="slot" id="slot-b"></div>
+        <div class="slot" id="slot-c"></div>
+        <div id="panes"></div>
+        <div class="term" id="term">
+          <div class="term-head">~/acme-web</div>
+          <div class="term-screen"><div id="hl"></div><div class="term-body" id="term-body"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="shared/forkspace.js"></script>
+    <script>
+      (function () {
+        const D = 19.6;
+        const root = document.getElementById("root");
+        FS.applyTheme(root);
+        const { h } = FS;
+        const css = (name) => getComputedStyle(root).getPropertyValue(name).trim();
+
+        const LINE = 36;
+        const TASK = "Add one-time passwords to login";
+        // Each agent works the same task at its own pace and in its own way.
+        const AGENTS = [
+          {
+            key: "a",
+            done: 7.3,
+            result: ["ok", "tests pass"],
+            log: [
+              [1.6, "Read", "src/auth.ts"],
+              [2.5, "Edit", "src/auth.ts", "+3 −1"],
+              [3.4, "Create", "src/otp.ts", "+12"],
+              [4.3, "Create", "test/otp.test.ts", "+18"],
+              [5.4, "Run", "npm test"],
+              [7.3, "pass", "15 passed"],
+            ],
+          },
+          {
+            key: "b",
+            done: 5.9,
+            result: ["bad", "2 failing"],
+            log: [
+              [1.9, "Read", "src/auth.ts"],
+              [3.1, "Edit", "src/auth.ts", "+2 −1"],
+              [4.2, "Run", "npm test"],
+              [5.9, "fail", "2 failed, 12 passed"],
+            ],
+          },
+          {
+            key: "c",
+            done: 7.9,
+            result: ["ok", "tests pass"],
+            log: [
+              [1.75, "Read", "src/auth.ts"],
+              [3.0, "Create", "src/totp.ts", "+9"],
+              [4.6, "Edit", "src/auth.ts", "+3 −1"],
+              [6.0, "Run", "npm test"],
+              [7.9, "pass", "14 passed"],
+            ],
+          },
+        ];
+        const T_TASK = 0.55;
+        const SPIN = '<svg class="spin" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5" stroke-dasharray="30 60"/></svg>';
+
+        const panesEl = document.getElementById("panes");
+        const live = [];
+        for (const a of AGENTS) {
+          const el = document.createElement("div");
+          el.className = "panel pane";
+          el.id = "pane-" + a.key;
+          let lines = '<div class="line task" id="task-' + a.key + '"><i>›</i>' + TASK + "</div>";
+          a.log.forEach((row, i) => {
+            const [, verb, text, n] = row;
+            const body =
+              verb === "pass" || verb === "fail"
+                ? '<span class="' + verb + '">' + h.esc(text) + "</span>"
+                : '<span class="verb">' + verb + "</span>" + h.esc(text);
+            lines +=
+              '<div class="line" id="log-' + a.key + i + '" style="top:' + (i + 1) * LINE + 'px">' +
+              body + (n ? '<span class="n">' + n + "</span>" : "") + "</div>";
+          });
+          el.innerHTML =
+            '<div class="focus"></div>' +
+            '<div class="panel-head">agent-' + a.key +
+            '<div class="status">' +
+            '<div class="s-idle">waiting</div>' +
+            '<div class="s-work">' + SPIN + '<span class="secs"></span></div>' +
+            '<div class="s-done ' + a.result[0] + '">' + a.result[1] + "</div>" +
+            '<div class="s-kept">merged</div>' +
+            "</div></div>" +
+            '<div class="log">' + lines + '<div class="work" id="work-' + a.key + '">' + SPIN + "working</div></div>";
+          panesEl.appendChild(el);
+          live.push({ agent: a, spins: el.querySelectorAll(".spin"), secs: el.querySelector(".secs"), work: el.querySelector(".work") });
+        }
+
+        for (const slot of document.querySelectorAll(".lights-slot")) slot.outerHTML = FS.LIGHTS;
+        const pointer = FS.pointer(document.getElementById("scene"));
+
+        // Terminal: the workspaces already exist; the session picks up from there.
+        const term = new FS.Terminal(document.getElementById("term-body"), {
+          prompt: '<span class="prompt">$ </span>',
+          rows: 11,
+          lineHeight: 38,
+          seed: 41,
+        });
+        const created = (n) => h.esc("created workspace '" + n + "' at /home/dev/.forkspace/" + n + "/merged");
+        const history = (at) =>
+          term.at(at).recall("for n in a b c; do forkspace new agent-$n; done", 0).enter(
+            [created("agent-a"), created("agent-b"), created("agent-c")],
+            0,
+          );
+        history(-1);
+        const T_CLEAR = 8.55;
+        term.clear(T_CLEAR);
+        const cmp = term.at(T_CLEAR + 0.05).type("forkspace compare agent-a agent-b agent-c", 1.5).enter(
+          [
+            h.esc("BASE  /home/dev/acme-web   3 workspaces, same base"),
+            "",
+            h.b("WORKSPACE  SOURCE          DEPS  TESTS"),
+            "agent-a    2+ 1~ 0-   +0    1",
+            "agent-b    0+ 1~ 0-   +0    0",
+            "agent-c    1+ 1~ 0-   +0    0",
+            h.muted("contested (all 3): src/auth.ts"),
+            h.muted("unique to agent-a: src/otp.ts, test/otp.test.ts"),
+            h.muted("unique to agent-c: src/totp.ts"),
+          ],
+          0.12,
+        );
+        const tCmp = cmp.end - 0.12;
+        const merge = term.at(cmp.end + 2.3).type("forkspace merge agent-a --quiet", 1.3).enter(
+          [h.esc("merged 3 files (2 added, 1 modified, 0 deleted)")],
+          0.45,
+        );
+        const tMerge = merge.end - 0.45;
+        const drop = term.at(merge.end + 0.9).type("forkspace drop --all", 1.2).enter([h.esc("removed all 3 workspaces")], 0.12);
+        const tDrop = drop.end - 0.12;
+
+        // ---- Timeline ----
+        const tl = gsap.timeline({ paused: true });
+        const init = (target, vars) => {
+          gsap.set(target, vars);
+          tl.set(target, vars, 0);
+        };
+
+        // Per frame: terminal, spinners, elapsed counters, the working row following the log.
+        FS.drive(tl, D, (t) => {
+          term.render(t);
+          for (const s of live) {
+            const a = s.agent;
+            const angle = (t * 360) % 360;
+            s.spins.forEach((sp) => (sp.style.transform = "rotate(" + angle.toFixed(1) + "deg)"));
+            const elapsed = Math.max(0, Math.min(t, a.done) - T_TASK);
+            s.secs.textContent = Math.floor(elapsed * 9 + 3) + "s";
+            let y = LINE;
+            a.log.forEach((row) => (y += LINE * FS.smooth((t - row[0]) / 0.3)));
+            s.work.style.transform = "translateY(" + y.toFixed(2) + "px)";
+          }
+        });
+
+        function opening(at) {
+          const set = at === 0 ? init : (target, vars) => tl.set(target, vars, at);
+          // The three agent cards open into their cells with the film; drop empties the cells
+          // again, so the loop starts and ends on the same empty grid.
+          set(".pane", { opacity: 0, y: 0 });
+          set(".pane .focus", { opacity: 0 });
+          set(".pane .log, .pane .panel-head", { opacity: 1 });
+          set(".lights .live", { opacity: 0 });
+          set(".log .line", { opacity: 0, x: 0 });
+          set(".log .work", { opacity: 0 });
+          set(".s-idle", { opacity: 1, x: 0 });
+          set(".s-work, .s-done, .s-kept", { opacity: 0, x: 0 });
+          set("#hl", { opacity: 0, y: 0 });
+        }
+        init("#scene, #term .term-screen", { opacity: 1 });
+        opening(0);
+        tl.fromTo(".pane", { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.3, ease: "fs.out", stagger: 0.06 }, 0.1);
+
+        // The agents work.
+        AGENTS.forEach((a, ai) => {
+          const p = "#pane-" + a.key;
+          const tTask = T_TASK + ai * 0.08;
+          tl.fromTo("#task-" + a.key, { opacity: 0, x: -8 }, { opacity: 1, x: 0, duration: 0.45, ease: "fs.out" }, tTask);
+          tl.to(p + " .s-idle", { opacity: 0, duration: 0.2, ease: "fs.swap" }, tTask + 0.3);
+          tl.to(p + " .s-work", { opacity: 1, duration: 0.25, ease: "fs.swap" }, tTask + 0.4);
+          tl.to("#work-" + a.key, { opacity: 1, duration: 0.3, ease: "fs.swap" }, tTask + 0.5);
+          a.log.forEach((row, i) => {
+            // The working row steps down first; the new line fades in behind it, never across it.
+            tl.fromTo("#log-" + a.key + i, { opacity: 0, x: -8 }, { opacity: 1, x: 0, duration: 0.4, ease: "fs.out" }, row[0] + 0.22);
+          });
+          tl.to("#work-" + a.key, { opacity: 0, duration: 0.2, ease: "fs.swap" }, a.done - 0.05);
+          tl.to(p + " .s-work", { opacity: 0, duration: 0.2, ease: "fs.swap" }, a.done);
+          tl.fromTo(p + " .s-done", { opacity: 0, x: 6 }, { opacity: 1, x: 0, duration: 0.4, ease: "fs.out" }, a.done + 0.1);
+        });
+
+        // compare: agent-a is the attempt worth keeping. Its card takes the focus outline; the
+        // others' contents step back.
+        tl.fromTo("#hl", { opacity: 0, y: 4 * 38 }, { opacity: 1, y: 4 * 38, duration: 0.4, ease: "fs.swap" }, tCmp + 1.0);
+        tl.to("#pane-a .focus", { opacity: 1, duration: 0.4, ease: "fs.swap" }, tCmp + 1.0);
+        tl.to("#pane-b .log, #pane-b .panel-head, #pane-c .log, #pane-c .panel-head", { opacity: 0.4, duration: 0.5, ease: "fs.swap" }, tCmp + 1.1);
+        tl.to("#hl", { opacity: 0, duration: 0.3, ease: "fs.swap" }, tMerge - 0.9);
+
+        // merge agent-a.
+        tl.to("#pane-a .s-done", { opacity: 0, duration: 0.2, ease: "fs.swap" }, tMerge + 0.45);
+        tl.fromTo("#pane-a .s-kept", { opacity: 0, x: 6 }, { opacity: 1, x: 0, duration: 0.4, ease: "fs.out" }, tMerge + 0.55);
+
+        // drop: every workspace goes at once, as quickly as the command does it.
+        ["c", "b", "a"].forEach((k, i) => {
+          tl.to("#pane-" + k, { opacity: 0, y: 6, duration: 0.28, ease: "fs.in" }, tDrop + 0.02 + i * 0.04);
+        });
+
+        // The hand: rests in the terminal's empty corner while the agents work, clicks the terminal (the card takes
+        // focus) to compare, points at the attempt worth keeping, then at the card it merged, and rests.
+        const REST = [1700, 950];
+        const ROW_Y = 500 + 80 + 4 * 38 + 19;
+        const hand = FS.hand(tl, pointer);
+        hand.place(0, REST[0], REST[1]);
+        hand.move(T_CLEAR - 1.0, 1150, 830, 0.62);
+        hand.click(T_CLEAR - 0.33);
+        tl.to("#shell .lights .live", { opacity: 1, duration: 0.18, ease: "fs.swap" }, T_CLEAR - 0.28);
+        hand.move(T_CLEAR + 0.3, 1600, 720, 0.8);
+        hand.move(tCmp + 0.55, 650, ROW_Y, 0.75);
+        hand.move(tMerge + 0.2, 584, 176, 0.75);
+        hand.move(tDrop + 0.35, REST[0], REST[1], 0.95);
+
+        // Loop back to the opening frame. Only the terminal's contents dip; the card stays.
+        const tReset = D - 0.7;
+        const tR = tReset + 0.33;
+        tl.to("#term .term-screen", { opacity: 0, duration: 0.32, ease: "fs.in" }, tReset);
+        term.clear(tR);
+        history(tR + 0.001);
+        opening(tR);
+        tl.to("#term .term-screen", { opacity: 1, duration: 0.34, ease: "fs.out" }, tR + 0.01);
+
+        window.__termEnd = { tCmp, tMerge, tDrop };
+        window.__timelines["agents"] = tl;
+      })();
+    </script>
+  </body>
+</html>
