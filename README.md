@@ -1,11 +1,9 @@
-<p align="center">
+<h1 align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/mark-dark.svg" />
-    <img src="assets/mark-light.svg" width="64" height="64" alt="" />
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg" />
+    <img src="assets/logo-light.svg" height="96" alt="forkspace" />
   </picture>
-</p>
-
-<h1 align="center">forkspace</h1>
+</h1>
 
 <p align="center">
   <strong>Disposable copies of your whole project, for agents, experiments and parallel work.</strong><br />
@@ -20,7 +18,8 @@
 </p>
 
 <p align="center">
-  <img src="assets/films/hero.webp" width="100%" alt="Three workspaces are forked from a project, each is changed independently, one is merged back and the rest are dropped." />
+  <img src="assets/films-v2/hero.webp" width="100%" alt="Three workspaces are forked from a project in about 76 ms each, with node_modules and .env already inside. Tests run in one straight away, each is changed independently, one is merged back and the rest are dropped." /><br />
+  <sub>Timings measured on a Next.js 15 app with a 424 MB <code>node_modules</code>. <a href="docs/benchmarks.md#measured-linux-overlay-on-a-real-project">How</a>.</sub>
 </p>
 
 ## Why forkspace?
@@ -56,23 +55,38 @@ Run `forkspace enter experiment` without a command to open a shell inside the wo
 
 ## Install
 
-<!-- notest: registry publication is networked; docs CI installs this checkout with cargo install --path -->
+<!-- notest: installation is networked; docs CI installs this checkout with cargo install --path -->
 ```bash
+# a prebuilt binary for Linux or macOS (x86_64 or arm64), into ~/.local/bin
+curl -fsSL https://github.com/berezovyy/forkspace/releases/latest/download/install.sh | sh
+
+# or build it from source with Cargo
 cargo install forkspace
+
+# later: move to the newest release (or `forkspace upgrade 0.2.0` for a given one)
+forkspace upgrade
 ```
 
 Forkspace runs on Linux and macOS and needs no root or daemon. On Linux, install
 [`fuse-overlayfs`](https://github.com/containers/fuse-overlayfs) for the fastest forks.
+`forkspace upgrade` replaces a downloaded binary in place, and a Cargo install through Cargo;
+workspaces made by an older version keep working. Releases and their notes are on the
+[releases page](https://github.com/berezovyy/forkspace/releases), and in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## How it works
 
 <p align="center">
-  <img src="assets/films/how.webp" width="100%" alt="The overlay model: a workspace reads from the project, writes and deletions go to a separate changes layer, and that layer is what diff shows and merge applies." />
+  <img src="assets/films-v2/how.webp" width="100%" alt="The overlay model: a workspace reads from the project, writes and deletions go to a separate changes layer, and that layer is what diff shows and merge applies." />
 </p>
 
 On Linux with `fuse-overlayfs`, a workspace is a union of two layers:
 
-- **Your project** is the read-only lower layer. Forkspace never writes to it until you merge.
+- **A frozen copy of your project** is the read-only lower layer. The first fork of a project
+  copies it once into `FORKSPACE_HOME` (reflinks on Btrfs and XFS, a plain copy on ext4);
+  later forks reuse that copy, or hard-link its unchanged files into a new one, so a branch
+  switch or commit in your project never reaches a running agent. Forkspace never writes to
+  your project until you merge.
 - **The changes layer** starts empty. A file is copied into it the first time it is written,
   new files land there, and deletions are recorded as markers.
 - **The workspace** is what you see: the changes layer on top of your project.
@@ -89,7 +103,7 @@ every backend; see [Platforms](#platforms).
 ### Parallel AI agents
 
 <p align="center">
-  <img src="assets/films/agents.webp" width="100%" alt="Three agents work on the same task in three workspaces; forkspace compare shows how the attempts differ, one is merged and the others are dropped." />
+  <img src="assets/films-v2/agents.webp" width="100%" alt="Three agents work on the same task in three workspaces; forkspace compare shows how the attempts differ, one is merged and the others are dropped." />
 </p>
 
 Give each agent its own workspace of the same repository. They can install packages, run
@@ -110,7 +124,7 @@ forkspace drop --all                        # discard the rest
 ### Dev servers side by side
 
 <p align="center">
-  <img src="assets/films/servers.webp" width="100%" alt="Two workspaces run their own dev servers; forkspace switch changes which one localhost:4000 serves." />
+  <img src="assets/films-v2/servers.webp" width="100%" alt="Two workspaces run their own dev servers; forkspace switch changes which one localhost:4000 serves." />
 </p>
 
 Each workspace runs its own dev server on its own port. A small proxy on `localhost:4000`
@@ -164,6 +178,7 @@ forkspace diff step-2 --cumulative
 | `switch`  | Point the proxy at another workspace's dev server                          |
 | `ls`      | List workspaces, their backend and how many files changed                  |
 | `drop`    | Remove workspaces (`--all`, `--glob`, `--force`)                            |
+| `upgrade` | Install the latest release, or a given version (`--check`)                  |
 
 Every command has `--help`; `ls`, `diff`, `compare` and `pull` also print `--json`. The full reference is in
 [docs/cli-reference.md](docs/cli-reference.md).
