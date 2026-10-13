@@ -16,6 +16,7 @@ pub mod new;
 pub(crate) mod pull;
 pub(crate) mod run;
 pub(crate) mod switch;
+pub mod upgrade;
 
 use crate::cli::{Cli, Commands};
 use crate::error::Result;
@@ -46,6 +47,7 @@ pub fn dispatch(cli: Cli) -> Result {
         Commands::Restore(args) => checkpoint::restore(args),
         Commands::Limit(args) => limit::exec(args),
         Commands::Gc(args) => gc::exec(args),
+        Commands::Upgrade(args) => upgrade::exec(args),
         Commands::ProxyDaemon(args) => crate::process::proxy::run_proxy(args.port),
     }
 }

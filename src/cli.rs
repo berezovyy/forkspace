@@ -68,6 +68,8 @@ pub enum Commands {
     /// Show what disk forkspace could give back, and reclaim it
     Gc(GcArgs),
 
+    /// Upgrade forkspace to the latest release (or to a given version)
+    Upgrade(UpgradeArgs),
 
     /// Generate shell completions
     #[command(hide = true)]
@@ -479,6 +481,19 @@ pub struct LandArgs {
         help = "Land under a different branch name"
     )]
     pub as_branch: Option<String>,
+}
+
+#[derive(Args)]
+pub struct UpgradeArgs {
+    #[arg(help = "Version to install, e.g. 0.2.0 (defaults to the latest release)")]
+    pub version: Option<String>,
+
+    #[arg(
+        long,
+        conflicts_with = "version",
+        help = "Only report whether a newer release exists"
+    )]
+    pub check: bool,
 }
 
 #[derive(Args)]

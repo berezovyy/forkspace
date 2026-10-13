@@ -25,6 +25,7 @@ _forkspace() {
         'restore:Return a workspace to one of its checkpoints'
         'limit:Show or change a workspace'"'"'s memory and CPU limits'
         'gc:Show what disk forkspace could give back, and reclaim it'
+        'upgrade:Upgrade forkspace to the latest release'
     )
 
     _arguments -C \
@@ -182,6 +183,12 @@ _forkspace() {
                         '2:checkpoint id:' \
                         '--resume[Finish an interrupted restore]' \
                         '--no-install[Skip dependency installation]' \
+                        '--help[Show help]'
+                    ;;
+                upgrade)
+                    _arguments \
+                        '1:version:' \
+                        '--check[Only report whether a newer release exists]' \
                         '--help[Show help]'
                     ;;
             esac
