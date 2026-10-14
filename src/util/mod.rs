@@ -1,8 +1,9 @@
 //! Small, dependency-free helpers shared across modules.
 
-mod bulk;
+pub(crate) mod bulk;
 pub mod fs;
 mod glob;
+pub mod style;
 pub mod trace;
 pub mod walk;
 

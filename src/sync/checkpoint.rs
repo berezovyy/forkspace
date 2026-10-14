@@ -140,13 +140,10 @@ pub fn list(workspace: &str) -> Result<Vec<Checkpoint>> {
 
 /// Delete every checkpoint of `workspace` (it is being dropped).
 pub fn remove_all(workspace: &str) -> Result {
-    let path = workspace_dir(workspace);
-    match fs::remove_dir_all(&path) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-            Err(error).io_context(|| format!("remove {}", path.display()))
-        }
-        _ => Ok(()),
-    }
+    crate::state::trash(
+        &workspace_dir(workspace),
+        &format!("checkpoints-{workspace}"),
+    )
 }
 
 /// Return `workspace` to checkpoint `id`, after taking an automatic checkpoint of its current

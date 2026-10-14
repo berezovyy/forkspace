@@ -1,8 +1,9 @@
 //! Resumable operation journals.
 //!
 //! A merge or pull is recorded as a list of per-path steps before anything is applied. Each
-//! step is an atomic rename, and `next` is persisted after every step, so an interrupted
-//! operation can be resumed exactly where it stopped. A journal whose phase is `done` is
+//! step is an atomic rename that is safe to apply again, and `next` is persisted at least
+//! every [`SAVE_INTERVAL`], so an interrupted operation resumes at most that far back from
+//! where it stopped. A journal whose phase is `done` is
 //! terminal and is swept on the next state load.
 //!
 //! A step for a file both sides changed installs a line-level merge staged in the journal's
@@ -23,6 +24,10 @@ use crate::util::{ensure_parent_dir, IoContext};
 
 /// Upper bound on journal files inspected by one opportunistic sweep.
 const SWEEP_LIMIT: usize = 128;
+
+/// How much applying may go unrecorded. Each save is a full flush (~45 ms on APFS), so saving
+/// after every step made large merges and pulls take minutes.
+const SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -178,11 +183,12 @@ pub fn start(
     Ok(path)
 }
 
-/// Apply every step from `next` onward, persisting progress after each one.
+/// Apply every step from `next` onward, persisting progress at least every [`SAVE_INTERVAL`].
 pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
     let mut journal = load(path)?;
     journal.phase = OperationPhase::Applying;
     save(path, &journal)?;
+    let mut saved = std::time::Instant::now();
     let staging = staging_dir(path);
     let undo = journal.undo.clone();
     while journal.next < journal.changes.len() {
@@ -206,7 +212,10 @@ pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
             )?,
         }
         journal.next += 1;
-        save(path, &journal)?;
+        if saved.elapsed() >= SAVE_INTERVAL {
+            save(path, &journal)?;
+            saved = std::time::Instant::now();
+        }
     }
     journal.phase = OperationPhase::Applied;
     save(path, &journal)?;

@@ -6,7 +6,8 @@
 //! every clone as a full copy:
 //!
 //! - Linux Btrfs and XFS: the file's extents that `FIEMAP` does not mark shared.
-//! - macOS APFS: `ATTR_CMNEXT_PRIVATESIZE` from `getattrlist`.
+//! - macOS APFS: `ATTR_CMNEXT_PRIVATESIZE`, read a directory at a time with
+//!   `getattrlistbulk` (one `getattrlist` per file if that fails).
 //! - Everything else (ext4, tmpfs, …): allocated blocks, since nothing is shared there.
 //!
 //! These are "private now" numbers: a shared block becomes private when its other owner goes.
@@ -27,6 +28,14 @@ pub fn tree_private_bytes(root: &Path) -> Result<u64> {
         return Ok(0);
     }
     let shared_aware = os::shares_blocks(root);
+    #[cfg(target_os = "macos")]
+    if shared_aware {
+        if let Some(bytes) =
+            crate::util::bulk::private_tree_bytes(root, crate::util::walk::threads())
+        {
+            return Ok(bytes);
+        }
+    }
     let seen = Mutex::new(HashSet::new());
     let sizes = crate::util::walk::parallel(root, |_, path, entry| {
         if entry.nlink > 1

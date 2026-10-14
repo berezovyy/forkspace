@@ -112,7 +112,9 @@ impl ForkPrimitive for ClonefilePrimitive {
     fn tmpfs_unsupported(&self) -> ForkspaceError {
         ForkspaceError::CapabilityUnsupported {
             diagnosis: "--tmpfs is unavailable with APFS clones".to_string(),
-            remedy: "omit --tmpfs and use --ephemeral for automatic cleanup".to_string(),
+            remedy:
+                "omit --tmpfs; for a workspace removed on exit, use `forkspace enter --ephemeral`"
+                    .to_string(),
         }
     }
 }

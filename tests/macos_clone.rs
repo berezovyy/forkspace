@@ -33,6 +33,14 @@ mod macos {
         let base = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("FORKSPACE_HOME", home.path()) };
         unsafe { std::env::remove_var("FORKSPACE_BACKEND") };
+        // Background manifest builders re-run the current binary: make it forkspace, not
+        // this test binary.
+        unsafe {
+            std::env::set_var(
+                "FORKSPACE_INTERNAL_MANIFEST_EXE",
+                env!("CARGO_BIN_EXE_forkspace"),
+            )
+        };
         fs::write(base.path().join("README.md"), "base\n").unwrap();
         (home, base)
     }
@@ -945,6 +953,14 @@ mod macos {
     #[test]
     #[serial]
     fn warm_clone_diff_scan_of_200k_files_is_subsecond() {
+        // APFS deletes about 1,000 files a second, so this test's 600,000 files (base, view,
+        // fork-time copy) take over ten minutes to clean up; the bench workflow opts in.
+        if std::env::var_os("FORKSPACE_TEST_SLOW").is_none() {
+            eprintln!(
+                "FORKSPACE_TEST_SKIP {{\"capability\":\"slow\",\"reason\":\"set FORKSPACE_TEST_SLOW=1 to scan 200,000 files\"}}"
+            );
+            return;
+        }
         let (_home, base) = setup();
         for index in 0..200_000 {
             let directory = base.path().join(format!("scan/{:03}", index / 1_000));
@@ -1059,6 +1075,126 @@ mod macos {
             .unwrap()
             .workspaces
             .contains_key("conflict-merge"));
+    }
+
+    fn cli(home: &Path, args: &[&str]) -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home)
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    fn assert_cli(home: &Path, args: &[&str]) -> String {
+        let output = cli(home, args);
+        assert!(
+            output.status.success(),
+            "forkspace {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// Entry names of `dir`, byte for byte (APFS lookups would match other spellings).
+    fn names(dir: &Path) -> Vec<Vec<u8>> {
+        let mut names: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_vec())
+            .filter(|name| name != b".git")
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Renames between spellings APFS treats as one name (case, Unicode normalization)
+    /// arrive as a deletion plus an addition of the same entry; applied in the wrong order
+    /// they used to delete the file, or fail half-applied.
+    #[test]
+    #[serial]
+    fn respelled_renames_survive_merge_undo_and_pull() {
+        let (home, base) = setup();
+        let nfc = "caf\u{e9}.txt";
+        let nfd = "cafe\u{301}.txt";
+        fs::remove_file(base.path().join("README.md")).unwrap();
+        fs::create_dir(base.path().join("Src")).unwrap();
+        fs::write(base.path().join("Src/m.txt"), b"m\n").unwrap();
+        fs::write(base.path().join("Foo.txt"), b"foo\n").unwrap();
+        fs::write(base.path().join(nfc), b"cafe\n").unwrap();
+        let original = names(base.path());
+        let respell = |root: &Path| {
+            for (from, to) in [("Foo.txt", "foo.txt"), ("Src", "src")] {
+                fs::rename(root.join(from), root.join("respelling")).unwrap();
+                fs::rename(root.join("respelling"), root.join(to)).unwrap();
+            }
+            fs::remove_file(root.join(nfc)).unwrap();
+            fs::write(root.join(nfd), b"cafe edited\n").unwrap();
+        };
+
+        let workspace = fork(base.path(), "respell");
+        wait_for_manifest("respell");
+        respell(&workspace.view_path);
+        assert_cli(home.path(), &["merge", "respell", "--no-install"]);
+        let respelled = names(base.path());
+        assert_eq!(respelled, names(&workspace.view_path));
+        assert_eq!(fs::read(base.path().join("foo.txt")).unwrap(), b"foo\n");
+        assert_eq!(fs::read(base.path().join("src/m.txt")).unwrap(), b"m\n");
+        assert_eq!(fs::read(base.path().join(nfd)).unwrap(), b"cafe edited\n");
+
+        assert_cli(home.path(), &["merge", "--undo", "respell"]);
+        assert_eq!(names(base.path()), original);
+        assert_eq!(fs::read(base.path().join(nfc)).unwrap(), b"cafe\n");
+        assert_eq!(names(&base.path().join("Src")), vec![b"m.txt".to_vec()]);
+        assert_cli(home.path(), &["drop", "respell"]);
+
+        let workspace = fork(base.path(), "respell-pull");
+        wait_for_manifest("respell-pull");
+        respell(base.path());
+        assert_cli(home.path(), &["pull", "respell-pull", "--no-install"]);
+        assert_eq!(names(&workspace.view_path), respelled);
+        assert_eq!(
+            fs::read(workspace.view_path.join(nfd)).unwrap(),
+            b"cafe edited\n"
+        );
+        assert!(assert_cli(home.path(), &["diff", "respell-pull"]).contains("no changes"));
+    }
+
+    /// `clonefile` gives every cloned directory a fresh mtime, which no directory comparison
+    /// may read as a change; the fork-time copy leaves ignored trees out, and `drop` does not
+    /// wait for any of it to be deleted.
+    #[test]
+    #[serial]
+    fn directories_ancestor_copy_and_drop_on_clones() {
+        let (home, base) = setup();
+        fs::create_dir_all(base.path().join("lib/deep")).unwrap();
+        fs::write(base.path().join("lib/deep/a.txt"), b"a\n").unwrap();
+        fs::create_dir_all(base.path().join("gone")).unwrap();
+        fs::write(base.path().join("gone/g.txt"), b"g\n").unwrap();
+        fs::create_dir_all(base.path().join("node_modules/pkg")).unwrap();
+        fs::write(base.path().join("node_modules/pkg/index.js"), b"x\n").unwrap();
+        fs::write(base.path().join(".gitignore"), b"node_modules\n").unwrap();
+        let workspace = fork(base.path(), "dirs");
+        wait_for_manifest("dirs");
+
+        let ancestor = Path::new(&std::env::var_os("FORKSPACE_HOME").unwrap())
+            .join("ancestors")
+            .join("dirs");
+        assert!(ancestor.join("lib/deep/a.txt").is_file());
+        assert!(!ancestor.join("node_modules").exists());
+
+        fs::write(base.path().join("top.txt"), b"base edit\n").unwrap();
+        let plan = assert_cli(home.path(), &["pull", "dirs", "--dry-run"]);
+        assert!(plan.contains("1 files"), "only the edit is pulled: {plan}");
+
+        fs::remove_dir_all(workspace.view_path.join("gone")).unwrap();
+        let plan = assert_cli(home.path(), &["merge", "dirs", "--dry-run"]);
+        assert!(!plan.contains("conflicts"), "{plan}");
+        fs::write(base.path().join("gone/new.txt"), b"base\n").unwrap();
+        let plan = assert_cli(home.path(), &["merge", "dirs", "--dry-run"]);
+        assert!(plan.contains("conflicts: gone"), "{plan}");
+
+        assert_cli(home.path(), &["drop", "dirs"]);
+        assert!(!ancestor.exists());
+        assert!(!workspace.view_path.exists());
     }
 
     #[test]

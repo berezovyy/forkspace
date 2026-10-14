@@ -33,6 +33,11 @@ main() {
         aarch64 | arm64) arch=aarch64 ;;
         *) die "no prebuilt binary for $(uname -m); install with: cargo install forkspace" ;;
     esac
+    # An Intel shell under Rosetta reports x86_64 on Apple Silicon; install the native build.
+    if test "$os-$arch" = apple-darwin-x86_64 &&
+        test "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1; then
+        arch=aarch64
+    fi
     target=$arch-$os
 
     version=${FORKSPACE_VERSION:-}

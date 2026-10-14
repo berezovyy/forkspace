@@ -87,8 +87,15 @@ where
         directories: Vec::new(),
         stats: ForkStats::default(),
     };
+    let skip_sidecars = stores_xattrs_in_sidecars(source);
     for entry in WalkDir::new(source).min_depth(1).follow_links(false) {
         let entry = entry.walk_context(source)?;
+        if skip_sidecars
+            && entry.file_type().is_file()
+            && entry.file_name().as_encoded_bytes().starts_with(b"._")
+        {
+            continue;
+        }
         let relative = entry
             .path()
             .strip_prefix(source)
@@ -98,6 +105,35 @@ where
     let stats = copier.finish_directories()?;
     sync_tree(target)?;
     Ok(stats)
+}
+
+/// Whether macOS keeps the extended attributes of files under `path` in AppleDouble `._name`
+/// sidecar files, as it does on FAT, exFAT, and network volumes. The sidecars are not copied:
+/// copying each file's attributes recreates them where the target needs them.
+#[cfg(target_os = "macos")]
+fn stores_xattrs_in_sidecars(path: &Path) -> bool {
+    let Ok(name) = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) else {
+        return false;
+    };
+    let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: `name` is NUL-terminated and `stats` is a valid out-pointer for statfs.
+    if unsafe { libc::statfs(name.as_ptr(), stats.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    // SAFETY: statfs returned success, so it initialized `stats`.
+    let stats = unsafe { stats.assume_init() };
+    let kind: Vec<u8> = stats
+        .f_fstypename
+        .iter()
+        .take_while(|byte| **byte != 0)
+        .map(|byte| *byte as u8)
+        .collect();
+    !matches!(kind.as_slice(), b"apfs" | b"hfs")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn stores_xattrs_in_sidecars(_path: &Path) -> bool {
+    false
 }
 
 /// Make the finished copy durable with one filesystem-wide flush. An `fsync` per file costs

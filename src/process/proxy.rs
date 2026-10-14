@@ -24,6 +24,7 @@ const LISTEN_PORT: u16 = 4000;
 /// `proxy-daemon` subcommand. `127.0.0.1` is required; `::1` is added when the host has IPv6
 /// loopback, since browsers and Node may resolve `localhost` to either.
 pub fn run_proxy(listen_port: u16) -> Result {
+    raise_open_file_limit();
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, listen_port)).map_err(|e| {
         ForkspaceError::ProxyFailed(format!("failed to bind :{}: {}", listen_port, e))
     })?;
@@ -41,8 +42,42 @@ pub fn run_proxy(listen_port: u16) -> Result {
 }
 
 fn serve(listener: TcpListener) {
-    for client in listener.incoming().flatten() {
-        thread::spawn(move || forward_to_active(client));
+    for client in listener.incoming() {
+        match client {
+            Ok(client) => {
+                thread::spawn(move || forward_to_active(client));
+            }
+            // Out of descriptors: wait for open connections to close instead of spinning.
+            Err(error) if matches!(error.raw_os_error(), Some(libc::EMFILE | libc::ENFILE)) => {
+                thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+/// Each proxied connection holds four descriptors, and macOS starts processes with a soft
+/// limit of 256, about 60 connections; raise it to the hard limit (at most `OPEN_MAX` on
+/// macOS, which refuses more).
+fn raise_open_file_limit() {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `limit` is a valid out-pointer for getrlimit, and setrlimit only reads it.
+    unsafe {
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) != 0 {
+            return;
+        }
+        let wanted = if cfg!(target_os = "macos") {
+            limit.rlim_max.min(10_240)
+        } else {
+            limit.rlim_max
+        };
+        if limit.rlim_cur < wanted {
+            limit.rlim_cur = wanted;
+            libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
+        }
     }
 }
 
@@ -63,7 +98,8 @@ fn forward_to_active(client: TcpStream) {
 }
 
 fn active_target_port() -> Option<u16> {
-    State::load()
+    // `peek`: a connection should not start trash removals.
+    State::peek()
         .ok()?
         .proxy?
         .target_port

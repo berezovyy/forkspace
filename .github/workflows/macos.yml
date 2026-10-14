@@ -10,5 +10,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
+      # Linux CI never compiles the macOS-only code, so lint it here.
+      - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test

@@ -1,1 +1,1 @@
-[31merror:[39m workspace 'absent' not found (run 'forkspace ls' to see available workspaces)
+error: workspace 'absent' not found (run 'forkspace ls' to see available workspaces)

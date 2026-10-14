@@ -209,6 +209,7 @@ Read by forkspace:
 | `FORKSPACE_MEMORY_HIGH` | *Linux.* Memory ceiling of all workspaces together (default `75%`). |
 | `FORKSPACE_BACKUP_WORKSPACES=off` | Mark workspaces as caches too, so backups skip them. Internal stores always carry a `CACHEDIR.TAG` (and a Time Machine exclusion on macOS). |
 | `FORKSPACE_RELEASES_URL` | Where `upgrade` looks for releases (default: this repository's GitHub releases). |
+| `NO_COLOR`, `CLICOLOR_FORCE` | Output is coloured only on a terminal. `NO_COLOR` (any value) turns colour off; `CLICOLOR_FORCE=1` turns it on for pipes too. |
 
 For debugging and tests only: `FORKSPACE_BACKEND=<linux|mac-clone|linux-reflink|copy>` forces
 a backend for new workspaces, `FORKSPACE_NO_LANDLOCK=1` and `FORKSPACE_NO_BULK=1` turn off

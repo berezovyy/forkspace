@@ -24,7 +24,7 @@ use crate::paths;
 use crate::util::{ensure_private_dir, write_atomic, IoContext};
 use crate::workspace::Workspace;
 
-pub use recovery::start_trash_removals;
+pub use recovery::{start_trash_removals, trash};
 
 const CURRENT_VERSION: u32 = 2;
 
@@ -120,6 +120,11 @@ impl State {
         let state = Self::with_lock(Self::load_unlocked)?;
         start_trash_removals();
         Ok(state)
+    }
+
+    /// [`State::load`] without starting trash removals, for callers that poll the state.
+    pub fn peek() -> Result<State> {
+        Self::with_lock(Self::load_unlocked)
     }
 
     /// Load, mutate, and save under the lock. Nothing is saved if `f` fails.

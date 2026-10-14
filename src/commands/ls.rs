@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use owo_colors::OwoColorize;
+use crate::util::style::{paint, Style};
 
 use crate::backend::{select_backend, ChangeCount};
 use crate::cli::LsArgs;
@@ -46,27 +46,31 @@ pub fn exec(args: LsArgs) -> Result {
         return Ok(());
     }
 
+    // Measured once: each is a walk of the whole view.
+    let sizes: Vec<Option<u64>> = workspaces
+        .iter()
+        .map(|workspace| disk::workspace_bytes(workspace).ok())
+        .collect();
     let rows = workspaces
         .iter()
-        .map(|workspace| table_row(workspace, args.no_gitignore, count_of(workspace)))
+        .zip(&sizes)
+        .map(|(workspace, size)| {
+            table_row(workspace, args.no_gitignore, count_of(workspace), *size)
+        })
         .collect::<Result<Vec<_>>>()?;
     let show_branch = workspaces
         .iter()
         .any(|workspace| workspace.branch.is_some());
     print_table(&rows, show_branch);
-    print_total(&workspaces);
+    print_total(sizes.iter().flatten().sum());
     Ok(())
 }
 
 /// `forkspace uses 2.1 GB (workspaces 0.8 GB, frozen copies 0.9 GB, …)`.
-fn print_total(workspaces: &[&Workspace]) {
+fn print_total(in_workspaces: u64) {
     let Ok(stores) = disk::StoreUsage::measure() else {
         return;
     };
-    let in_workspaces: u64 = workspaces
-        .iter()
-        .filter_map(|workspace| disk::workspace_bytes(workspace).ok())
-        .sum();
     let mut parts = vec![format!("workspaces {}", disk::human(in_workspaces))];
     for (label, bytes) in [
         ("frozen copies", stores.frozen),
@@ -104,7 +108,12 @@ fn json_entry(workspace: &Workspace, processes: usize) -> serde_json::Value {
     })
 }
 
-fn table_row(workspace: &Workspace, include_ignored: bool, processes: usize) -> Result<Row> {
+fn table_row(
+    workspace: &Workspace,
+    include_ignored: bool,
+    processes: usize,
+    size: Option<u64>,
+) -> Result<Row> {
     let count =
         select_backend(Some(workspace.backend_kind))?.change_count(workspace, include_ignored)?;
     Ok([
@@ -113,7 +122,7 @@ fn table_row(workspace: &Workspace, include_ignored: bool, processes: usize) -> 
         workspace.branch.clone().unwrap_or_else(|| "-".to_string()),
         describe_backend(workspace),
         describe_count(count),
-        disk::workspace_bytes(workspace).map_or_else(|_| "?".to_string(), disk::human),
+        size.map_or_else(|| "?".to_string(), disk::human),
         describe_process(workspace, processes),
     ])
 }
@@ -219,16 +228,16 @@ fn print_table(rows: &[Row], show_branch: bool) {
             .join("  ")
     };
 
-    // Styled values are padded before rendering so escape codes do not count toward widths.
+    // Values are padded before they are styled, so escape codes do not count toward widths.
     println!(
         "{}",
-        line(&|column, width| format!("{:<width$}", HEADERS[column].bold()))
+        line(&|column, width| paint(format!("{:<width$}", HEADERS[column]), Style::Bold))
     );
     for row in rows {
         println!(
             "{}",
             line(&|column, width| match column {
-                NAME_COLUMN => format!("{:<width$}", row[column].bold().bright_white()),
+                NAME_COLUMN => paint(format!("{:<width$}", row[column]), Style::Name),
                 _ => format!("{:<width$}", row[column]),
             })
         );

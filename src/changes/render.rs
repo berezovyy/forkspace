@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use owo_colors::OwoColorize;
+use crate::util::style::{paint, Style};
 use serde::Serialize;
 use similar::TextDiff;
 
@@ -56,18 +56,18 @@ pub fn format_diff(changes: &[FileChange], mode: &DiffFormat) -> String {
 
 fn status_line(change: &FileChange) -> String {
     let icon = match change.kind {
-        ChangeKind::Added => "A".green().to_string(),
-        ChangeKind::Modified => "M".yellow().to_string(),
-        ChangeKind::Deleted => "D".red().to_string(),
+        ChangeKind::Added => paint("A", Style::Green),
+        ChangeKind::Modified => paint("M", Style::Yellow),
+        ChangeKind::Deleted => paint("D", Style::Red),
     };
     let detail = match (change.kind, change.additions, change.deletions) {
         (ChangeKind::Added, Some(additions), _) => {
-            format!(" {}", format!("(+{additions})").green())
+            format!(" {}", paint(format!("(+{additions})"), Style::Green))
         }
         (ChangeKind::Modified, Some(additions), Some(deletions)) => format!(
             " {} {}",
-            format!("(+{additions})").green(),
-            format!("(-{deletions})").red()
+            paint(format!("(+{additions})"), Style::Green),
+            paint(format!("(-{deletions})"), Style::Red)
         ),
         (ChangeKind::Deleted, _, _) => String::new(),
         _ if change.is_binary => " [binary]".to_string(),
@@ -134,8 +134,8 @@ pub fn generate_unified_diff(workspace: &Workspace, change: &FileChange) -> Stri
                 // No line differences (e.g. a mode-only change): show just the header.
                 return format!(
                     "{}\n{}\n",
-                    format!("--- {old_label}").bold(),
-                    format!("+++ {new_label}").bold()
+                    paint(format!("--- {old_label}"), Style::Bold),
+                    paint(format!("+++ {new_label}"), Style::Bold)
                 );
             }
             colorize_unified_diff(&diff)
@@ -160,7 +160,11 @@ enum Side {
 
 /// Diff of an added or deleted file: one hunk in which every line is inserted or removed.
 fn one_sided_diff(old_header: &str, new_header: &str, content: &str, side: Side) -> String {
-    let mut out = format!("{}\n{}\n", old_header.bold(), new_header.bold());
+    let mut out = format!(
+        "{}\n{}\n",
+        paint(old_header, Style::Bold),
+        paint(new_header, Style::Bold)
+    );
     if content.is_empty() {
         return out;
     }
@@ -170,10 +174,10 @@ fn one_sided_diff(old_header: &str, new_header: &str, content: &str, side: Side)
         Side::New => format!("@@ -0,0 +1,{count} @@"),
         Side::Old => format!("@@ -1,{count} +0,0 @@"),
     };
-    out.push_str(&format!("{}\n", hunk.cyan()));
+    out.push_str(&format!("{}\n", paint(hunk, Style::Cyan)));
     out.extend(lines.iter().map(|line| match side {
-        Side::New => format!("{}\n", format!("+{line}").green()),
-        Side::Old => format!("{}\n", format!("-{line}").red()),
+        Side::New => format!("{}\n", paint(format!("+{line}"), Style::Green)),
+        Side::Old => format!("{}\n", paint(format!("-{line}"), Style::Red)),
     }));
     out
 }
@@ -187,13 +191,13 @@ fn colorize_unified_diff(plain: &str) -> String {
 
 fn colorize_line(line: &str) -> String {
     if line.starts_with("---") || line.starts_with("+++") {
-        line.bold().to_string()
+        paint(line, Style::Bold)
     } else if line.starts_with("@@") {
-        line.cyan().to_string()
+        paint(line, Style::Cyan)
     } else if line.starts_with('+') {
-        line.green().to_string()
+        paint(line, Style::Green)
     } else if line.starts_with('-') {
-        line.red().to_string()
+        paint(line, Style::Red)
     } else {
         line.to_string()
     }

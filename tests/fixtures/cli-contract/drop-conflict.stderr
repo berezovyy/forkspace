@@ -1,1 +1,1 @@
-[31merror:[39m workspace 'parent' has children: ["child"] — use --force to remove all, or drop children first
+error: workspace 'parent' has children: ["child"] — use --force to remove all, or drop children first

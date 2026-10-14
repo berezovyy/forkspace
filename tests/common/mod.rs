@@ -13,7 +13,20 @@ pub fn setup_test_env() -> tempfile::TempDir {
     // Commands would otherwise leave a systemd slice per test workspace that is never
     // dropped; `tests/processes.rs` covers the systemd path.
     unsafe { std::env::set_var("FORKSPACE_NO_SYSTEMD", "1") };
+    use_forkspace_for_workers();
     dir
+}
+
+/// Background manifest builders re-run the current binary, which in a test is the test
+/// binary itself; point them at the forkspace binary instead.
+pub fn use_forkspace_for_workers() {
+    // SAFETY: as above, tests that set the environment are serialized.
+    unsafe {
+        std::env::set_var(
+            "FORKSPACE_INTERNAL_MANIFEST_EXE",
+            env!("CARGO_BIN_EXE_forkspace"),
+        )
+    };
 }
 
 pub fn create_test_project(dir: &Path) {

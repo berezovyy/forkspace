@@ -128,6 +128,26 @@ pub fn mode_bits(metadata: &fs::Metadata) -> u32 {
     metadata.mode() & 0o7777
 }
 
+/// Whether `root` holds `relative` spelled exactly so, every component byte for byte. On a
+/// case- or normalization-insensitive volume (APFS) `Path::exists` also finds `foo.txt` when
+/// only `Foo.txt` is there.
+pub fn exists_exact(root: &Path, relative: &Path) -> bool {
+    if fs::symlink_metadata(root.join(relative)).is_err() {
+        return false;
+    }
+    let mut directory = root.to_path_buf();
+    relative.components().all(|component| {
+        let name = component.as_os_str();
+        let listed = fs::read_dir(&directory).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|entry| entry.file_name().as_encoded_bytes() == name.as_encoded_bytes())
+        });
+        directory.push(name);
+        listed
+    })
+}
+
 /// Whether two files have identical bytes. Unreadable files never compare equal.
 pub fn same_contents(a: &Path, b: &Path) -> bool {
     let (Ok(mut file_a), Ok(mut file_b)) = (fs::File::open(a), fs::File::open(b)) else {

@@ -32,6 +32,8 @@ jobs:
       - run: cargo build --release
       - name: Run the test suite on this host first
         run: cargo test --release
+        env:
+          FORKSPACE_TEST_SLOW: "1"
       - name: Benchmark the pinned Next.js corpus
         run: |
           corpus=$(scripts/bench-corpus.sh)

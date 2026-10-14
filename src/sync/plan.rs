@@ -8,14 +8,16 @@ use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
+use walkdir::WalkDir;
+
 use crate::backend::select_backend;
 use crate::changes::filter::ChangeFilter;
-use crate::changes::manifest::{self, ManifestRow, ManifestStatus};
+use crate::changes::manifest::{self, ManifestKind, ManifestRow, ManifestStatus};
 use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::sync::journal::{self, MergedStep, OperationKind};
 use crate::sync::three_way::{has_conflict_markers, reconcile, Favor, Policy};
-use crate::sync::{display_paths, is_transferable, render_plan};
+use crate::sync::{display_paths, is_transferable, order_respellings, render_plan};
 use crate::util::fs::mtime_ns;
 use crate::util::walk::Entry;
 use crate::util::{trace, IoContext};
@@ -129,8 +131,9 @@ fn plan_changes(
         .collect();
     check_sources(&source, &changes)?;
     validate_space(&source, &workspace.base, &changes)?;
+    let respelled = order_respellings(&workspace.base, &mut changes);
 
-    let (both_changed, ancestor_unknown) = classify(workspace, &changes)?;
+    let (both_changed, ancestor_unknown) = classify(workspace, &changes, &respelled)?;
     let staging = journal::staging_dir(&journal::path(
         OperationKind::Merge,
         &workspace.name,
@@ -241,11 +244,39 @@ pub fn render(plan: &MergePlan) -> String {
 /// Whether `path` still matches its fork-time manifest row, so a merge can overwrite it.
 ///
 /// Stricter than [`ManifestRow::matches`]: a re-created symlink (same target, new mtime) also
-/// counts as a base-side change.
+/// counts as a base-side change. A directory matches on kind and mode only: an APFS clone
+/// gives every directory a fresh mtime, and the entries inside are compared on their own.
 pub(crate) fn matches_ancestor(path: &Path, row: &ManifestRow) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| {
-        row.matches(path, &Entry::of(&metadata)) && mtime_ns(&metadata) == row.mtime_ns
+        let entry = Entry::of(&metadata);
+        if row.kind == ManifestKind::Dir {
+            return metadata.is_dir() && (row.mode == 0 || entry.mode == row.mode);
+        }
+        row.matches(path, &entry) && mtime_ns(&metadata) == row.mtime_ns
     })
+}
+
+/// Whether everything under the base directory `path` (`relative` in the workspace) is as it
+/// was at fork, so deleting the directory loses no base-side change.
+fn tree_matches_ancestor(
+    path: &Path,
+    relative: &Path,
+    rows: &HashMap<PathBuf, ManifestRow>,
+) -> bool {
+    WalkDir::new(path)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .all(|entry| {
+            entry.is_ok_and(|entry| {
+                entry
+                    .path()
+                    .strip_prefix(path)
+                    .ok()
+                    .and_then(|inner| rows.get(&relative.join(inner)))
+                    .is_some_and(|row| !row.dirty && matches_ancestor(entry.path(), row))
+            })
+        })
 }
 
 fn ensure_manifest_usable(workspace: &Workspace) -> Result {
@@ -296,8 +327,13 @@ fn is_plain_relative(path: &Path) -> bool {
 /// Split changes into `(conflicts, ancestor_unknown)`, both sorted.
 ///
 /// A change conflicts when the base entry no longer matches its fork-time manifest row, or
-/// when the workspace added a path that the base has since created too.
-fn classify(workspace: &Workspace, changes: &[FileChange]) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+/// when the workspace added a path that the base has since created too. An addition under a
+/// `respelled` path only renames an entry the plan deletes, which is checked on its own.
+fn classify(
+    workspace: &Workspace,
+    changes: &[FileChange],
+    respelled: &[PathBuf],
+) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
     let manifest_ready = workspace.manifest_status == ManifestStatus::Ready;
     let rows = if manifest_ready {
         ancestor_rows(&workspace.name)?
@@ -308,9 +344,23 @@ fn classify(workspace: &Workspace, changes: &[FileChange]) -> Result<(Vec<PathBu
     let mut ancestor_unknown = Vec::new();
     for change in changes {
         let current = workspace.base.join(&change.path);
+        if change.kind == ChangeKind::Added
+            && respelled
+                .iter()
+                .any(|spelling| change.path.starts_with(spelling))
+        {
+            continue;
+        }
         match rows.get(&change.path) {
             Some(row) if row.dirty => ancestor_unknown.push(change.path.clone()),
             Some(row) if !matches_ancestor(&current, row) => conflicts.push(change.path.clone()),
+            Some(row)
+                if row.kind == ManifestKind::Dir
+                    && change.kind == ChangeKind::Deleted
+                    && !tree_matches_ancestor(&current, &change.path, &rows) =>
+            {
+                conflicts.push(change.path.clone());
+            }
             None if change.kind == ChangeKind::Added && fs::symlink_metadata(&current).is_ok() => {
                 conflicts.push(change.path.clone());
             }

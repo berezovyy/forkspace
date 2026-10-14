@@ -1,1 +1,1 @@
-[31merror:[39m unsupported capability: --tmpfs is unavailable for directory-copy backends; omit --tmpfs or install fuse-overlayfs
+error: unsupported capability: --tmpfs is unavailable for directory-copy backends; omit --tmpfs or install fuse-overlayfs

@@ -20,7 +20,7 @@ use crate::sync::ancestor;
 use crate::sync::journal::{self, MergedStep, OperationKind, OperationPhase};
 use crate::sync::plan::matches_ancestor;
 use crate::sync::three_way::{reconcile, Favor, Policy};
-use crate::sync::{display_paths, is_transferable, render_plan};
+use crate::sync::{display_paths, is_transferable, order_respellings, render_plan};
 use crate::util::fs::{mode_bits, same_contents};
 use crate::util::{now_rfc3339, now_unix_ns, WalkDirExt};
 use crate::workspace::Workspace;
@@ -212,6 +212,7 @@ fn plan_changes(
             .as_encoded_bytes()
             .cmp(b.path.as_os_str().as_encoded_bytes())
     });
+    order_respellings(&workspace.view_path, &mut changes);
     Ok(PullPlan {
         workspace: workspace.name.clone(),
         source: workspace.base.clone(),

@@ -197,7 +197,7 @@ fn walk(root: &Path, keep: &Keep<'_>) -> Result {
     }
 }
 
-pub(super) fn threads() -> usize {
+pub(crate) fn threads() -> usize {
     std::thread::available_parallelism()
         .map(|count| count.get().min(8))
         .unwrap_or(4)

@@ -62,6 +62,11 @@ pub fn trash_dir() -> PathBuf {
     forkspace_home().join("trash")
 }
 
+/// One lock file per trash directory, held by the process deleting it.
+pub fn trash_lock_dir() -> PathBuf {
+    forkspace_home().join("trash-locks")
+}
+
 /// Resumable merge and pull journals.
 pub fn journal_dir() -> PathBuf {
     forkspace_home().join("journal")

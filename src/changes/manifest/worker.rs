@@ -20,6 +20,10 @@ const WORKER_VIEW: &str = "FORKSPACE_INTERNAL_MANIFEST_VIEW";
 const WORKER_BASE: &str = "FORKSPACE_INTERNAL_MANIFEST_BASE";
 #[cfg(target_os = "macos")]
 const WORKER_FORK_NS: &str = "FORKSPACE_INTERNAL_MANIFEST_FORK_NS";
+/// The binary to run as the worker instead of this one. Test harnesses set it to the forkspace
+/// binary: run as a worker, a test binary would run its tests again instead.
+#[cfg(target_os = "macos")]
+const WORKER_EXE: &str = "FORKSPACE_INTERNAL_MANIFEST_EXE";
 
 /// Start a detached process that builds workspace `name`'s manifest from `view`, recovering
 /// entries deleted before the walk from `base` (see [`super::build_after_fork`]).
@@ -30,8 +34,18 @@ pub fn spawn(name: String, view: PathBuf, base: PathBuf, fork_time_ns: u128) -> 
 
     use crate::util::IoContext;
 
-    let executable = std::env::current_exe()
-        .io_context(|| "locate forkspace executable for manifest builder".to_string())?;
+    // A worker never starts another, so a binary that ignores the worker variables cannot
+    // re-run itself without end.
+    if std::env::var_os(WORKER_FLAG).is_some() {
+        return Err(ForkspaceError::StateFailed(
+            "a background manifest builder cannot start another".to_string(),
+        ));
+    }
+    let executable = match std::env::var_os(WORKER_EXE) {
+        Some(executable) => PathBuf::from(executable),
+        None => std::env::current_exe()
+            .io_context(|| "locate forkspace executable for manifest builder".to_string())?,
+    };
     let mut command = Command::new(executable);
     command
         .env(WORKER_FLAG, "1")
@@ -39,6 +53,7 @@ pub fn spawn(name: String, view: PathBuf, base: PathBuf, fork_time_ns: u128) -> 
         .env(WORKER_VIEW, view)
         .env(WORKER_BASE, base)
         .env(WORKER_FORK_NS, fork_time_ns.to_string())
+        .env_remove(WORKER_EXE)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -141,11 +156,11 @@ fn wait_for_workspace(name: &str) -> bool {
     use crate::state::State;
 
     for _ in 0..500 {
-        match State::load() {
+        match State::peek() {
             Ok(state) if state.workspaces.contains_key(name) => break,
             Ok(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
             Err(_) => return false,
         }
     }
-    State::load().is_ok_and(|state| state.workspaces.contains_key(name))
+    State::peek().is_ok_and(|state| state.workspaces.contains_key(name))
 }

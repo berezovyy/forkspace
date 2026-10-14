@@ -3,10 +3,13 @@
 //! A sealed overlay already has it in its frozen copy. Directory-snapshot workspaces keep a
 //! private copy of the project's visible source and dependency files (not `node_modules`,
 //! ignored, runtime, or internal paths) in `FORKSPACE_HOME/ancestors/<name>`, taken at fork
-//! and refreshed by `pull`. On APFS the whole tree is cloned in one call instead; elsewhere
-//! `fs::copy` reflinks on Btrfs and XFS, so the copy is free there and small elsewhere. A live
-//! overlay has no fork-time version; its overlapping edits stay whole-file conflicts.
+//! and refreshed by `pull`. On APFS the visible tree is cloned instead, whole directories at a
+//! time; elsewhere `fs::copy` reflinks on Btrfs and XFS, so the copy is free there and small
+//! elsewhere. A live overlay has no fork-time version; its overlapping edits stay whole-file
+//! conflicts.
 
+#[cfg(target_os = "macos")]
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -64,23 +67,98 @@ pub fn record(name: &str, from: &Path) -> Result {
         .io_context(|| format!("install fork-time copy {}", destination.display()))
 }
 
-/// Delete the fork-time copy of `name`, if any.
+/// Delete the fork-time copy of `name`, if any, in the background.
 pub fn remove(name: &str) -> Result {
-    let path = dir(name);
-    match fs::remove_dir_all(&path) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-            Err(error).io_context(|| format!("remove {}", path.display()))
-        }
-        _ => Ok(()),
-    }
+    crate::state::trash(&dir(name), &format!("ancestor-{name}"))
 }
 
-/// Clone all of `from` to `to` with one recursive APFS `clonefile`, which shares every block
-/// and keeps mtimes; a copy per file costs ~180 us each, 18 s for 100,000 files. The clone also
-/// holds hidden paths, as a sealed overlay's frozen copy does; lookups only ever ask for
-/// visible ones. False when the volume cannot clone (`to` may then need removing).
+/// Clone the visible part of `from` to `to`. A directory with no ignored directory
+/// (`node_modules`, build output) anywhere inside is cloned whole with one recursive APFS
+/// `clonefile`, which shares every block and keeps mtimes; a copy per file costs ~180 us each,
+/// 18 s for 100,000 files. Ignored directories are left out, so the clone stays cheap to make
+/// and to delete. Ignored files inside cloned directories come along, but lookups only ever ask
+/// for visible paths. False when the volume cannot clone (`to` may then need removing).
 #[cfg(target_os = "macos")]
 fn clone_tree(from: &Path, to: &Path) -> bool {
+    let filter = ChangeFilter::build(from);
+    // Directories with an ignored directory somewhere inside.
+    let mut mixed = HashSet::new();
+    let walker = WalkDir::new(from)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            let Ok(relative) = entry.path().strip_prefix(from) else {
+                return false;
+            };
+            if entry.depth() == 0
+                || !entry.file_type().is_dir()
+                || filter.is_visible(relative, true)
+            {
+                return true;
+            }
+            mixed.extend(relative.ancestors().skip(1).map(Path::to_path_buf));
+            false
+        });
+    if walker.into_iter().any(|entry| entry.is_err()) {
+        return false;
+    }
+    clone_visible(from, to, Path::new(""), &mixed, &filter)
+}
+
+/// Clone `from` (at `relative`) to `to`: whole unless it is `mixed`, else entry by entry,
+/// skipping ignored directories.
+#[cfg(target_os = "macos")]
+fn clone_visible(
+    from: &Path,
+    to: &Path,
+    relative: &Path,
+    mixed: &HashSet<PathBuf>,
+    filter: &ChangeFilter,
+) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !mixed.contains(relative) {
+        return clonefile(from, to);
+    }
+    let Ok(metadata) = fs::symlink_metadata(from) else {
+        return false;
+    };
+    let (Ok(entries), Ok(())) = (fs::read_dir(from), fs::create_dir(to)) else {
+        return false;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let Ok(kind) = entry.file_type() else {
+            return false;
+        };
+        let child = relative.join(entry.file_name());
+        let wanted = if kind.is_dir() {
+            filter.is_visible(&child, true)
+        } else {
+            kind.is_file() || kind.is_symlink()
+        };
+        if wanted
+            && !clone_visible(
+                &entry.path(),
+                &to.join(entry.file_name()),
+                &child,
+                mixed,
+                filter,
+            )
+        {
+            return false;
+        }
+    }
+    // Last, so a read-only directory still takes its entries.
+    let mode = metadata.permissions().mode() & 0o7777;
+    fs::set_permissions(to, fs::Permissions::from_mode(mode)).is_ok()
+}
+
+/// One APFS `clonefile` of `from` (recursive for a directory; a symlink itself, not its target).
+#[cfg(target_os = "macos")]
+fn clonefile(from: &Path, to: &Path) -> bool {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
@@ -90,7 +168,9 @@ fn clone_tree(from: &Path, to: &Path) -> bool {
     ) else {
         return false;
     };
-    unsafe { libc::clonefile(source.as_ptr(), target.as_ptr(), 0) == 0 }
+    // `CLONE_NOFOLLOW` from <sys/clonefile.h>; libc does not export it.
+    const CLONE_NOFOLLOW: u32 = 0x0001;
+    unsafe { libc::clonefile(source.as_ptr(), target.as_ptr(), CLONE_NOFOLLOW) == 0 }
 }
 
 #[cfg(not(target_os = "macos"))]

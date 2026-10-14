@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::paths;
-use crate::util::fs::{ensure_private_dir, mtime_ns};
+use crate::util::fs::{ensure_private_dir, exists_exact, mtime_ns};
 use crate::util::{now_rfc3339, now_unix_ns, write_atomic, IoContext};
 
 const RECORD: &str = "record.json";
@@ -133,7 +133,7 @@ pub(crate) fn keep(dir: &Path, relative: &Path, entry: &Path) -> Result {
         return Ok(());
     }
     let kept = dir.join(KEPT).join(relative);
-    if fs::symlink_metadata(&kept).is_ok() {
+    if exists_exact(&dir.join(KEPT), relative) {
         return remove_entry(entry);
     }
     move_entry(entry, &kept)
@@ -142,7 +142,7 @@ pub(crate) fn keep(dir: &Path, relative: &Path, entry: &Path) -> Result {
 /// Copy `entry` into the store before it is overwritten in place (no atomic swap here).
 pub(crate) fn keep_copy(dir: &Path, relative: &Path, entry: &Path) -> Result {
     let kept = dir.join(KEPT).join(relative);
-    if fs::symlink_metadata(entry).is_err() || fs::symlink_metadata(&kept).is_ok() {
+    if fs::symlink_metadata(entry).is_err() || exists_exact(&dir.join(KEPT), relative) {
         return Ok(());
     }
     copy_entry(entry, &kept)
@@ -175,7 +175,7 @@ pub fn list() -> Vec<(PathBuf, UndoRecord)> {
         .filter_map(|entry| Some((entry.path(), load(&entry.path()).ok()?)))
         .filter(|(_, record)| record.complete)
         .collect();
-    records.sort_by(|a, b| b.1.created_ns.cmp(&a.1.created_ns));
+    records.sort_by_key(|record| std::cmp::Reverse(record.1.created_ns));
     records
 }
 
@@ -243,7 +243,8 @@ enum Reverted {
 fn revert(dir: &Path, project: &Path, step: &UndoStep) -> Result<Reverted> {
     let current = project.join(&step.path);
     let kept = dir.join(KEPT).join(&step.path);
-    let has_kept = fs::symlink_metadata(&kept).is_ok();
+    // Exactly this spelling: after a case-only rename the store keeps the old one.
+    let has_kept = exists_exact(&dir.join(KEPT), &step.path);
     let present = Identity::of(&current);
     match step.installed {
         Some(installed) if installed.dir => {
@@ -289,7 +290,7 @@ fn topmost_missing_parent(project: &Path, relative: &Path) -> Option<PathBuf> {
     let mut missing = None;
     let mut parent = relative.parent();
     while let Some(path) = parent.filter(|path| !path.as_os_str().is_empty()) {
-        if project.join(path).exists() {
+        if exists_exact(project, path) {
             break;
         }
         missing = Some(path.to_path_buf());

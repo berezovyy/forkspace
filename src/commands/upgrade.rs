@@ -92,9 +92,11 @@ pub fn exec(args: UpgradeArgs) -> Result {
 }
 
 /// The release asset suffix for this machine. Linux binaries are static (musl), so one build
-/// runs on every distribution.
+/// runs on every distribution. An Intel build running under Rosetta upgrades to the native
+/// Apple Silicon one.
 pub fn release_target() -> Result<String> {
     let arch = match env::consts::ARCH {
+        "x86_64" if translated_by_rosetta() => "aarch64",
         "x86_64" => "x86_64",
         "aarch64" => "aarch64",
         other => {
@@ -113,6 +115,29 @@ pub fn release_target() -> Result<String> {
         }
     };
     Ok(format!("{arch}-{os}"))
+}
+
+/// Whether this process is an Intel binary that Rosetta translates on Apple Silicon.
+#[cfg(target_os = "macos")]
+fn translated_by_rosetta() -> bool {
+    let mut translated: libc::c_int = 0;
+    let mut size = std::mem::size_of::<libc::c_int>();
+    // SAFETY: the name is NUL-terminated and the out-pointers match `size`.
+    let status = unsafe {
+        libc::sysctlbyname(
+            c"sysctl.proc_translated".as_ptr(),
+            (&mut translated as *mut libc::c_int).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    status == 0 && translated == 1
+}
+
+#[cfg(not(target_os = "macos"))]
+fn translated_by_rosetta() -> bool {
+    false
 }
 
 fn releases_url() -> String {

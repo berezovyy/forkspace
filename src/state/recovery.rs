@@ -4,6 +4,8 @@
 //! the next command.
 
 use std::fs;
+use std::os::unix::io::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -262,16 +264,85 @@ fn bounded_entries(dir: &Path) -> impl Iterator<Item = PathBuf> {
         .take(SWEEP_LIMIT)
 }
 
-/// Delete trashed directories in the background; a crash mid-delete just leaves them for
-/// the next sweep.
+/// Move `path` into the trash, where it is deleted in the background; `label` starts its
+/// name there. A path that cannot be moved is deleted in place.
+pub fn trash(path: &Path, label: &str) -> Result {
+    if fs::symlink_metadata(path).is_err() {
+        return Ok(());
+    }
+    let trash_root = paths::trash_dir();
+    let destination = trash_root.join(format!("{label}-{}-{}", now_unix_ns(), std::process::id()));
+    if fs::create_dir_all(&trash_root).is_ok() && fs::rename(path, &destination).is_ok() {
+        return Ok(());
+    }
+    match fs::remove_dir_all(path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            Err(error).io_context(|| format!("remove {}", path.display()))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Delete trashed directories in the background, one `rm` each; a crash mid-delete just
+/// leaves them for the next sweep. Each `rm` inherits a lock on its directory's lock file and
+/// holds it until it exits, so the sweeps every command runs skip directories already being
+/// deleted instead of starting another `rm` on them.
 pub fn start_trash_removals() {
+    let locks = paths::trash_lock_dir();
     for path in bounded_entries(&paths::trash_dir()) {
-        let _ = Command::new("rm")
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        if fs::create_dir_all(&locks).is_err() {
+            return;
+        }
+        let Some(lock) = try_lock(&locks.join(name)) else {
+            continue;
+        };
+        let descriptor = lock.as_raw_fd();
+        let mut command = Command::new("rm");
+        command
             .args(["-rf", "--"])
             .arg(path)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
+            .stderr(Stdio::null());
+        // SAFETY: the hook runs between fork and exec and only calls `fcntl`, which is
+        // async-signal-safe. Clearing close-on-exec hands `rm` the locked descriptor.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::fcntl(descriptor, libc::F_SETFD, 0) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let _ = command.spawn();
     }
+    remove_stale_locks(&locks);
+}
+
+/// Lock files whose trash directory is gone and that no `rm` holds.
+fn remove_stale_locks(locks: &Path) {
+    let trash_root = paths::trash_dir();
+    for lock_path in bounded_entries(locks) {
+        let deleted = lock_path
+            .file_name()
+            .is_some_and(|name| fs::symlink_metadata(trash_root.join(name)).is_err());
+        if deleted && try_lock(&lock_path).is_some() {
+            let _ = fs::remove_file(&lock_path);
+        }
+    }
+}
+
+/// Open `path` and take its exclusive lock without waiting; `None` if another process holds it.
+fn try_lock(path: &Path) -> Option<fs::File> {
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+        .ok()?;
+    // SAFETY: `file` is an open descriptor for the duration of the call.
+    (unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0).then_some(file)
 }
