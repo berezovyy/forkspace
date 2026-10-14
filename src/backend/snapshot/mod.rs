@@ -267,9 +267,7 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
     fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount> {
         trace::time("scan", || match ws.manifest_status {
             ManifestStatus::Ready if manifest::manifest_path(&ws.name).is_file() => {
-                Ok(ChangeCount::Ready(
-                    crate::changes::collect_clone_changes(ws, include_ignored, false)?.len(),
-                ))
+                crate::changes::count_clone_changes(ws, include_ignored)
             }
             _ => manifest::change_count(ws, include_ignored),
         })

@@ -39,8 +39,10 @@ fn fake_venv(project: &Path) {
 fn new_warns_about_a_copied_venv_that_points_at_the_base() {
     let home = common::setup_test_env();
     let base = tempfile::tempdir().unwrap();
-    fake_venv(base.path());
+    // Canonical, so the venv records the same path the warning is checked against (macOS
+    // temporary directories are under the `/var` -> `/private/var` symlink).
     let base_path = base.path().canonicalize().unwrap();
+    fake_venv(&base_path);
 
     let output = forkspace(
         home.path(),

@@ -250,6 +250,7 @@ pub fn render(plan: &PullPlan) -> String {
 /// Journal and apply `plan`, returning the journal path for [`finish`] and [`complete`].
 pub fn start(workspace: &Workspace, plan: &PullPlan) -> Result<PathBuf> {
     let _apply = crate::util::trace::span("apply");
+    align_convergent_times(plan);
     journal::start(
         OperationKind::Pull,
         &workspace.name,
@@ -259,6 +260,24 @@ pub fn start(workspace: &Workspace, plan: &PullPlan) -> Result<PathBuf> {
         workspace.fork_time_ns,
         plan.merged_steps.clone(),
     )
+}
+
+/// Give each file both sides changed identically the base's mtime. The re-baselined manifest
+/// is built from the base, so a workspace copy with its own mtime would otherwise show as a
+/// change with no difference. Best effort: a file left alone is only a spurious diff entry.
+fn align_convergent_times(plan: &PullPlan) {
+    for path in &plan.convergent {
+        let Ok(metadata) = fs::symlink_metadata(plan.source.join(path)) else {
+            continue;
+        };
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        if metadata.is_file() {
+            let _ = fs::File::open(plan.target.join(path))
+                .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(modified)));
+        }
+    }
 }
 
 /// Finish applying the interrupted pull of `workspace`, if its steps are not all applied yet.

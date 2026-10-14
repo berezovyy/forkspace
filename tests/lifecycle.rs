@@ -6,6 +6,10 @@ use forkspace::changes;
 use forkspace::sync::merge;
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "drives overlay upper layers, which only Linux builds open"
+)]
 fn test_full_lifecycle() {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().join("base");

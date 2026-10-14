@@ -152,7 +152,7 @@ where
             fs::create_dir_all(parent).io_context(|| format!("create {}", parent.display()))?;
         }
         if metadata.file_type().is_symlink() {
-            copy_symlink(source, &destination)?;
+            copy_symlink(source, &destination, &metadata)?;
         } else if metadata.is_file() {
             self.copy_file(source, destination, &metadata)?;
         } else {
@@ -195,10 +195,12 @@ where
                 self.stats.copied_bytes += metadata.len();
             }
         }
+        // Permissions go last: a read-only mode (Git objects are 0444) would refuse the xattr
+        // writes, and macOS files nearly always carry xattrs such as `com.apple.provenance`.
+        copy_xattrs(source, &destination, false)?;
+        set_mtime(&destination, metadata)?;
         fs::set_permissions(&destination, metadata.permissions())
             .io_context(|| format!("set permissions on {}", destination.display()))?;
-        set_mtime(&destination, metadata)?;
-        copy_xattrs(source, &destination, false)?;
         if multiply_linked {
             self.hardlinks.insert(identity, destination);
         }
@@ -209,24 +211,54 @@ where
     /// cannot bump a finished mtime and a parent's restrictive mode cannot block its children.
     fn finish_directories(mut self) -> Result<ForkStats> {
         for (source, destination, metadata) in self.directories.into_iter().rev() {
+            copy_xattrs(&source, &destination, false)?;
+            set_mtime(&destination, &metadata)?;
             fs::set_permissions(
                 &destination,
                 fs::Permissions::from_mode(mode_bits(&metadata)),
             )
             .io_context(|| format!("set permissions on {}", destination.display()))?;
-            set_mtime(&destination, &metadata)?;
-            copy_xattrs(&source, &destination, false)?;
             self.stats.observe(&metadata);
         }
         Ok(self.stats)
     }
 }
 
-fn copy_symlink(source: &Path, destination: &Path) -> Result {
+fn copy_symlink(source: &Path, destination: &Path, metadata: &fs::Metadata) -> Result {
     let link = fs::read_link(source).io_context(|| format!("read symlink {}", source.display()))?;
     std::os::unix::fs::symlink(link, destination)
         .io_context(|| format!("create symlink {}", destination.display()))?;
-    copy_xattrs(source, destination, true)
+    copy_xattrs(source, destination, true)?;
+    // The link's own mtime: merge treats a base link whose mtime moved as re-created.
+    set_symlink_mtime(destination, metadata)
+}
+
+fn set_symlink_mtime(path: &Path, metadata: &fs::Metadata) -> Result {
+    let name = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
+        .map_err(|_| ForkspaceError::InvalidArgument("path contains a NUL byte".to_string()))?;
+    let times = [
+        libc::timespec {
+            tv_sec: 0,
+            tv_nsec: libc::UTIME_OMIT,
+        },
+        libc::timespec {
+            tv_sec: metadata.mtime() as libc::time_t,
+            tv_nsec: metadata.mtime_nsec() as _,
+        },
+    ];
+    if unsafe {
+        libc::utimensat(
+            libc::AT_FDCWD,
+            name.as_ptr(),
+            times.as_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error())
+            .io_context(|| format!("set time on {}", path.display()));
+    }
+    Ok(())
 }
 
 fn set_mtime(path: &Path, metadata: &fs::Metadata) -> Result {

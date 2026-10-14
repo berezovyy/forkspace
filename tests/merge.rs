@@ -7,6 +7,10 @@ use forkspace::changes;
 use forkspace::sync::{install, merge};
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "merges an overlay upper layer, which only Linux builds open"
+)]
 fn test_merge_copies_added_files() {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().join("base");
@@ -30,6 +34,10 @@ fn test_merge_copies_added_files() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "merges an overlay upper layer, which only Linux builds open"
+)]
 fn test_merge_copies_modified_files() {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().join("base");
@@ -54,6 +62,10 @@ fn test_merge_copies_modified_files() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "merges an overlay upper layer, which only Linux builds open"
+)]
 fn test_merge_handles_deletions() {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().join("base");
@@ -69,6 +81,10 @@ fn test_merge_handles_deletions() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "merges an overlay upper layer, which only Linux builds open"
+)]
 fn test_merge_skips_node_modules() {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().join("base");
@@ -95,6 +111,10 @@ fn test_merge_skips_node_modules() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "merges an overlay upper layer, which only Linux builds open"
+)]
 fn test_merge_preserves_permissions() {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().join("base");
@@ -116,6 +136,10 @@ fn test_merge_preserves_permissions() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "merges an overlay upper layer, which only Linux builds open"
+)]
 fn test_merge_no_changes() {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().join("base");
@@ -208,6 +232,10 @@ fn test_merge_patch_output() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "merges an overlay upper layer, which only Linux builds open"
+)]
 fn test_merge_creates_parent_dirs() {
     let tmp = tempfile::tempdir().unwrap();
     let base = tmp.path().join("base");

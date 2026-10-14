@@ -126,6 +126,15 @@ fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cli-contract")
 }
 
+/// The expected `extension` output of case `name`: `<name>.macos.<extension>` on macOS when the
+/// platform words it differently (such as the faster-fork remedy), else `<name>.<extension>`.
+fn expected(name: &str, extension: &str) -> Vec<u8> {
+    let platform = fixture_dir().join(format!("{name}.{}.{extension}", std::env::consts::OS));
+    fs::read(&platform)
+        .or_else(|_| fs::read(fixture_dir().join(format!("{name}.{extension}"))))
+        .unwrap()
+}
+
 #[test]
 fn golden_cli_contract() {
     let cases: Vec<Case> =
@@ -138,6 +147,12 @@ fn golden_cli_contract() {
     // Collect every mismatch so one broken case cannot hide the rest.
     let mut failures = Vec::new();
     for case in cases {
+        // These fixtures hand-write Linux overlay state, which other builds refuse to open.
+        if !cfg!(target_os = "linux")
+            && matches!(case.setup.as_deref(), Some("diff-class" | "compare-three"))
+        {
+            continue;
+        }
         let home = tempfile::tempdir().unwrap();
         if let Some(fixture) = &case.state_fixture {
             fs::copy(fixture_dir().join(fixture), home.path().join("state.json")).unwrap();
@@ -158,7 +173,6 @@ fn golden_cli_contract() {
             .output()
             .unwrap();
 
-        let prefix = fixture_dir().join(&case.name);
         let stdout = if case.setup.is_some() {
             String::from_utf8(output.stdout)
                 .unwrap()
@@ -167,7 +181,7 @@ fn golden_cli_contract() {
         } else {
             output.stdout
         };
-        if stdout != fs::read(prefix.with_extension("stdout")).unwrap() {
+        if stdout != expected(&case.name, "stdout") {
             failures.push(format!(
                 "stdout changed for {}:\n{}",
                 case.name,
@@ -190,14 +204,14 @@ fn golden_cli_contract() {
         } else {
             output.stderr
         };
-        if stderr != fs::read(prefix.with_extension("stderr")).unwrap() {
+        if stderr != expected(&case.name, "stderr") {
             failures.push(format!(
                 "stderr changed for {}:\n{}",
                 case.name,
                 String::from_utf8_lossy(&stderr)
             ));
         }
-        let expected_code: i32 = fs::read_to_string(prefix.with_extension("code"))
+        let expected_code: i32 = String::from_utf8(expected(&case.name, "code"))
             .unwrap()
             .trim()
             .parse()

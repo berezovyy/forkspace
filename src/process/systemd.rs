@@ -303,26 +303,39 @@ mod tests {
 
 #[cfg(all(test, target_os = "macos"))]
 mod macos_tests {
+    /// `PROC_FLAG_DARWINBG` from XNU's `sys/proc_info.h` (not in the public SDK): the process
+    /// set itself to the Darwin background state.
+    const PROC_FLAG_DARWINBG: u32 = 0x8000;
+
+    /// Whether `pid` is in the Darwin background state. `getpriority(PRIO_DARWIN_PROCESS, pid)`
+    /// only reports the state another process imposed, not one the process set on itself.
+    fn darwin_background(pid: u32) -> bool {
+        let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+        let size = size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        let read = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                info.as_mut_ptr().cast(),
+                size,
+            )
+        };
+        assert_eq!(read, size, "proc_pidinfo(PROC_PIDTBSDINFO) for {pid}");
+        unsafe { info.assume_init() }.pbi_flags & PROC_FLAG_DARWINBG != 0
+    }
+
     /// Commands started for `run` and `enter -- <command>` are in the Darwin background state.
     #[test]
     fn background_commands_run_at_background_priority() {
-        let mut command = std::process::Command::new("sleep");
-        command.arg("5");
-        let mut child = super::lowered(command, true).spawn().unwrap();
-        let pid = child.id() as libc::id_t;
-        // XNU reports the process's background state (non-zero when backgrounded).
-        let state = unsafe { libc::getpriority(libc::PRIO_DARWIN_PROCESS, pid) };
-        let _ = child.kill();
-        let _ = child.wait();
-        assert!(state > 0, "getpriority(PRIO_DARWIN_PROCESS) = {state}");
-
-        let mut command = std::process::Command::new("sleep");
-        command.arg("5");
-        let mut child = super::lowered(command, false).spawn().unwrap();
-        let state =
-            unsafe { libc::getpriority(libc::PRIO_DARWIN_PROCESS, child.id() as libc::id_t) };
-        let _ = child.kill();
-        let _ = child.wait();
-        assert_eq!(state, 0, "an interactive shell keeps normal priority");
+        for (background, expected) in [(true, true), (false, false)] {
+            let mut command = std::process::Command::new("sleep");
+            command.arg("5");
+            let mut child = super::lowered(command, background).spawn().unwrap();
+            let state = darwin_background(child.id());
+            let _ = child.kill();
+            let _ = child.wait();
+            assert_eq!(state, expected, "background = {background}");
+        }
     }
 }

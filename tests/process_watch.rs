@@ -18,7 +18,15 @@ fn stale_identity_cannot_kill_a_process_group() {
     let mut child = command.spawn().unwrap();
     let pid = child.id();
     let identity = forkspace::process::watch::identity(pid).unwrap();
-    assert_eq!(identity, token);
+    assert_eq!(
+        forkspace::process::watch::spawned_identity(pid, token.clone()),
+        identity
+    );
+    // Linux reads the token from the environment; macOS hides the environment of platform
+    // binaries such as `sleep`, so it uses the start time.
+    if cfg!(target_os = "linux") {
+        assert_eq!(identity, token);
+    }
     assert!(forkspace::process::watch::is_alive(pid, Some(&identity)));
     assert!(!forkspace::process::watch::terminate_group(
         pid,

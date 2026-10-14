@@ -166,5 +166,21 @@ fn every_internal_store_is_tagged_for_backups() {
         let tag = env.home.path().join(store).join("CACHEDIR.TAG");
         let text = fs::read_to_string(&tag).unwrap_or_else(|_| panic!("{} missing", tag.display()));
         assert!(text.starts_with("Signature: 8a477f597d28d172789f06886806bc55"));
+        #[cfg(target_os = "macos")]
+        assert!(
+            time_machine_excluded(&env.home.path().join(store)),
+            "{store} is not excluded from Time Machine"
+        );
     }
+}
+
+/// Whether `directory` carries the sticky Time Machine exclusion `tmutil addexclusion` sets.
+#[cfg(target_os = "macos")]
+fn time_machine_excluded(directory: &std::path::Path) -> bool {
+    let output = std::process::Command::new("/usr/bin/xattr")
+        .args(["-p", "com.apple.metadata:com_apple_backup_excludeItem"])
+        .arg(directory)
+        .output()
+        .unwrap();
+    output.status.success() && String::from_utf8_lossy(&output.stdout).contains("com.apple.backupd")
 }

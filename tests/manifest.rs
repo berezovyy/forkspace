@@ -46,8 +46,9 @@ fn manifest_build_is_atomic_and_rows_match_tree() {
 fn manifest_round_trips_non_utf8_long_and_nfd_paths() {
     let _home = common::setup_test_env();
     let view = tempfile::tempdir().unwrap();
+    // APFS refuses names that are not UTF-8; other volumes must round-trip them.
     let non_utf = OsString::from_vec(vec![b'n', b'o', b'n', b'-', 0xff]);
-    fs::write(view.path().join(&non_utf), b"bytes").unwrap();
+    let raw_names = fs::write(view.path().join(&non_utf), b"bytes").is_ok();
     let nfd = "cafe\u{301}";
     fs::write(view.path().join(nfd), b"nfd").unwrap();
     let mut long = PathBuf::new();
@@ -65,9 +66,12 @@ fn manifest_round_trips_non_utf8_long_and_nfd_paths() {
         .map(|row| manifest::decode_path(&row.path).unwrap())
         .collect();
 
-    assert!(decoded
-        .iter()
-        .any(|path| path.as_os_str().as_bytes() == non_utf.as_os_str().as_bytes()));
+    assert!(
+        !raw_names
+            || decoded
+                .iter()
+                .any(|path| path.as_os_str().as_bytes() == non_utf.as_os_str().as_bytes())
+    );
     assert!(decoded.iter().any(|path| path == Path::new(nfd)));
     assert!(decoded.iter().any(|path| path == &long));
 }

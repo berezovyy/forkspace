@@ -88,10 +88,17 @@ fn compare_refuses_duplicate_and_cross_base_inputs_before_scanning() {
     b.name = "c".to_string();
     let mismatch = compare::build(&[a.clone(), b]).unwrap_err();
     assert!(matches!(&mismatch, ForkspaceError::BaseMismatch { .. }));
+    // Bases are recorded canonically (macOS temporary directories sit under `/private`).
     let normalized = mismatch
         .to_string()
-        .replace(&second.path().display().to_string(), "<BASE-2>")
-        .replace(&first.path().display().to_string(), "<BASE-1>");
+        .replace(
+            &second.path().canonicalize().unwrap().display().to_string(),
+            "<BASE-2>",
+        )
+        .replace(
+            &first.path().canonicalize().unwrap().display().to_string(),
+            "<BASE-1>",
+        );
     assert_eq!(
         format!("{normalized}\n").as_bytes(),
         fixture("compare-base-mismatch.txt")

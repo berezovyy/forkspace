@@ -329,8 +329,21 @@ fn unicode_non_utf8_case_and_long_paths_round_trip_through_copy_diff_and_merge()
     ];
     for path in &paths {
         fs::create_dir_all(base.path().join(path).parent().unwrap()).unwrap();
-        fs::write(base.path().join(path), b"old\n").unwrap();
+        // APFS refuses names that are not UTF-8 (EILSEQ).
+        let _ = fs::write(base.path().join(path), b"old\n");
     }
+    // APFS is normalization- and (by default) case-insensitive: `cafe\u{301}` and `case` name
+    // the files `caf\u{e9}` and `Case` already are. Keep the names stored as their own entries.
+    let paths: Vec<PathBuf> = paths
+        .into_iter()
+        .filter(|path| {
+            let parent = base.path().join(path).parent().unwrap().to_path_buf();
+            fs::read_dir(parent)
+                .unwrap()
+                .any(|entry| entry.unwrap().file_name() == path.file_name().unwrap())
+        })
+        .collect();
+    assert!(paths.len() >= 3, "{paths:?}");
     assert!(forkspace(
         home.path(),
         &[
@@ -472,21 +485,35 @@ fn backend_override_is_echoed_but_other_platform_state_is_never_repaired_away() 
     let state_path = home.path().join("state.json");
     let mut state: serde_json::Value =
         serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
-    state["workspaces"]["foreign"]["backend_kind"] = serde_json::json!("mac-clone");
-    state["workspaces"]["foreign"]["backend_state"] = serde_json::json!({"kind":"mac-clone"});
+    // A backend only the other platform's build can open.
+    let (foreign, foreign_state, platform) = if cfg!(target_os = "macos") {
+        (
+            BackendKind::LinuxReflink,
+            serde_json::json!({"kind":"cow-dir"}),
+            "Linux",
+        )
+    } else {
+        (
+            BackendKind::MacClone,
+            serde_json::json!({"kind":"mac-clone"}),
+            "macOS",
+        )
+    };
+    state["workspaces"]["foreign"]["backend_kind"] = serde_json::json!(foreign.as_str());
+    state["workspaces"]["foreign"]["backend_state"] = foreign_state;
     fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
 
     let entered = forkspace(home.path(), &["enter", "foreign", "--", "true"]);
     assert_eq!(entered.status.code(), Some(7));
     let stderr = String::from_utf8_lossy(&entered.stderr);
-    assert!(stderr.contains("mac-clone"));
-    assert!(stderr.contains("macOS"));
+    assert!(stderr.contains(foreign.as_str()));
+    assert!(stderr.contains(platform));
     let listed = forkspace(home.path(), &["ls", "--json"]);
     assert!(listed.status.success());
     assert!(String::from_utf8_lossy(&listed.stdout).contains("foreign"));
     assert_eq!(
         State::load().unwrap().workspaces["foreign"].backend_kind,
-        BackendKind::MacClone
+        foreign
     );
 }
 

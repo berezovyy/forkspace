@@ -12,6 +12,7 @@ use super::content::{compute_line_diff, count_lines, is_binary};
 use super::filter::ChangeFilter;
 use super::manifest::{self, written_after_fork, ManifestKind, ManifestRow, ManifestStatus};
 use super::{ChangeKind, FileChange, OldContent};
+use crate::backend::ChangeCount;
 use crate::error::Result;
 use crate::util::walk::{Entry, Step};
 use crate::workspace::Workspace;
@@ -24,16 +25,31 @@ pub fn collect_clone_changes(
     need_line_counts: bool,
 ) -> Result<Vec<FileChange>> {
     let filter = (!include_ignored).then(|| ChangeFilter::build(&workspace.base));
-    collect(workspace, filter, include_ignored, need_line_counts)
+    let baseline = load_baseline(workspace, include_ignored)?.ok().flatten();
+    collect(workspace, filter, baseline, need_line_counts)
+}
+
+/// How many changes `ls` shows for a snapshot workspace with a `Ready` manifest. A manifest
+/// found unreadable here reports what recovery made of it (degraded, or rebuilding) rather
+/// than a count that cannot see deletions.
+pub fn count_clone_changes(workspace: &Workspace, include_ignored: bool) -> Result<ChangeCount> {
+    let filter = (!include_ignored).then(|| ChangeFilter::build(&workspace.base));
+    match load_baseline(workspace, include_ignored)? {
+        Ok(baseline) => Ok(ChangeCount::Ready(
+            collect(workspace, filter, baseline, false)?.len(),
+        )),
+        Err(recovered) => Ok(recovered),
+    }
 }
 
 /// Changes that can move between the workspace and its base (everything but runtime and
 /// internal paths). `node_modules` and `.git` are not walked at all.
 pub fn collect_transferable_clone_changes(workspace: &Workspace) -> Result<Vec<FileChange>> {
+    let baseline = load_baseline(workspace, true)?.ok().flatten();
     collect(
         workspace,
         Some(ChangeFilter::transferable_only()),
-        true,
+        baseline,
         false,
     )
 }
@@ -41,10 +57,9 @@ pub fn collect_transferable_clone_changes(workspace: &Workspace) -> Result<Vec<F
 fn collect(
     workspace: &Workspace,
     filter: Option<ChangeFilter>,
-    include_ignored: bool,
+    baseline: Option<HashMap<PathBuf, ManifestRow>>,
     need_line_counts: bool,
 ) -> Result<Vec<FileChange>> {
-    let baseline = load_baseline(workspace, include_ignored)?;
     let scan = CloneScan {
         workspace,
         filter,
@@ -60,15 +75,15 @@ fn collect(
     Ok(changes)
 }
 
-/// Read a `Ready` manifest keyed by decoded path. If it cannot be read, run
-/// [`manifest::change_count`] for its recovery side effects (degrade, or schedule a rebuild)
-/// and scan without a baseline.
+/// Read a `Ready` manifest keyed by decoded path (`Ok(None)` for a manifest that is not
+/// ready). If it cannot be read, run [`manifest::change_count`] for its recovery side effects
+/// (degrade, or schedule a rebuild) and return its verdict, so the scan goes without a baseline.
 fn load_baseline(
     workspace: &Workspace,
     include_ignored: bool,
-) -> Result<Option<HashMap<PathBuf, ManifestRow>>> {
+) -> Result<std::result::Result<Option<HashMap<PathBuf, ManifestRow>>, ChangeCount>> {
     if workspace.manifest_status != ManifestStatus::Ready {
-        return Ok(None);
+        return Ok(Ok(None));
     }
     let rows = manifest::stream(&workspace.name).and_then(|rows| {
         rows.map(|row| {
@@ -78,11 +93,8 @@ fn load_baseline(
         .collect::<Result<HashMap<_, _>>>()
     });
     match rows {
-        Ok(rows) => Ok(Some(rows)),
-        Err(_) => {
-            manifest::change_count(workspace, include_ignored)?;
-            Ok(None)
-        }
+        Ok(rows) => Ok(Ok(Some(rows))),
+        Err(_) => Ok(Err(manifest::change_count(workspace, include_ignored)?)),
     }
 }
 
@@ -215,6 +227,10 @@ impl CloneScan<'_> {
         let base_path = self.workspace.base.join(&path);
         let kind = match (current, row) {
             (None, _) => ChangeKind::Deleted,
+            // Without a manifest, a written file the base also has is an edit of it.
+            (Some(_), None) if !self.baseline_known && fs::symlink_metadata(&base_path).is_ok() => {
+                ChangeKind::Modified
+            }
             (Some(_), None) => ChangeKind::Added,
             // A dirty row may record a file created after the fork; if the base never had
             // it, it is an addition.

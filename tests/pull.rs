@@ -354,9 +354,10 @@ fn package_pull_runs_the_manager_in_the_view_and_never_copies_node_modules() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    // `pwd` prints the physical path (macOS temporary directories sit under `/private`).
     assert_eq!(
-        fs::read_to_string(log).unwrap().trim(),
-        ws.view_path.display().to_string()
+        Path::new(fs::read_to_string(log).unwrap().trim()),
+        ws.view_path.canonicalize().unwrap()
     );
     assert!(!ws.view_path.join("node_modules/zod/index.js").exists());
     assert!(fs::read_to_string(ws.view_path.join("package.json"))

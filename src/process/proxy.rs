@@ -145,7 +145,7 @@ fn spawn_daemon(listen_port: u16) -> Result<ProxyConfig> {
         active_workspace: None,
         target_port: None,
         proxy_pid: Some(child.id()),
-        proxy_identity: Some(identity),
+        proxy_identity: Some(watch::spawned_identity(child.id(), identity)),
         unknown_fields: serde_json::Map::new(),
     })
 }

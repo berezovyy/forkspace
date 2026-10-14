@@ -3,9 +3,9 @@
 //! A sealed overlay already has it in its frozen copy. Directory-snapshot workspaces keep a
 //! private copy of the project's visible source and dependency files (not `node_modules`,
 //! ignored, runtime, or internal paths) in `FORKSPACE_HOME/ancestors/<name>`, taken at fork
-//! and refreshed by `pull`. `fs::copy` clones on APFS, Btrfs, and XFS, so the copy is free
-//! there and small elsewhere. A live overlay has no fork-time version; its overlapping edits
-//! stay whole-file conflicts.
+//! and refreshed by `pull`. On APFS the whole tree is cloned in one call instead; elsewhere
+//! `fs::copy` reflinks on Btrfs and XFS, so the copy is free there and small elsewhere. A live
+//! overlay has no fork-time version; its overlapping edits stay whole-file conflicts.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -51,9 +51,12 @@ pub fn record(name: &str, from: &Path) -> Result {
     crate::disk::exclude_from_backups(&root);
     let staging = root.join(format!(".{name}.tmp-{}", std::process::id()));
     let _ = fs::remove_dir_all(&staging);
-    if let Err(error) = copy_visible(from, &staging) {
+    if !clone_tree(from, &staging) {
         let _ = fs::remove_dir_all(&staging);
-        return Err(error);
+        if let Err(error) = copy_visible(from, &staging) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
     }
     let destination = dir(name);
     remove(name)?;
@@ -70,6 +73,29 @@ pub fn remove(name: &str) -> Result {
         }
         _ => Ok(()),
     }
+}
+
+/// Clone all of `from` to `to` with one recursive APFS `clonefile`, which shares every block
+/// and keeps mtimes; a copy per file costs ~180 us each, 18 s for 100,000 files. The clone also
+/// holds hidden paths, as a sealed overlay's frozen copy does; lookups only ever ask for
+/// visible ones. False when the volume cannot clone (`to` may then need removing).
+#[cfg(target_os = "macos")]
+fn clone_tree(from: &Path, to: &Path) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let (Ok(source), Ok(target)) = (
+        CString::new(from.as_os_str().as_bytes()),
+        CString::new(to.as_os_str().as_bytes()),
+    ) else {
+        return false;
+    };
+    unsafe { libc::clonefile(source.as_ptr(), target.as_ptr(), 0) == 0 }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clone_tree(_from: &Path, _to: &Path) -> bool {
+    false
 }
 
 /// Copy the regular files of `from` that a diff would show into `to`.

@@ -96,6 +96,35 @@ fn journal_resume_converges_for_files_deletes_modes_and_symlinks() {
     write_pair(base.path(), view.path(), "mode", b"same\n");
     std::os::unix::fs::symlink("modified", base.path().join("link")).unwrap();
     std::os::unix::fs::symlink("modified", view.path().join("link")).unwrap();
+    // A fork carries the link's mtime over; the two links here are made separately.
+    let link_mtime = fs::symlink_metadata(view.path().join("link"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let base_link =
+        std::ffi::CString::new(base.path().join("link").as_os_str().as_encoded_bytes()).unwrap();
+    let since_epoch = link_mtime.duration_since(std::time::UNIX_EPOCH).unwrap();
+    let times = [
+        libc::timespec {
+            tv_sec: 0,
+            tv_nsec: libc::UTIME_OMIT,
+        },
+        libc::timespec {
+            tv_sec: since_epoch.as_secs() as libc::time_t,
+            tv_nsec: since_epoch.subsec_nanos() as _,
+        },
+    ];
+    assert_eq!(
+        unsafe {
+            libc::utimensat(
+                libc::AT_FDCWD,
+                base_link.as_ptr(),
+                times.as_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        },
+        0
+    );
     let workspace = workspace(base.path(), view.path(), "resume-plan");
     std::thread::sleep(std::time::Duration::from_millis(2));
     fs::write(view.path().join("modified"), b"new\n").unwrap();

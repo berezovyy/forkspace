@@ -295,12 +295,32 @@ mod os {
             .then(|| u64::try_from(reply.private_size).unwrap_or(0))
     }
 
-    /// `tmutil addexclusion` (without `-p`) sets a sticky exclusion that needs no root.
+    /// The attribute behind a sticky Time Machine exclusion, the one `tmutil addexclusion`
+    /// (without `-p`) and `CSBackupSetItemExcluded` write.
+    const EXCLUDE_ITEM: &std::ffi::CStr = c"com.apple.metadata:com_apple_backup_excludeItem";
+    /// Its value: the binary property list for the string `com.apple.backupd`.
+    const EXCLUDE_VALUE: &[u8] = b"bplist00_\x10\x11com.apple.backupd\x08\
+        \x00\x00\x00\x00\x00\x00\x01\x01\
+        \x00\x00\x00\x00\x00\x00\x00\x01\
+        \x00\x00\x00\x00\x00\x00\x00\x00\
+        \x00\x00\x00\x00\x00\x00\x00\x1c";
+
+    /// Sets the sticky exclusion directly: no root needed, and none of the ~11 s that
+    /// `tmutil addexclusion` spends waiting on `backupd`.
     pub fn exclude_from_time_machine(directory: &Path) {
-        let _ = std::process::Command::new("/usr/bin/tmutil")
-            .arg("addexclusion")
-            .arg(directory)
-            .output();
+        let Ok(name) = CString::new(directory.as_os_str().as_encoded_bytes()) else {
+            return;
+        };
+        unsafe {
+            libc::setxattr(
+                name.as_ptr(),
+                EXCLUDE_ITEM.as_ptr(),
+                EXCLUDE_VALUE.as_ptr().cast(),
+                EXCLUDE_VALUE.len(),
+                0,
+                0,
+            )
+        };
     }
 }
 
@@ -343,6 +363,19 @@ mod macos_tests {
             private < 64 * 1024,
             "clone counted as {private} private bytes"
         );
-        assert!(super::tree_private_bytes(root.path()).unwrap() >= 4 << 20);
+
+        // The original shares its blocks with the clone too; a file nothing shares counts in
+        // full, and so does a clone once it is rewritten. APFS reports a private size only
+        // for data it has written out, so flush first.
+        let write_out = |path: &std::path::Path, byte: u8| {
+            std::fs::write(path, vec![byte; 4 << 20]).unwrap();
+            std::fs::File::open(path).unwrap().sync_all().unwrap();
+        };
+        let unshared = root.path().join("unshared");
+        std::fs::create_dir(&unshared).unwrap();
+        write_out(&unshared.join("file"), 5);
+        assert!(super::tree_private_bytes(&unshared).unwrap() >= 4 << 20);
+        write_out(&clones.join("copy"), 7);
+        assert!(super::tree_private_bytes(&clones).unwrap() >= 4 << 20);
     }
 }

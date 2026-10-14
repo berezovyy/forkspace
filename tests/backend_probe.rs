@@ -39,8 +39,9 @@ fn plain_copy_is_a_privilege_free_fidelity_floor() {
         libc::lseek(sparse.as_raw_fd(), 8 * 1024 * 1024, libc::SEEK_SET);
         libc::write(sparse.as_raw_fd(), b"middle".as_ptr().cast(), 6);
     }
+    // APFS refuses names that are not UTF-8 (EILSEQ); filesystems that take them must copy them.
     let non_utf8 = std::ffi::OsString::from_vec(b"non-utf8-\xff".to_vec());
-    fs::write(base.path().join(&non_utf8), b"bytes\n").unwrap();
+    let raw_names = fs::write(base.path().join(&non_utf8), b"bytes\n").is_ok();
     let long = base
         .path()
         .join("a".repeat(225))
@@ -87,10 +88,12 @@ fn plain_copy_is_a_privilege_free_fidelity_floor() {
         fs::read_link(workspace.view_path.join("absolute-link")).unwrap(),
         base.path().join("dir/file")
     );
-    assert_eq!(
-        fs::read(workspace.view_path.join(&non_utf8)).unwrap(),
-        b"bytes\n"
-    );
+    if raw_names {
+        assert_eq!(
+            fs::read(workspace.view_path.join(&non_utf8)).unwrap(),
+            b"bytes\n"
+        );
+    }
     assert_eq!(
         fs::read(
             workspace

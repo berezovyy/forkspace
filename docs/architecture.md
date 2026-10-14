@@ -26,9 +26,11 @@ Apple Developer Program membership. The project and `FORKSPACE_HOME/workspaces` 
 same APFS volume. Fork samples its timestamp before cloning, records an intent before touching
 the filesystem, and commits state only once the view exists. A background worker (a re-executed
 copy of the binary) writes the manifest: encoded raw paths, kind, size, nanosecond mtime, mode,
-symlink target, and a dirty guard. Dev servers run in the clone directory, so FSEvents-based
-tools work normally. The cost is O(entries), not O(1): directory metadata is materialized even
-though file blocks are shared.
+symlink target, and a dirty guard. The fork-time copy that line-level merges use is a second
+clone of the view, also one call. Dev servers run in the clone directory, so FSEvents-based
+tools work normally. Processes are identified by their start time from `proc_pidinfo`, because
+macOS hides the environment of Apple platform binaries such as `/bin/sh`. The cost is
+O(entries), not O(1): directory metadata is materialized even though file blocks are shared.
 
 ## Durable control plane
 

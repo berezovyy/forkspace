@@ -225,7 +225,7 @@ fn spawn(
 
     Ok(RunningProcess {
         pid: child.id(),
-        identity: Some(identity),
+        identity: Some(watch::spawned_identity(child.id(), identity)),
         command: command.to_string(),
         port,
         unknown_fields: Map::new(),

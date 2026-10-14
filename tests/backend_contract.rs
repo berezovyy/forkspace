@@ -139,12 +139,17 @@ fn fake_backend_passes_workspace_contract() {
 #[test]
 #[serial]
 fn backend_selection_is_automatic_and_debug_overridable() {
+    let (native, name) = if cfg!(target_os = "macos") {
+        (BackendKind::MacClone, "mac-clone")
+    } else {
+        (BackendKind::Overlay, "linux")
+    };
     unsafe { std::env::remove_var("FORKSPACE_BACKEND") };
     let selected = select_backend(None).unwrap();
-    assert_eq!(selected.kind(), BackendKind::Overlay);
+    assert_eq!(selected.kind(), native);
 
-    unsafe { std::env::set_var("FORKSPACE_BACKEND", "linux") };
-    assert_eq!(select_backend(None).unwrap().kind(), BackendKind::Overlay);
+    unsafe { std::env::set_var("FORKSPACE_BACKEND", name) };
+    assert_eq!(select_backend(None).unwrap().kind(), native);
 
     unsafe { std::env::set_var("FORKSPACE_BACKEND", "invalid") };
     let error = select_backend(None).err().unwrap();
@@ -156,12 +161,17 @@ fn backend_selection_is_automatic_and_debug_overridable() {
 #[test]
 #[serial]
 fn recorded_other_platform_backend_is_unavailable() {
+    let (foreign, name, platform) = if cfg!(target_os = "macos") {
+        (BackendKind::Overlay, "linux", "Linux")
+    } else {
+        (BackendKind::MacClone, "mac-clone", "macOS")
+    };
     unsafe { std::env::remove_var("FORKSPACE_BACKEND") };
-    let error = select_backend(Some(BackendKind::MacClone)).err().unwrap();
+    let error = select_backend(Some(foreign)).err().unwrap();
     assert_eq!(error.exit_code(), 7);
     let message = error.to_string();
-    assert!(message.contains("mac-clone"));
-    assert!(message.contains("macOS"));
+    assert!(message.contains(name));
+    assert!(message.contains(platform));
 }
 
 #[test]
