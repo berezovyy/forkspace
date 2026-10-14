@@ -12,10 +12,5 @@
 
 ## Working on forkspace
 
-- [Workspace contract](workspace-contract.md): what every command guarantees; changing it is a
-  breaking change.
 - [Architecture](architecture.md): backends, the control plane, and where the code lives.
 - [Releasing](releasing.md): cutting a release, the release assets, upgrades.
-- [Roadmap](roadmap.md): what is next, and what is deliberately out of scope.
-- [Research](research.md): a catalogue of Linux and macOS primitives forkspace could use, kept as
-  written.

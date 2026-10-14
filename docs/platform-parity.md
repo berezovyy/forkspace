@@ -44,8 +44,7 @@ compiled in, and everything above the primitive that materializes a workspace is
 | Disk use | allocated blocks, stopping at mount points | APFS private size | `tests/disk.rs::ls_shows_private_sizes_and_a_total`; `src/disk.rs::apfs_clones_have_no_private_size` |
 | Directory scans | parallel `readdir` + `lstat` | `getattrlistbulk`, checked against `lstat` | `tests/scans.rs::merge_ls_and_diff_agree_while_node_modules_is_skipped`; `src/util/bulk.rs::bulk_attributes_match_lstat` |
 
-The macOS tests in this table compile in CI but have not yet run on a Mac; the
-[roadmap](roadmap.md) tracks that run.
+The macOS tests in this table compile in CI but have not yet run on a Mac.
 
 ## Limitations
 

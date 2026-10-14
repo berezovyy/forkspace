@@ -1,9 +1,7 @@
 # CLI reference
 
 Every command, its flags, the environment it reads and sets, and its exit codes. `forkspace
---help` and `forkspace <command> --help` show the syntax of the installed version. What the
-commands guarantee (sealing, conflicts, recovery) is in
-[workspace-contract.md](workspace-contract.md).
+--help` and `forkspace <command> --help` show the syntax of the installed version.
 
 Flags marked *Linux* need a Linux backend or service. Elsewhere `--live` and `--tmpfs` fail
 with exit code 6 and a remedy; `--memory` and `--cpu` are recorded with a warning and have no

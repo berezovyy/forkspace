@@ -32,7 +32,7 @@ offers to make that copy: an overlay, an APFS clone, reflinks, or a plain copy a
 |                         |  `cp -r`  |  Docker   | Git worktree |   **forkspace**   |
 | :---------------------- | :-------: | :-------: | :----------: | :-----------: |
 | **Speed**               |   Slow    |   Slow    |     Fast     | [**Backend-dependent**](docs/benchmarks.md) |
-| `.env` / `node_modules` |    Yes    |    No     |      No      | [**Yes**](docs/workspace-contract.md) |
+| `.env` / `node_modules` |    Yes    |    No     |      No      | [**Yes**](docs/platform-parity.md) |
 | **Isolation**           |   Full    |   Full    |   Partial    | [**Project-local**](docs/platform-parity.md#limitations) |
 | **Disk usage**          | Full copy | Full copy |   Partial    | [**CoW or disclosed copy**](docs/platform-parity.md) |
 | **Root required**       |    No     |   Often   |      No      | [**No**](docs/platform-parity.md) |
