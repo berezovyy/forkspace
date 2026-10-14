@@ -2,7 +2,7 @@
 name = "forkspace"
 version = "0.1.0"
 edition = "2021"
-description = "Disposable project workspaces with capability-selected CoW and copy backends"
+description = "Copy-on-write copies of a project directory, including node_modules, .env and other ignored files. Changes stay in the copy until you merge them back. Linux and macOS, no root needed."
 license = "MIT"
 repository = "https://github.com/berezovyy/forkspace"
 readme = "README.md"
