@@ -1,126 +1,233 @@
 # CLI reference
 
-The authoritative command and flag matrix is
-[`workspace-contract.md`](workspace-contract.md#command-and-flag-matrix). Run
-`forkspace --help` or `forkspace <command> --help` for the version-specific syntax.
+Every command, its flags, the environment it reads and sets, and its exit codes. `forkspace
+--help` and `forkspace <command> --help` show the syntax of the installed version. What the
+commands guarantee (sealing, conflicts, recovery) is in
+[workspace-contract.md](workspace-contract.md).
 
-Commands described in future phase files are not available until their phase lands. The
-retired `nuke` command and the unimplemented `path`, `up`, `down`, `snap`, `log`, `blame`,
-`serve`, `sleep`, `wake`, `tree`, `collapse`, and `race` commands are not part of the CLI.
-Likewise, `new -n` and `--ttl` are not implemented flags.
+Flags marked *Linux* need a Linux backend or service. Elsewhere `--live` and `--tmpfs` fail
+with exit code 6 and a remedy; `--memory` and `--cpu` are recorded with a warning and have no
+effect without a systemd user session.
 
-Commands entered through `forkspace enter` or started by `forkspace run` receive
-`FORKSPACE_WORKSPACE`, `FORKSPACE_BASE`, `FORKSPACE_VIEW`, and (unless already set)
-`COMPOSE_PROJECT_NAME`. `FORKSPACE_VIEW` is always the application-facing directory regardless of
-the recorded backend; Linux overlay workspaces additionally expose `FORKSPACE_UPPER`.
+## Create and enter
 
-### `forkspace run <name> -- <command>`
+### `forkspace new [name] [--from <source>]`
 
-Start a dev server in the workspace with `$PORT` set, and point the `localhost:4000` proxy at
-it. `run` then waits up to `--port-wait` seconds (default 10, `0` to skip) for the server to
-listen; a server that ignored `$PORT` is routed to the port it actually opened.
+Fork `source` (default: the current directory), or another workspace, into a workspace named
+`name` (default: the source directory's name). The backend is picked by probing: fuse-overlayfs,
+then reflinks, then a copy on Linux; APFS clones on macOS. The choice is recorded and never
+changes for that workspace.
+
+| Flag | |
+| :-- | :-- |
+| `--branch <branch>` | Create a Git branch in the workspace and record it for `land`. Invalid or existing branches fail before anything is forked. |
+| `--copy` | Agree to a full directory copy when nothing faster works. Without it, macOS refuses a project that is not on APFS; Linux falls through to a copy on its own and says so. |
+| `--live` | *Linux.* Mount the project itself instead of a frozen copy. Faster to create, but the workspace shows later project changes, with undefined results. `ls` marks it `(live)`. |
+| `--tmpfs` | *Linux.* Keep the workspace's changes on an existing tmpfs (`$XDG_RUNTIME_DIR` or `/dev/shm`). Lost on reboot. |
+| `--memory <size>` | *Linux.* Throttle the workspace's processes above this much memory, e.g. `4G` or `75%`. |
+| `--cpu <percent>` | *Linux.* Cap the workspace's CPU time, as a percentage of one CPU, e.g. `200%`. |
+| `--session <id>` | Record a session identifier, to group related workspaces. |
+
+### `forkspace enter [name] [-- command…]`
+
+Open a shell in the workspace, or run `command` there and exit with its status. Without a
+name, `enter` uses the workspace the current directory belongs to.
+
+| Flag | |
+| :-- | :-- |
+| `--create` (`--new`) | Create the workspace first if it does not exist; `--from`, `--copy`, `--live` and `--tmpfs` then apply as for `new`. |
+| `--ephemeral` | Drop the workspace when the shell or command exits. |
+| `--merge-on-exit` | Merge the workspace's changes into its base when the shell exits. |
+| `--no-sandbox` | Let the shell or command write outside the workspace (see [Sandbox](#sandbox)). |
+| `--sandbox-info` | List where commands in the workspace may write, then exit. |
+| `--session <id>` | Set `FORKSPACE_SESSION` in the shell. |
+
+## Review and bring changes back
+
+### `forkspace ls`
+
+List workspaces with their backend, changed files, private disk size, processes and memory,
+and a total. `--names` prints names only, `--json` the full records (including the backend
+probe's reason). `--no-gitignore` counts ignored paths too.
+
+### `forkspace diff <name>`
+
+Show what changed since the fork: a list of files by default, `--stat` for a summary with
+[review signals](reviewing-changes.md), `--full` for a unified diff, `--files` for paths only,
+`--json` for tools. `--cumulative` compares a stacked workspace with the root project instead
+of its parent. `--no-gitignore` includes ignored paths.
+
+### `forkspace compare <name> <name>…`
+
+Compare two or more workspaces forked from the same place, in the order given: source,
+dependency and test changes per workspace, and which paths all, some, or one of them touched.
+`--files` prints the per-path matrix, `--json` the same facts for tools. It never picks a
+winner.
+
+### `forkspace merge <name>`
+
+Apply the workspace's changes to its base, after printing the plan. Files both sides changed
+are merged line by line; when the same lines changed, merge refuses and changes nothing. A
+lockfile change runs the project's package manager afterwards.
+
+| Flag | |
+| :-- | :-- |
+| `--dry-run` | Print the plan and stop. |
+| `--commit`, `-m <message>` | Commit the merged files in the base's Git repository (`-m` implies `--commit`). |
+| `--patch` | Print a unified patch instead of merging. |
+| `--drop` | Drop the workspace after a successful merge. |
+| `--no-install` | Skip the package-manager step. |
+| `--overwrite-base` | Take the workspace's version where the base changed too. |
+| `--quiet` | Do not print the plan before applying it. |
+| `--resume` | Finish an interrupted merge. |
+| `--undo [name]` | Put the base back as it was before the latest merge (of `name`). Paths changed since then are left alone and listed. Undo data is kept for the last 10 merges or 14 days, whichever is more. |
+| `--undo --list` | List the merges that can be undone. |
 
 ### `forkspace pull [name]`
 
-Bring base changes into a workspace with a three-way reconcile and then update its ancestry.
-The name defaults to `$FORKSPACE_WORKSPACE`. Use `--dry-run` (optionally `--json`) to inspect the
-plan, `--theirs` to resolve conflicts with the base version, `--resume` after interruption,
-and `--no-install` to skip dependency installation.
+Bring project changes made since the fork into the workspace, and move its fork point to now.
+Files both sides changed are merged line by line, with conflict markers where the same lines
+changed; binary and very large files both sides changed refuse the pull. A checkpoint is taken
+first. The name defaults to `$FORKSPACE_WORKSPACE`.
 
-### `forkspace new --branch <branch>`
-
-Preflight a normal Git checkout, fork it, and create an independent topic branch in the
-workspace. Invalid or existing branches fail before the filesystem fork.
-
-`--copy` consents to the portable full-directory-copy backend. It can be forced on every
-platform and is slower and disk-consuming by design; without it, Linux automatically falls
-through from overlay to reflink to copy while macOS diagnoses non-APFS placement.
+`--dry-run` (with `--json`) prints the plan, `--theirs` takes the project's version on
+conflicts, `--resume` finishes an interrupted pull, `--no-install` skips the package manager.
 
 ### `forkspace land <name>`
 
-Fetch a workspace's committed branch into the root base repository without network access or
-history rewriting. `--as <branch>` chooses a different target, `--force` replaces divergent
-target history, and `--drop` removes the workspace only after the ref update succeeds.
+Bring the commits of the workspace's Git branch into the project's repository, without
+network access and without rewriting them. The working tree of the project is not touched.
+`--as <branch>` lands under another branch name, `--force` replaces a branch that has
+diverged, `--drop` drops the workspace once the branch is updated.
 
-### `forkspace compare <name> <name>...`
+## Inside a workspace
 
-Summarize two or more same-origin attempts in argument order. The default view shows source,
-dependency, and test counts plus contested/unique/partial path buckets. `--files` emits the
-per-path A/M/D matrix and `--json` emits the same facts for tooling. It deliberately provides
-no winner or quality score.
+### `forkspace checkpoint [name] [-m <label>] [--all]`
 
-`forkspace diff --stat` includes non-empty review signals. `forkspace merge` prints its reviewed plan
-before applying by default; `--quiet` suppresses that pre-apply record for scripts.
+Save what changed since the fork. `--all` also saves ignored paths such as `node_modules`. The
+newest 20 manual and 10 automatic checkpoints are kept. The name defaults to
+`$FORKSPACE_WORKSPACE`.
 
-### `forkspace new --live`
+### `forkspace checkpoints [name]`
 
-Mount the base itself as the overlay's lower layer instead of a frozen copy (Linux overlay
-only). What the workspace shows after the base changes is then undefined; `ls` marks such
-workspaces `(live)`. Without `--live`, the first fork of a project freezes a copy of it under
-`FORKSPACE_HOME/frozen` and later forks reuse or hard-link it.
+List a workspace's checkpoints; `--json` for tools.
 
-### `forkspace merge --undo [name]`
+### `forkspace restore <name> <id>`
 
-Put the base back as it was before the newest merge (of `name`). Paths changed after that
-merge, or by a newer merge, are left alone and listed. `--undo --list` shows the merges that
-can be undone; undo data is kept for the last 10 merges or 14 days, whichever is more. Files
-both sides changed are merged line by line; if the same lines changed, `merge` refuses and
-`pull` writes conflict markers into the workspace instead.
+Return the workspace to a checkpoint. A checkpoint of the current state is taken first, so a
+restore can be undone. `--resume` finishes an interrupted restore; `--no-install` skips the
+package manager when a lockfile changes.
 
-### `forkspace checkpoint [name] [-m label] [--all]`, `checkpoints [name]`, `restore <name> <id>`
+### `forkspace run <name> -- <command>`
 
-Save what changed since the fork (with `--all`, ignored paths such as `node_modules` too),
-list the saved checkpoints, and return a workspace to one. Restore takes an automatic
-checkpoint first, so it can be undone, and `restore <name> --resume` finishes an interrupted
-restore. `pull` takes an automatic checkpoint before it rewrites files.
+Start a dev server (or any long-running command) in the workspace with `$PORT` set, and point
+the proxy on `localhost:4000` at it. `run` waits up to `--port-wait` seconds (default 10, `0`
+to skip) for the server to listen; a server that ignores `$PORT` is routed to the port it
+opened. `--port` is the port the app is told to use (default 3000), `--stop` stops the
+workspace's process, `--no-sandbox` lets it write outside the workspace.
 
-### `forkspace drop <name> --kill`
+### `forkspace switch <name>`
 
-`drop` refuses while processes run in the workspace and lists them; `--kill` stops the ones
-running there (processes that only have files open there are never killed). On Linux, `enter`
-and `run` start commands in a systemd user slice per workspace
-(`FORKSPACE_NO_SYSTEMD=1` turns that off), and `ls` shows how many processes run in each
-workspace and their memory use.
+Point the `localhost:4000` proxy at another workspace's dev server. New connections go to the
+new server; open ones finish where they are.
 
-### `forkspace new --memory <size> --cpu <percent>`, `forkspace limit <name>`
+### `forkspace limit <name> [--memory <size>] [--cpu <percent>]`
 
-Linux: throttle a workspace above `--memory` (`MemoryHigh`) and cap its CPU time at
-`--cpu` percent of one CPU (`CPUQuota`); `limit` shows or changes them, `none` removes one. All
-workspaces together run under `forkspace.slice` with half the CPU weight of your own apps
-(`FORKSPACE_CPU_WEIGHT`, default 50) and a shared memory ceiling (`FORKSPACE_MEMORY_HIGH`,
-default 75%). On macOS, commands from `run` and `enter -- <command>` run at background priority.
+*Linux.* Show or change a workspace's limits; `none` removes one. Running processes get the
+change at once. All workspaces together also run under one `forkspace.slice` with half the CPU
+weight of your own programs and a shared memory ceiling (see `FORKSPACE_CPU_WEIGHT` and
+`FORKSPACE_MEMORY_HIGH`). On macOS, `run` and `enter -- <command>` start commands at background
+priority instead.
 
-### Write sandbox: `--no-sandbox`, `enter --sandbox-info`
+## Clean up
 
-Commands started by `enter` and `run` cannot write to the original project or to other
-workspaces (Landlock on Linux, `sandbox-exec` on macOS). `enter <name> --sandbox-info` lists
-where they may write; `--no-sandbox` or `FORKSPACE_SANDBOX=off` turns the sandbox off. Setuid
-programs such as `sudo` gain no privileges inside it.
+### `forkspace drop <name>`
 
-### `forkspace gc [--older-than 7d] [--yes]`
+Remove a workspace. `drop` refuses while processes run in it and lists them.
 
-List what forkspace could give back (unchanged, idle workspaces older than `--older-than`;
-unused frozen copies; undo data and checkpoints past retention; leftovers) and remove it after
-confirmation, or at once with `--yes`. Workspaces with changes are listed and kept. `ls` shows
-each workspace's private size and a total. Internal stores carry a `CACHEDIR.TAG` (and a Time
-Machine exclusion on macOS); `FORKSPACE_BACKUP_WORKSPACES=off` excludes workspaces as well.
+| Flag | |
+| :-- | :-- |
+| `--kill` | Stop the processes running in the workspace first. Processes that only have files open there are never killed. |
+| `--force` | Remove a workspace that other workspaces were forked from, with them. |
+| `--all` | Remove every workspace. |
+| `--glob` | Treat `name` as a glob, e.g. `'attempt-*'`. |
+
+### `forkspace gc [--older-than <age>] [--yes]`
+
+List what forkspace could give back and remove it after asking, or at once with `--yes`:
+unchanged, idle workspaces older than `--older-than` (default `7d`; units `s`, `m`, `h`, `d`,
+`w`), frozen copies no workspace uses, undo data and checkpoints past retention, and leftovers
+of interrupted commands. Workspaces with changes are listed and kept.
+
+## Forkspace itself
 
 ### `forkspace upgrade [version]`
 
-Replace the running binary with the latest GitHub release, or with `version` (newer or older).
-The download is checked against the release's SHA-256 checksum and moved into place
-atomically. A binary installed by `cargo install` is upgraded with
-`cargo install forkspace --version <version>`, and so is any platform the release has no
-prebuilt binary for, when Cargo is on `PATH`. A Homebrew install is left to `brew upgrade`.
-`--check` only reports whether a newer release exists. It needs `curl` and `tar`; workspaces
-and their state carry over, since state written by an older version is migrated when it is
-next read.
+Replace the running binary with the latest release, or with `version` (newer or older). The
+download is checked against the release's SHA-256 checksum and moved into place in one step.
+A Cargo install is upgraded with `cargo install`, and so is a platform the release has no
+binary for, when Cargo is on `PATH`; a Homebrew install is left to `brew upgrade`. `--check`
+only reports whether a newer release exists. Needs `curl` and `tar`. Existing workspaces keep
+working: state written by an older version is migrated when it is next read.
 
-### `FORKSPACE_TRACE=1`
+### `forkspace completions <shell>`
 
-Any command run with `FORKSPACE_TRACE=1` prints one line per timed phase to stderr, for
-example `forkspace-trace: materialize 41.203ms`. The phases are `preflight`, `materialize`,
-`manifest`, and `state` for `new`; `scan`, `scan-base`, `plan`, `apply`, and `install` for
-`diff`, `ls`, `merge`, and `pull`; `destroy` for `drop`; and `command` for the whole command.
-Stdout is unchanged. [`scripts/bench.py`](../scripts/bench.py) records these phases next to
-each wall-clock time.
+Print a completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell`. The zsh script
+completes workspace names: save it as `_forkspace` in a directory on `$fpath`. For bash,
+add `source <(forkspace completions bash)` to `~/.bashrc`.
+
+## Sandbox
+
+Commands started by `enter` and `run` cannot write to the original project or to other
+workspaces: Landlock on Linux, `sandbox-exec` on macOS. Setuid programs such as `sudo` gain no
+privileges inside it. Temporary directories (`/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`) and the
+dot-entries of your home directory, such as `~/.npm` and `~/.cargo`, stay writable.
+`enter <name> --sandbox-info` lists where commands may write; `--no-sandbox` or
+`FORKSPACE_SANDBOX=off` turns it off.
+
+## Environment
+
+Set by `enter` and `run` for the commands they start:
+
+| Variable | |
+| :-- | :-- |
+| `FORKSPACE_WORKSPACE` | The workspace's name. Commands that take an optional name default to it. |
+| `FORKSPACE_BASE` | The directory it was forked from. |
+| `FORKSPACE_VIEW` | The workspace directory, on every backend. Use this one in scripts. |
+| `FORKSPACE_UPPER` | Linux overlay only: the layer that holds the workspace's changes. |
+| `FORKSPACE_SESSION` | The `--session` value, when given. |
+| `COMPOSE_PROJECT_NAME` | `<project>-<workspace>`, unless already set, so Docker Compose keeps each workspace's containers apart. |
+| `PORT` | `run` only: the port the app should listen on. |
+
+Read by forkspace:
+
+| Variable | |
+| :-- | :-- |
+| `FORKSPACE_HOME` | Where workspaces and state live (default `~/.forkspace`, kept owner-only). |
+| `FORKSPACE_TRACE=1` | Print each command's timed phases to stderr, e.g. `forkspace-trace: materialize 41.203ms`. [`scripts/bench.py`](../scripts/bench.py) records them. |
+| `FORKSPACE_SANDBOX=off` | Turn the write sandbox off by default. |
+| `FORKSPACE_NO_SYSTEMD=1` | *Linux.* Do not start commands in a systemd user slice per workspace (no process tracking by slice, no limits). |
+| `FORKSPACE_CPU_WEIGHT` | *Linux.* CPU weight of all workspaces together, against your programs' 100 (default 50). |
+| `FORKSPACE_MEMORY_HIGH` | *Linux.* Memory ceiling of all workspaces together (default `75%`). |
+| `FORKSPACE_BACKUP_WORKSPACES=off` | Mark workspaces as caches too, so backups skip them. Internal stores always carry a `CACHEDIR.TAG` (and a Time Machine exclusion on macOS). |
+| `FORKSPACE_RELEASES_URL` | Where `upgrade` looks for releases (default: this repository's GitHub releases). |
+
+For debugging and tests only: `FORKSPACE_BACKEND=<linux|mac-clone|linux-reflink|copy>` forces
+a backend for new workspaces, `FORKSPACE_NO_LANDLOCK=1` and `FORKSPACE_NO_BULK=1` turn off
+Landlock and macOS bulk directory reads.
+
+## Exit codes
+
+| Code | Meaning |
+| --: | :-- |
+| 0 | Success |
+| 1 | An error with no more specific code |
+| 2 | Command-line usage error |
+| 3 | The workspace or a recorded path was not found |
+| 4 | The workspace or branch already exists |
+| 5 | Conflict or refusal: nothing was changed |
+| 6 | The workspace's backend does not support this |
+| 7 | The backend is unavailable here (for example, no FUSE) |
+
+An environment or capability error is one line naming both the problem and what to do about
+it, for the platform it happened on.
