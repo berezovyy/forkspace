@@ -1,7 +1,7 @@
 <h1 align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg" />
-    <img src="assets/logo-light.svg" height="96" alt="forkspace" />
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/logo-dark.svg" />
+    <img src="assets/logo/logo-light.svg" height="96" alt="forkspace" />
   </picture>
 </h1>
 
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/films-v2/hero.webp" width="100%" alt="Three workspaces are forked from a project in about 76 ms each, with node_modules and .env already inside. Tests run in one straight away, each is changed independently, one is merged back and the rest are dropped." /><br />
+  <img src="assets/films/hero.webp" width="100%" alt="Three workspaces are forked from a project in about 76 ms each, with node_modules and .env already inside. Tests run in one straight away, each is changed independently, one is merged back and the rest are dropped." /><br />
   <sub>Timings measured on a Next.js 15 app with a 424 MB <code>node_modules</code>. <a href="docs/benchmarks.md#measured-linux-overlay-on-a-real-project">How</a>.</sub>
 </p>
 
@@ -33,7 +33,7 @@ offers to make that copy: an overlay, an APFS clone, reflinks, or a plain copy a
 | :---------------------- | :-------: | :-------: | :----------: | :-----------: |
 | **Speed**               |   Slow    |   Slow    |     Fast     | [**Backend-dependent**](docs/benchmarks.md) |
 | `.env` / `node_modules` |    Yes    |    No     |      No      | [**Yes**](docs/workspace-contract.md) |
-| **Isolation**           |   Full    |   Full    |   Partial    | [**Project-local**](docs/macos-limitations.md) |
+| **Isolation**           |   Full    |   Full    |   Partial    | [**Project-local**](docs/platform-parity.md#limitations) |
 | **Disk usage**          | Full copy | Full copy |   Partial    | [**CoW or disclosed copy**](docs/platform-parity.md) |
 | **Root required**       |    No     |   Often   |      No      | [**No**](docs/platform-parity.md) |
 | **Cleanup**             |  Manual   |  Manual   |    Manual    | [`forkspace drop`](docs/cli-reference.md) |
@@ -77,7 +77,7 @@ workspaces made by an older version keep working. Releases and their notes are o
 ## How it works
 
 <p align="center">
-  <img src="assets/films-v2/how.webp" width="100%" alt="The overlay model: a workspace reads from the project, writes and deletions go to a separate changes layer, and that layer is what diff shows and merge applies." />
+  <img src="assets/films/how.webp" width="100%" alt="The overlay model: a workspace reads from the project, writes and deletions go to a separate changes layer, and that layer is what diff shows and merge applies." />
 </p>
 
 On Linux with `fuse-overlayfs`, a workspace is a union of two layers:
@@ -103,7 +103,7 @@ every backend; see [Platforms](#platforms).
 ### Parallel AI agents
 
 <p align="center">
-  <img src="assets/films-v2/agents.webp" width="100%" alt="Three agents work on the same task in three workspaces; forkspace compare shows how the attempts differ, one is merged and the others are dropped." />
+  <img src="assets/films/agents.webp" width="100%" alt="Three agents work on the same task in three workspaces; forkspace compare shows how the attempts differ, one is merged and the others are dropped." />
 </p>
 
 Give each agent its own workspace of the same repository. They can install packages, run
@@ -124,7 +124,7 @@ forkspace drop --all                        # discard the rest
 ### Dev servers side by side
 
 <p align="center">
-  <img src="assets/films-v2/servers.webp" width="100%" alt="Two workspaces run their own dev servers; forkspace switch changes which one localhost:4000 serves." />
+  <img src="assets/films/servers.webp" width="100%" alt="Two workspaces run their own dev servers; forkspace switch changes which one localhost:4000 serves." />
 </p>
 
 Each workspace runs its own dev server on its own port. A small proxy on `localhost:4000`
@@ -176,12 +176,16 @@ forkspace diff step-2 --cumulative
 | `land`    | Bring a workspace's Git branch and commits into the base repository         |
 | `run`     | Start a dev server in a workspace behind the `localhost:4000` proxy        |
 | `switch`  | Point the proxy at another workspace's dev server                          |
-| `ls`      | List workspaces, their backend and how many files changed                  |
-| `drop`    | Remove workspaces (`--all`, `--glob`, `--force`)                            |
+| `checkpoint`, `restore` | Save a workspace's state and return to it later              |
+| `ls`      | List workspaces: backend, changed files, disk use, processes                |
+| `limit`   | Cap a workspace's memory and CPU (Linux)                                    |
+| `drop`    | Remove workspaces (`--kill`, `--all`, `--glob`, `--force`)                  |
+| `gc`      | Show and reclaim disk forkspace no longer needs                             |
 | `upgrade` | Install the latest release, or a given version (`--check`)                  |
 
-Every command has `--help`; `ls`, `diff`, `compare` and `pull` also print `--json`. The full reference is in
-[docs/cli-reference.md](docs/cli-reference.md).
+Every command has `--help`; `ls`, `diff`, `compare`, `pull` and `checkpoints` also print
+`--json`. The full reference is in [docs/cli-reference.md](docs/cli-reference.md), and the rest
+of the docs are listed in [docs/README.md](docs/README.md).
 
 ## Platforms
 
@@ -195,9 +199,8 @@ recorded per workspace.
 | macOS    | APFS clones                    | The directory is cloned copy-on-write     |
 | Both     | Plain copy (`--copy`)          | A full copy, reported when it happens     |
 
-Measured numbers are in [docs/benchmarks.md](docs/benchmarks.md), and the behaviour of each
-backend is listed in [docs/platform-parity.md](docs/platform-parity.md) and
-[docs/macos-limitations.md](docs/macos-limitations.md).
+Measured numbers are in [docs/benchmarks.md](docs/benchmarks.md), and the behaviour and
+limitations of each backend in [docs/platform-parity.md](docs/platform-parity.md).
 
 ## License
 

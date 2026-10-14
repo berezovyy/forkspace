@@ -1,8 +1,5 @@
 <!doctype html>
-<html
-  lang="en"
-  data-composition-variables='[{"id":"theme","type":"enum","label":"Theme","default":"dark","options":[{"value":"dark","label":"Dark"},{"value":"light","label":"Light"}]}]'
->
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=1920, height=1080" />
@@ -226,7 +223,6 @@
       (function () {
         const D = 18.9;
         const root = document.getElementById("root");
-        FS.applyTheme(root);
         const { h } = FS;
         const css = (name) => getComputedStyle(root).getPropertyValue(name).trim();
         const INK = css("--ink");
@@ -321,7 +317,7 @@
         }
         // Only the windows' contents dip at the loop; the windows and their shadows stay put.
         const DIP = "#term .term-screen, #browser .viewport, #proxy .proxy-body";
-        init("#scene, " + DIP, { opacity: 1 });
+        init(DIP, { opacity: 1 });
         opening(0);
 
         // A reload: the icon turns, the bar runs, and the new page replaces the old one at once.
@@ -408,7 +404,6 @@
         opening(tR);
         tl.to(DIP, { opacity: 1, duration: 0.34, ease: "fs.out" }, tR + 0.01);
 
-        window.__termEnd = { tRunA, rA, tRunB, rB, tSwA, rSwA, tSwB, rSwB, tHome };
         window.__timelines["servers"] = tl;
       })();
     </script>

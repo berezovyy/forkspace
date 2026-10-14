@@ -16,7 +16,7 @@ set -eu
 cd "$(dirname "$0")"
 films=${*:-"hero how agents servers"}
 masters=${MASTERS:-renders}
-out=../films-v2
+out=..
 mkdir -p "$masters" "$out"
 
 for film in $films; do

@@ -1,5 +1,6 @@
-// Shared helpers for the forkspace README films: easing vocabulary, a seeded RNG, the file
-// row builder, and a seekable terminal whose every frame is a pure function of time.
+// Shared helpers for the forkspace README films: the easing vocabulary, a driver that renders
+// every frame from the timeline's time, the file row builder, a seekable terminal with a seeded
+// typist, the window controls, and the mouse pointer with its choreography.
 (function () {
   gsap.registerPlugin(CustomEase);
 
@@ -20,11 +21,6 @@
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
-  }
-
-  function applyTheme(root) {
-    const vars = (window.__hyperframes && window.__hyperframes.getVariables()) || {};
-    root.dataset.theme = vars.theme === "light" ? "light" : "dark";
   }
 
   /** Adds a driver tween whose onUpdate receives the timeline time; also renders t = 0. */
@@ -156,11 +152,6 @@
       return typist;
     }
 
-    /** Prints extra lines at time `t` (for long-running commands). */
-    print(t, lines) {
-      this.entries.push({ kind: "out", at: t, lines });
-    }
-
     /** Clears the screen at time `t`, as Ctrl-L would. */
     clear(t) {
       this.clears.push(t);
@@ -282,5 +273,5 @@
     };
   }
 
-  window.FS = { rng, applyTheme, drive, tree, Terminal, h, clamp01, smooth, LIGHTS, pointer, hand };
+  window.FS = { drive, tree, Terminal, h, smooth, LIGHTS, pointer, hand };
 })();

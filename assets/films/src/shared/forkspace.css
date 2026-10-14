@@ -1,12 +1,13 @@
-/* Shared look for the forkspace README films: tokens, type, the stage, windows and the terminal.
+/* Shared look for the forkspace README films: tokens, type, the stage, the card and its
+   sub-cards, file rows, the terminal and the pointer.
 
-   A frame within a frame: a rounded pixel-art stage (shared/stage.png, drawn by stage.py) holds
-   one card, a window with a soft shadow, and that card holds the film's sub-cards on a grid. Outside the stage the frame is
-   transparent, so the film's corners sit cleanly on any page colour.
+   A frame within a frame: a rounded pixel-art stage (stage.png, drawn by stage.py) holds one
+   card, a window with a soft shadow, and that card holds the film's sub-cards on a grid. Outside
+   the stage the frame is transparent, so the film's corners sit cleanly on any page colour.
 
-   Inside the windows the palette is Ayu (v9.1) kept almost monochrome. Colour appears only where
-   it carries meaning: Ayu's VCS colours for added, modified and deleted, its amber accent for the
-   text cursor, and coloured window controls only on the window that has focus. */
+   Inside the card the palette is Ayu Dark (v9.1) kept almost monochrome. Colour appears only
+   where it carries meaning: Ayu's VCS colours for added, modified and deleted, its amber accent
+   for the text cursor, and the card's window controls once it has focus. */
 
 @font-face {
   font-family: "Geist";
@@ -19,8 +20,7 @@
   font-weight: 100 900;
 }
 
-:root,
-[data-theme="dark"] {
+:root {
   --bg: #0d1017;
   --surface: #10141c;
   --surface-2: #161a24;
@@ -33,21 +33,10 @@
   --add: #70bf56;
   --mod: #73b8ff;
   --del: #f26d78;
-}
-
-[data-theme="light"] {
-  --bg: #f8f9fa;
-  --surface: #fcfcfc;
-  --surface-2: #f3f4f5;
-  --line: #e6e9ec;
-  --line-2: #d3d8de;
-  --ink: #4a4f55;
-  --ink-2: #7f8a99;
-  --ink-3: #aab1bb;
-  --accent: #f29718;
-  --add: #6cbf43;
-  --mod: #478acc;
-  --del: #ff7383;
+  --rim: #2a2f3a;
+  --card-line: #20252f;
+  --shadow: 0 0 0 1px rgba(6, 9, 14, 0.55), 0 2px 6px rgba(6, 9, 14, 0.28), 0 30px 80px rgba(6, 9, 14, 0.45);
+  --light-idle: #353b47;
 }
 
 html,
@@ -93,30 +82,10 @@ body {
   image-rendering: pixelated;
 }
 
-.mono,
 .panel,
 .term {
   font-family: "Geist Mono", ui-monospace, monospace;
   font-feature-settings: "zero", "tnum";
-}
-
-/* ---------- Captions ---------- */
-
-.caption {
-  font-size: 50px;
-  font-weight: 500;
-  line-height: 1.16;
-  letter-spacing: -0.022em;
-  color: var(--ink);
-  text-wrap: balance;
-}
-
-.caption-sub {
-  margin-top: 22px;
-  font-size: 30px;
-  line-height: 1.45;
-  color: var(--ink-2);
-  text-wrap: pretty;
 }
 
 /* ---------- The card and its sub-cards ---------- */
@@ -159,29 +128,8 @@ body {
   border: 1px solid var(--card-line);
 }
 
-/* Sub-cards are not windows: only the card's title bar carries window controls. */
-.panel .lights,
-.term .lights {
-  display: none;
-}
-
-:root,
-[data-theme="dark"] {
-  --rim: #2a2f3a;
-  --card-line: #20252f;
-  --shadow: 0 0 0 1px rgba(6, 9, 14, 0.55), 0 2px 6px rgba(6, 9, 14, 0.28), 0 30px 80px rgba(6, 9, 14, 0.45);
-  --light-idle: #353b47;
-}
-
-[data-theme="light"] {
-  --rim: #dfe3e8;
-  --card-line: #e3e6ea;
-  --shadow: 0 0 0 1px rgba(20, 28, 40, 0.1), 0 2px 6px rgba(20, 28, 40, 0.1), 0 30px 80px rgba(20, 28, 40, 0.24);
-  --light-idle: #d5d9df;
-}
-
-/* A neutral focus outline, drawn above the border so it can fade in and out. */
-/* Drawn just inside the edge, so sub-cards that clip their overflow still show it. */
+/* A neutral focus outline that fades in and out. It is drawn just inside the edge, so sub-cards
+   that clip their overflow still show it. */
 .panel .focus,
 .term .focus {
   position: absolute;
@@ -192,7 +140,7 @@ body {
   pointer-events: none;
 }
 
-/* Title bar: window controls, a title, and an optional quiet tag on the right. */
+/* A sub-card's header: a title, and an optional quiet tag on the right. */
 .panel-head,
 .term-head {
   position: relative;
@@ -215,8 +163,8 @@ body {
   color: var(--ink-3);
 }
 
-/* Window controls: grey when the window is in the background, coloured when it has focus.
-   Both sets are drawn; only the coloured set's opacity animates. */
+/* The card's window controls: grey until it has focus, then coloured. Both sets are drawn;
+   only the coloured set's opacity animates. */
 .lights {
   position: relative;
   flex: none;

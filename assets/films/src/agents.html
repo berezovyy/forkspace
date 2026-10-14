@@ -1,8 +1,5 @@
 <!doctype html>
-<html
-  lang="en"
-  data-composition-variables='[{"id":"theme","type":"enum","label":"Theme","default":"dark","options":[{"value":"dark","label":"Dark"},{"value":"light","label":"Light"}]}]'
->
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=1920, height=1080" />
@@ -14,7 +11,7 @@
       /* One card: 24px inside its edges and below its title bar; sub-cards on 20px gutters. */
       #shell { left: 48px; top: 48px; width: 1824px; height: 984px; }
       .pane, .slot { top: 128px; width: 578px; height: 352px; }
-      .pane { overflow: hidden; z-index: 2; }
+      .pane { overflow: hidden; }
       #pane-a, #slot-a { left: 72px; }
       #pane-b, #slot-b { left: 671px; }
       #pane-c, #slot-c { left: 1270px; }
@@ -24,7 +21,6 @@
         box-sizing: border-box;
         border-radius: 12px;
         border: 1px dashed var(--line-2);
-        z-index: 1;
       }
 
       .status { position: relative; margin-left: auto; height: 56px; width: 240px; font-size: 20px; font-weight: 400; }
@@ -73,7 +69,7 @@
         color: var(--ink-3);
       }
 
-      #term { left: 72px; top: 500px; width: 1776px; height: 508px; z-index: 3; }
+      #term { left: 72px; top: 500px; width: 1776px; height: 508px; }
       #term .term-body { font-size: 24px; line-height: 38px; }
       #term .term-line { height: 38px; }
       #hl {
@@ -115,10 +111,7 @@
     <script>
       (function () {
         const D = 19.6;
-        const root = document.getElementById("root");
-        FS.applyTheme(root);
         const { h } = FS;
-        const css = (name) => getComputedStyle(root).getPropertyValue(name).trim();
 
         const LINE = 36;
         const TASK = "Add one-time passwords to login";
@@ -273,7 +266,7 @@
           set(".s-work, .s-done, .s-kept", { opacity: 0, x: 0 });
           set("#hl", { opacity: 0, y: 0 });
         }
-        init("#scene, #term .term-screen", { opacity: 1 });
+        init("#term .term-screen", { opacity: 1 });
         opening(0);
         tl.fromTo(".pane", { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.3, ease: "fs.out", stagger: 0.06 }, 0.1);
 
@@ -333,7 +326,6 @@
         opening(tR);
         tl.to("#term .term-screen", { opacity: 1, duration: 0.34, ease: "fs.out" }, tR + 0.01);
 
-        window.__termEnd = { tCmp, tMerge, tDrop };
         window.__timelines["agents"] = tl;
       })();
     </script>
