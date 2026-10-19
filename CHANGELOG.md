@@ -5,7 +5,7 @@ Notable changes to forkspace. Versions follow [Semantic Versioning](https://semv
 fixes. Write the notes for the next release under `## Unreleased`; `scripts/release.sh` turns
 that heading into the version and date, and the section becomes the GitHub release notes.
 
-## Unreleased
+## 0.1.0 - 2026-10-19
 
 The first release.
 
