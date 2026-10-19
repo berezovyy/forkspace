@@ -268,6 +268,7 @@ fn kill_during_merge_blocks_mutations_until_explicit_resume_then_converges() {
     }
     let mut child = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
+        .env("FORKSPACE_INTERNAL_STEP_DELAY_MS", "2")
         .args(["merge", "merge-kill", "--no-install", "--quiet"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())

@@ -191,7 +191,15 @@ pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
     let mut saved = std::time::Instant::now();
     let staging = staging_dir(path);
     let undo = journal.undo.clone();
+    // Fault-injection tests slow each step so they can kill the process mid-apply.
+    let step_delay = std::env::var("FORKSPACE_INTERNAL_STEP_DELAY_MS")
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .map(std::time::Duration::from_millis);
     while journal.next < journal.changes.len() {
+        if let Some(delay) = step_delay {
+            std::thread::sleep(delay);
+        }
         let change = &journal.changes[journal.next];
         match journal.merged.iter().find(|step| step.path == change.path) {
             Some(step) => apply_merged(
