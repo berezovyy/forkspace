@@ -576,21 +576,22 @@ pub(crate) fn freeze_delta(source: &Path, base: &Path) -> Result<Option<Delta>> 
     let started_ns = now_unix_ns();
 
     // One walk of the project: every entry's facts, and whether it differs from `base`.
+    // Each entry keeps the index of its row, so nothing is looked up a second time.
     let walked = crate::util::walk::parallel(&source, |relative, path, entry| {
-        let encoded = manifest::encode_path(relative);
-        let differs = rows
-            .get(&encoded)
-            .is_none_or(|row| !same_as_row(path, entry, &row, base_meta.started_ns));
-        Ok(Some((encoded, *entry, differs)))
+        let index = rows.position(&manifest::encode_path(relative));
+        let differs = index
+            .is_none_or(|index| !same_as_row(path, entry, &rows.row(index), base_meta.started_ns));
+        Ok(Some((index, *entry, differs)))
     })?;
-    let seen: std::collections::HashSet<&str> = walked
-        .iter()
-        .map(|(_, (encoded, _, _))| encoded.as_str())
-        .collect();
-    let deleted: Vec<&str> = rows
-        .iter()
-        .map(|row| row.path)
-        .filter(|path| !seen.contains(path))
+    let mut seen = vec![false; rows.len()];
+    for (_, (index, _, _)) in &walked {
+        if let Some(index) = index {
+            seen[*index] = true;
+        }
+    }
+    let deleted: Vec<&str> = (0..rows.len())
+        .filter(|index| !seen[*index])
+        .map(|index| rows.path_at(index))
         .collect();
     if deleted.is_empty() && walked.iter().all(|(_, (_, _, differs))| !differs) {
         return Ok(Some(Delta::Unchanged));
@@ -613,13 +614,10 @@ pub(crate) fn freeze_delta(source: &Path, base: &Path) -> Result<Option<Delta>> 
         .map(|(relative, (_, entry, _))| (relative.clone(), *entry, source.join(relative)))
         .collect();
     let mut manifest_rows = Vec::with_capacity(walked.len());
-    for (relative, (encoded, entry, differs)) in &walked {
-        manifest_rows.push(if *differs {
-            manifest::row_of(relative, &source.join(relative), entry, u128::MAX)?
-        } else {
-            rows.get(encoded)
-                .expect("an unchanged entry has a row")
-                .to_row()
+    for (relative, (index, entry, differs)) in &walked {
+        manifest_rows.push(match index {
+            Some(index) if !*differs => rows.row(*index).to_row(),
+            _ => manifest::row_of(relative, &source.join(relative), entry, u128::MAX)?,
         });
     }
 

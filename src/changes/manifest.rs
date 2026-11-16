@@ -497,10 +497,22 @@ impl Manifest {
 
     /// The row whose encoded path is `encoded`.
     pub fn get(&self, encoded: &str) -> Option<RowRef<'_>> {
+        self.position(encoded).map(|index| self.row(index))
+    }
+
+    /// The index of the row whose encoded path is `encoded`.
+    pub fn position(&self, encoded: &str) -> Option<usize> {
         let index = self.lower_bound(encoded);
-        (index < self.len())
-            .then(|| self.row(index))
-            .filter(|row| row.path == encoded)
+        (index < self.len() && self.path_at(index) == encoded).then_some(index)
+    }
+
+    /// The encoded path of row `index`, read without the rest of the row.
+    pub fn path_at(&self, index: usize) -> &str {
+        match &self.rows {
+            Rows::Binary { bytes, table, .. } => binary_path(bytes, *table, index)
+                .expect("manifest rows were checked when it was opened"),
+            Rows::Parsed(rows) => &rows[index].path,
+        }
     }
 
     /// The rows below the directory whose encoded path is `encoded`, in path order.
@@ -523,7 +535,7 @@ impl Manifest {
         let (mut low, mut high) = (0, self.len());
         while low < high {
             let middle = (low + high) / 2;
-            if self.row(middle).path.as_bytes() < encoded.as_bytes() {
+            if self.path_at(middle).as_bytes() < encoded.as_bytes() {
                 low = middle + 1;
             } else {
                 high = middle;
@@ -610,6 +622,14 @@ fn read_u64(bytes: &[u8], at: usize) -> Option<u64> {
 
 fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+}
+
+/// The path of row `index` of a binary manifest whose offset table starts at `table`.
+fn binary_path(bytes: &[u8], table: usize, index: usize) -> Option<&str> {
+    let offset = usize::try_from(read_u64(bytes, table + index * 8)?).ok()?;
+    let len = read_u32(bytes, offset)? as usize;
+    let start = offset + 4;
+    std::str::from_utf8(bytes.get(start..start.checked_add(len)?)?).ok()
 }
 
 /// Row `index` of a binary manifest whose offset table starts at `table`, and the offset
