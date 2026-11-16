@@ -2,6 +2,10 @@
 /target/
 /dist/
 
+# Witness recordings and its instrumented build
+/.witness/
+/target-witness/
+
 # IDE
 .idea/
 .vscode/

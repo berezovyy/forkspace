@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "witness": {
+      "command": "witness",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}
