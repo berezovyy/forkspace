@@ -336,3 +336,43 @@ fn test_enter_ephemeral_with_name() {
         "ephemeral workspace 'my-eph-ws' should have been dropped"
     );
 }
+
+/// `enter -- command` exits with the command's status, so a failing `make test` fails the
+/// `enter`; an ephemeral workspace is still removed first.
+#[test]
+#[serial]
+fn enter_exits_with_the_command_status() {
+    let (_dir, base) = common::setup_with_project();
+    let home = std::env::var("FORKSPACE_HOME").unwrap();
+    let forkspace = |args: &[&str]| {
+        Command::new(forkspace_bin())
+            .env("FORKSPACE_HOME", &home)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let base = base.path().to_str().unwrap();
+    assert!(forkspace(&["new", "status-ws", "--from", base, "--copy"])
+        .status
+        .success());
+
+    let failed = forkspace(&["enter", "status-ws", "--", "sh", "-c", "exit 3"]);
+    assert_eq!(failed.status.code(), Some(3), "{failed:?}");
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("exit code 3"));
+    let killed = forkspace(&["enter", "status-ws", "--", "sh", "-c", "kill -TERM $$"]);
+    assert_eq!(killed.status.code(), Some(128 + 15), "{killed:?}");
+    assert!(forkspace(&["enter", "status-ws", "--", "true"])
+        .status
+        .success());
+
+    let ephemeral = Command::new(forkspace_bin())
+        .env("FORKSPACE_HOME", &home)
+        .current_dir(base)
+        .args(["enter", "--ephemeral", "--copy", "--", "sh", "-c", "exit 4"])
+        .output()
+        .unwrap();
+    assert_eq!(ephemeral.status.code(), Some(4), "{ephemeral:?}");
+    assert!(String::from_utf8_lossy(&ephemeral.stdout).contains("ephemeral workspace removed"));
+    assert_eq!(State::load().unwrap().workspaces.len(), 1);
+    assert!(forkspace(&["drop", "status-ws"]).status.success());
+}

@@ -105,7 +105,9 @@ pub(crate) fn discover_port(name: &str, wait: Duration) -> Result<PortDiscovery>
         if Instant::now() >= deadline {
             return Ok(PortDiscovery::NotListening(process.port));
         }
-        thread::sleep(Duration::from_millis(100));
+        // A check reads only the server's own processes (see `ports::listening_ports`), so
+        // checking often costs little and `run` returns soon after the server listens.
+        thread::sleep(Duration::from_millis(10));
     };
     if actual == process.port {
         return Ok(PortDiscovery::Assigned(actual));

@@ -6,6 +6,11 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ForkspaceError {
+    /// The command `enter` ran failed; forkspace exits with the same code. Its message was
+    /// already printed when the command ended.
+    #[error("the command exited with code {0}")]
+    CommandExited(i32),
+
     // Workspace lookup and naming.
     #[error("workspace '{0}' not found (run 'forkspace ls' to see available workspaces)")]
     WorkspaceNotFound(String),
@@ -154,6 +159,7 @@ impl ForkspaceError {
     /// The match is exhaustive on purpose: a new variant must choose its code explicitly.
     pub fn exit_code(&self) -> i32 {
         match self {
+            Self::CommandExited(code) => *code,
             Self::WorkspaceNotFound(_) | Self::RecordedPathMissing { .. } => 3,
             Self::WorkspaceExists(_) | Self::BranchExists(_) => 4,
             Self::HasChildren { .. }

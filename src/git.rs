@@ -3,7 +3,7 @@
 //! Every invocation runs non-interactively (`GIT_TERMINAL_PROMPT=0`, null stdin). A failure to
 //! spawn git, or a non-zero exit where success was required, becomes [`ForkspaceError::GitFailed`].
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use crate::error::{ForkspaceError, Result};
@@ -42,7 +42,7 @@ pub fn run_git(directory: &Path, args: &[&str]) -> Result {
 
 /// Whether `directory` is inside a Git work tree or repository.
 pub fn is_repo(directory: &Path) -> bool {
-    succeeds(directory, &["rev-parse", "--git-dir"])
+    plain_git_dir(directory).is_some() || succeeds(directory, &["rev-parse", "--git-dir"])
 }
 
 /// Reject names `git check-ref-format --branch` does not accept.
@@ -60,6 +60,15 @@ pub fn validate_branch(directory: &Path, branch: &str) -> Result {
 
 /// The checked-out branch's short name, or `None` when `HEAD` is detached.
 pub fn current_branch(directory: &Path) -> Option<String> {
+    if let Some(head) = plain_git_dir(directory).and_then(|git| read_head_file(&git)) {
+        return match head {
+            Head::Branch(reference) => reference
+                .strip_prefix("refs/heads/")
+                .filter(|branch| !branch.is_empty())
+                .map(str::to_string),
+            Head::Detached(_) => None,
+        };
+    }
     capture_output(directory, &["symbolic-ref", "--quiet", "--short", "HEAD"])
         .ok()
         .filter(|output| output.status.success())
@@ -80,27 +89,68 @@ pub fn head_commit(directory: &Path) -> Result<String> {
 }
 
 fn read_head(directory: &Path) -> Option<String> {
-    let git = directory.join(".git");
-    if !git.is_dir() {
-        return None;
+    let git = plain_git_dir(directory)?;
+    match read_head_file(&git)? {
+        Head::Detached(id) => Some(id),
+        Head::Branch(reference) => resolve_ref(&git, &reference)?,
     }
+}
+
+/// The `.git` directory of a plain repository at `directory` whose refs are files, or
+/// `None` for anything `git` itself must be asked about (no `.git` directory, a worktree or
+/// submodule `.git` file, reftable).
+fn plain_git_dir(directory: &Path) -> Option<PathBuf> {
+    let git = directory.join(".git");
+    (git.join("HEAD").is_file() && !git.join("reftable").exists()).then_some(git)
+}
+
+/// What `.git/HEAD` says.
+enum Head {
+    /// `ref: refs/heads/<name>` (or another `refs/` name).
+    Branch(String),
+    Detached(String),
+}
+
+fn read_head_file(git: &Path) -> Option<Head> {
     let head = std::fs::read_to_string(git.join("HEAD")).ok()?;
     let head = head.trim();
-    let Some(reference) = head.strip_prefix("ref: ") else {
-        return is_object_id(head).then(|| head.to_string());
-    };
-    if !reference.starts_with("refs/") || reference.split('/').any(|part| part == "..") {
+    match head.strip_prefix("ref: ") {
+        Some(reference) if is_safe_ref(reference) => Some(Head::Branch(reference.to_string())),
+        Some(_) => None,
+        None => is_object_id(head).then(|| Head::Detached(head.to_string())),
+    }
+}
+
+/// The object a ref names, from its loose file or `packed-refs`: `Some(None)` when the ref
+/// does not exist, `None` when that cannot be told without `git` (a symbolic ref).
+fn resolve_ref(git: &Path, reference: &str) -> Option<Option<String>> {
+    if !is_safe_ref(reference) {
         return None;
     }
-    if let Ok(loose) = std::fs::read_to_string(git.join(reference)) {
-        let id = loose.trim();
-        return is_object_id(id).then(|| id.to_string());
+    match std::fs::read_to_string(git.join(reference)) {
+        Ok(loose) => {
+            let id = loose.trim();
+            return is_object_id(id).then(|| Some(id.to_string()));
+        }
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return None,
+        Err(_) => {}
     }
-    let packed = std::fs::read_to_string(git.join("packed-refs")).ok()?;
-    packed.lines().find_map(|line| {
+    let packed = match std::fs::read_to_string(git.join("packed-refs")) {
+        Ok(packed) => packed,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(None),
+        Err(_) => return None,
+    };
+    Some(packed.lines().find_map(|line| {
         let (id, name) = line.split_once(' ')?;
         (name == reference && is_object_id(id)).then(|| id.to_string())
-    })
+    }))
+}
+
+fn is_safe_ref(reference: &str) -> bool {
+    reference.starts_with("refs/")
+        && !reference
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
 }
 
 /// A full SHA-1 or SHA-256 object id.
@@ -109,7 +159,64 @@ fn is_object_id(text: &str) -> bool {
 }
 
 pub fn ref_exists(directory: &Path, reference: &str) -> bool {
+    if let Some(found) = plain_git_dir(directory).and_then(|git| resolve_ref(&git, reference)) {
+        return found.is_some();
+    }
     succeeds(directory, &["show-ref", "--verify", "--quiet", reference])
+}
+
+/// Create `branch` at the current commit and check it out, like `git switch -c` (which leaves
+/// the index and files alone, the commit being the same). A plain repository gets the ref and
+/// `HEAD` written directly, which saves starting `git`, though without a reflog entry for the
+/// new branch; anything else, and an unborn `HEAD`, goes through `git switch -c`.
+pub fn switch_new_branch(directory: &Path, branch: &str) -> Result {
+    let reference = format!("refs/heads/{branch}");
+    if let (Some(git), Some(commit)) = (plain_git_dir(directory), read_head(directory)) {
+        if resolve_ref(&git, &reference) == Some(None) {
+            return write_new_branch(&git, &reference, &commit);
+        }
+    }
+    run_git(directory, &["switch", "-c", branch])
+}
+
+fn write_new_branch(git: &Path, reference: &str, commit: &str) -> Result {
+    use std::io::Write as _;
+
+    use crate::util::IoContext;
+
+    let path = git.join(reference);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).io_context(|| format!("create {}", parent.display()))?;
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .and_then(|mut file| file.write_all(format!("{commit}\n").as_bytes()))
+        .io_context(|| format!("create {}", path.display()))?;
+    // `HEAD.lock` is git's own lock name for HEAD: a concurrent git command waits or fails
+    // instead of writing over it.
+    let lock = git.join("HEAD.lock");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock)
+        .and_then(|mut file| file.write_all(format!("ref: {reference}\n").as_bytes()))
+        .and_then(|()| std::fs::rename(&lock, git.join("HEAD")))
+        .io_context(|| format!("switch {} to {reference}", git.display()))
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(&lock);
+            let _ = std::fs::remove_file(&path);
+        })
+}
+
+/// The object `reference` (a full `refs/...` name) points at, read from the ref files when
+/// the repository allows, else through `git rev-parse`.
+pub fn resolve(directory: &Path, reference: &str) -> Result<String> {
+    match plain_git_dir(directory).and_then(|git| resolve_ref(&git, reference)) {
+        Some(Some(id)) => Ok(id),
+        _ => rev_parse(directory, reference),
+    }
 }
 
 /// Whether commit `old` is an ancestor of (or equal to) `new`.
@@ -159,6 +266,14 @@ pub fn delete_ref(directory: &Path, reference: &str) {
 
 /// Best-effort removal of staging refs left behind by interrupted `land` runs.
 pub fn prune_staging_refs(directory: &Path) {
+    // Nothing to prune is the common case; seeing that needs no `git`.
+    if let Some(git) = plain_git_dir(directory) {
+        let loose = git.join("refs/forkspace/land");
+        let packed = std::fs::read_to_string(git.join("packed-refs")).unwrap_or_default();
+        if !loose.exists() && !packed.contains(" refs/forkspace/land/") {
+            return;
+        }
+    }
     let Ok(refs) = capture_git(
         directory,
         &[

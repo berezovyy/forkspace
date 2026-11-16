@@ -14,7 +14,7 @@ mod xattr;
 
 #[cfg(target_os = "macos")]
 pub(crate) use clonefile::ClonefilePrimitive;
-pub(crate) use copy::{materialize_recorded, CopyPrimitive, Placed};
+pub(crate) use copy::{materialize_listed, materialize_recorded, CopyPrimitive, Placed};
 #[cfg(target_os = "linux")]
 pub(crate) use reflink::{probe as reflink_probe, reflink_file, ReflinkPrimitive};
 
@@ -43,6 +43,9 @@ const DIRECTORY_COPY_CAPABILITIES: Capabilities = Capabilities {
     sealed_parent: false,
 };
 
+/// Every entry a copy created, relative to its root, with the copy's facts.
+pub(crate) type Recorded = Vec<(PathBuf, crate::util::walk::Entry)>;
+
 /// Counters gathered while materializing a view.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ForkStats {
@@ -55,6 +58,9 @@ pub(crate) struct ForkStats {
     pub copied_bytes: u64,
     /// Latest ctime among materialized entries.
     pub max_ctime_ns: u128,
+    /// Disk space the copy allocated for itself: byte-copied files and, when entries are
+    /// recorded, directories. Hard-linked and cloned files share their blocks and add none.
+    pub allocated_bytes: u64,
 }
 
 impl ForkStats {
@@ -71,6 +77,7 @@ impl ForkStats {
         self.copied_files += other.copied_files;
         self.copied_bytes += other.copied_bytes;
         self.max_ctime_ns = self.max_ctime_ns.max(other.max_ctime_ns);
+        self.allocated_bytes += other.allocated_bytes;
     }
 }
 
@@ -102,6 +109,15 @@ pub(crate) trait ForkPrimitive: Send + Sync + 'static {
     fn check_available(&self, base: &Path, dest_parent: &Path) -> Result;
     /// Creates `dest` as a copy of `base`. On error the caller removes `dest`.
     fn materialize(&self, base: &Path, dest: &Path) -> Result<ForkStats>;
+    /// [`ForkPrimitive::materialize`], also returning every entry it created (relative to
+    /// `dest`, with the copy's facts) when it knows them without walking `dest` again.
+    fn materialize_recorded(
+        &self,
+        base: &Path,
+        dest: &Path,
+    ) -> Result<(ForkStats, Option<Recorded>)> {
+        Ok((self.materialize(base, dest)?, None))
+    }
     fn summarize(&self, stats: &ForkStats, elapsed_ms: u128) -> ForkSummary;
 
     /// The instant changes are measured from, given when materializing `started_ns` and what
@@ -149,7 +165,13 @@ impl<P: ForkPrimitive> SnapshotBackend<P> {
         view: &Path,
         base: &Path,
         fork_time_ns: u128,
+        entries: Option<Recorded>,
     ) -> Result<ManifestStatus> {
+        if let Some(entries) = entries {
+            // The copy already described every entry; no second walk of the view.
+            manifest::build_from_entries(name, view, &entries)?;
+            return Ok(ManifestStatus::Ready);
+        }
         if self.primitive.manifest_in_background() {
             manifest::spawn(
                 name.to_string(),
@@ -213,15 +235,15 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
 
         let started = Instant::now();
         let started_ns = now_unix_ns();
-        let stats = trace::time("materialize", || {
-            self.primitive.materialize(&req.base, &destination)
+        let (stats, entries) = trace::time("materialize", || {
+            self.primitive.materialize_recorded(&req.base, &destination)
         })
         .inspect_err(|_| {
             let _ = fs::remove_dir_all(&destination);
         })?;
         let fork_time_ns = self.primitive.fork_time_ns(started_ns, &stats);
         let manifest = trace::time("manifest", || {
-            self.start_manifest(&req.name, &destination, &req.base, fork_time_ns)
+            self.start_manifest(&req.name, &destination, &req.base, fork_time_ns, entries)
         });
 
         let mut summary = self

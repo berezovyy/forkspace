@@ -23,6 +23,9 @@ fn main() {
 }
 
 fn exit_with(error: &ForkspaceError) -> ! {
+    if let ForkspaceError::CommandExited(code) = error {
+        std::process::exit(*code);
+    }
     eprintln!("{} {error}", paint_stderr("error:", Style::Red));
     std::process::exit(error.exit_code());
 }

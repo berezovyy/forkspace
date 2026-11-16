@@ -121,6 +121,45 @@ fn frozen_bytes() -> Result<u64> {
     Ok(bytes)
 }
 
+/// Add the new frozen copy `id`, which allocated `bytes`, to the cached total of
+/// [`frozen_bytes`] when the cache describes exactly the copies there were before it, so the
+/// next `ls` needs no walk of every copy. Otherwise the cache is left to be measured again.
+pub(crate) fn note_frozen_copy(id: &str, bytes: u64) {
+    let root = paths::frozen_root();
+    let Ok(entries) = fs::read_dir(&root) else {
+        return;
+    };
+    let mut ids: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .collect();
+    ids.sort();
+    let before: Vec<&str> = ids
+        .iter()
+        .map(String::as_str)
+        .filter(|other| *other != id)
+        .collect();
+    let cache = root.join(".usage");
+    let Ok(text) = fs::read_to_string(&cache) else {
+        // The first copy: nothing to add to, so the cache starts with it (the root's own
+        // small files are left out, as they are when the cache is updated).
+        if before.is_empty() && ids.len() == 1 {
+            let _ = fs::write(&cache, format!("{} {bytes}\n", ids.join(",")));
+        }
+        return;
+    };
+    let Some((cached_key, cached)) = text.trim_end().rsplit_once(' ') else {
+        return;
+    };
+    let Ok(cached) = cached.parse::<u64>() else {
+        return;
+    };
+    if cached_key == before.join(",") && ids.len() == before.len() + 1 {
+        let _ = fs::write(&cache, format!("{} {}\n", ids.join(","), cached + bytes));
+    }
+}
+
 /// `1.2 GB`, `340 MB`, `12 KB`, decimal units like most file managers.
 pub fn human(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];

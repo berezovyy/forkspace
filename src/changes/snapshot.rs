@@ -4,13 +4,15 @@
 //! The scan walks the view once, reporting entries that differ from their manifest row (or
 //! have no row), then reports manifest rows the walk never saw as deletions.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::content::{compute_line_diff, count_lines, is_binary};
 use super::filter::ChangeFilter;
-use super::manifest::{self, written_after_fork, ManifestKind, ManifestRow, ManifestStatus};
+use super::manifest::{
+    self, encode_path, written_after_fork, Manifest, ManifestKind, ManifestRow, ManifestStatus,
+};
 use super::{ChangeKind, FileChange, OldContent};
 use crate::backend::ChangeCount;
 use crate::error::Result;
@@ -57,14 +59,13 @@ pub fn collect_transferable_clone_changes(workspace: &Workspace) -> Result<Vec<F
 fn collect(
     workspace: &Workspace,
     filter: Option<ChangeFilter>,
-    baseline: Option<HashMap<PathBuf, ManifestRow>>,
+    baseline: Option<Manifest>,
     need_line_counts: bool,
 ) -> Result<Vec<FileChange>> {
     let scan = CloneScan {
         workspace,
         filter,
-        baseline_known: baseline.is_some(),
-        baseline: baseline.unwrap_or_default(),
+        baseline,
         need_line_counts,
     };
 
@@ -75,24 +76,17 @@ fn collect(
     Ok(changes)
 }
 
-/// Read a `Ready` manifest keyed by decoded path (`Ok(None)` for a manifest that is not
-/// ready). If it cannot be read, run [`manifest::change_count`] for its recovery side effects
-/// (degrade, or schedule a rebuild) and return its verdict, so the scan goes without a baseline.
+/// Open a `Ready` manifest (`Ok(None)` for a manifest that is not ready). If it cannot be
+/// read, run [`manifest::change_count`] for its recovery side effects (degrade, or schedule a
+/// rebuild) and return its verdict, so the scan goes without a baseline.
 fn load_baseline(
     workspace: &Workspace,
     include_ignored: bool,
-) -> Result<std::result::Result<Option<HashMap<PathBuf, ManifestRow>>, ChangeCount>> {
+) -> Result<std::result::Result<Option<Manifest>, ChangeCount>> {
     if workspace.manifest_status != ManifestStatus::Ready {
         return Ok(Ok(None));
     }
-    let rows = manifest::stream(&workspace.name).and_then(|rows| {
-        rows.map(|row| {
-            let row = row?;
-            Ok((manifest::decode_path(&row.path)?, row))
-        })
-        .collect::<Result<HashMap<_, _>>>()
-    });
-    match rows {
+    match Manifest::open(&workspace.name) {
         Ok(rows) => Ok(Ok(Some(rows))),
         Err(_) => Ok(Err(manifest::change_count(workspace, include_ignored)?)),
     }
@@ -102,11 +96,10 @@ struct CloneScan<'a> {
     workspace: &'a Workspace,
     /// `None` when ignored paths are included.
     filter: Option<ChangeFilter>,
-    /// Manifest rows by path; empty when the manifest is unavailable.
-    baseline: HashMap<PathBuf, ManifestRow>,
-    /// Whether `baseline` was loaded. With a baseline, an entry without a row is new;
-    /// without one, only a post-fork ctime marks it as changed.
-    baseline_known: bool,
+    /// The fork manifest, sorted by encoded path; `None` when it is unavailable. With a
+    /// baseline, an entry without a row is new; without one, only a post-fork ctime marks it
+    /// as changed.
+    baseline: Option<Manifest>,
     need_line_counts: bool,
 }
 
@@ -123,13 +116,23 @@ enum Seen {
 /// What the view walk found.
 struct ViewWalk {
     changes: Vec<FileChange>,
-    /// Every path the walk visited, visible or not.
-    seen: BTreeSet<PathBuf>,
-    /// Invisible directories the walk did not descend into.
-    pruned: BTreeSet<PathBuf>,
+    /// Every path the walk visited, visible or not, encoded as in the manifest.
+    seen: HashSet<String>,
+    /// Invisible directories the walk did not descend into, encoded as in the manifest.
+    pruned: Vec<String>,
 }
 
 impl CloneScan<'_> {
+    fn baseline_known(&self) -> bool {
+        self.baseline.is_some()
+    }
+
+    /// The manifest row of `relative`, if there is a manifest and it has one.
+    fn row(&self, relative: &Path) -> Option<ManifestRow> {
+        let baseline = self.baseline.as_ref()?;
+        baseline.get(&encode_path(relative)).map(|row| row.to_row())
+    }
+
     fn is_visible(&self, path: &Path, is_dir: bool) -> bool {
         self.filter
             .as_ref()
@@ -149,27 +152,33 @@ impl CloneScan<'_> {
                     Step::Descend(Some(Seen::Hidden))
                 });
             }
-            let row = self.baseline.get(relative);
+            let row = self.row(relative);
             // Directories are reported only when they replace a non-directory entry.
-            let reportable = !is_dir || row.is_some_and(|row| row.kind != ManifestKind::Dir);
-            let change = (reportable && self.changed(path, metadata, row))
-                .then(|| self.change(relative.to_path_buf(), Some(path), row));
+            let reportable = !is_dir
+                || row
+                    .as_ref()
+                    .is_some_and(|row| row.kind != ManifestKind::Dir);
+            let change = (reportable && self.changed(path, metadata, row.as_ref()))
+                .then(|| self.change(relative.to_path_buf(), Some(path), row.as_ref()));
             Ok(Step::Descend(Some(Seen::Visible(change))))
         })?;
 
-        let mut seen = BTreeSet::new();
-        let mut pruned = BTreeSet::new();
+        let mut seen = HashSet::new();
+        let mut pruned = Vec::new();
         let mut changes = Vec::new();
         for (path, item) in found {
             match item {
                 Seen::Pruned => {
-                    pruned.insert(path);
+                    // The directory itself was seen; only what is below it was not walked.
+                    let encoded = encode_path(&path);
+                    seen.insert(encoded.clone());
+                    pruned.push(encoded);
                 }
                 Seen::Hidden | Seen::Visible(None) => {
-                    seen.insert(path);
+                    seen.insert(encode_path(&path));
                 }
                 Seen::Visible(Some(change)) => {
-                    seen.insert(path);
+                    seen.insert(encode_path(&path));
                     changes.push(change);
                 }
             }
@@ -185,22 +194,57 @@ impl CloneScan<'_> {
         let written = written_after_fork(metadata, self.workspace.fork_time_ns);
         match row {
             Some(row) => row.dirty || written || !row.matches(path, metadata),
-            None => self.baseline_known || written,
+            None => self.baseline_known() || written,
         }
     }
 
     /// Manifest rows the walk did not see. A missing directory is reported once, not once
     /// per descendant; rows under pruned or invisible paths are not reported at all.
-    fn deletions(&self, seen: &BTreeSet<PathBuf>, pruned: &BTreeSet<PathBuf>) -> Vec<FileChange> {
-        let missing = |path: &Path, row: &ManifestRow| {
-            !seen.contains(path)
-                && !pruned.iter().any(|prefix| path.starts_with(prefix))
-                && self.is_visible(path, row.kind == ManifestKind::Dir)
+    ///
+    /// The rows are sorted by encoded path, so each pruned directory (`node_modules`, most of
+    /// a JavaScript project) is skipped as one range instead of row by row.
+    fn deletions(&self, seen: &HashSet<String>, pruned: &[String]) -> Vec<FileChange> {
+        let Some(baseline) = &self.baseline else {
+            return Vec::new();
         };
-        let missing_directories: BTreeSet<&Path> = self
-            .baseline
+        let mut skip: Vec<(usize, usize)> = pruned
             .iter()
-            .filter(|(path, row)| row.kind == ManifestKind::Dir && missing(path, row))
+            .map(|dir| {
+                (
+                    baseline.lower_bound(&format!("{dir}/")),
+                    baseline.end_of_subtree(dir),
+                )
+            })
+            .collect();
+        skip.sort_unstable();
+        let mut missing: Vec<(PathBuf, ManifestRow)> = Vec::new();
+        let mut index = 0;
+        let mut ranges = skip.into_iter().peekable();
+        while index < baseline.len() {
+            while ranges.peek().is_some_and(|&(_, end)| end <= index) {
+                ranges.next();
+            }
+            if let Some(&(start, end)) = ranges.peek() {
+                if start <= index {
+                    index = end;
+                    continue;
+                }
+            }
+            let row = baseline.row(index);
+            index += 1;
+            if seen.contains(row.path) {
+                continue;
+            }
+            let Ok(path) = manifest::decode_path(row.path) else {
+                continue;
+            };
+            if self.is_visible(&path, row.kind == ManifestKind::Dir) {
+                missing.push((path, row.to_row()));
+            }
+        }
+        let missing_directories: BTreeSet<&Path> = missing
+            .iter()
+            .filter(|(_, row)| row.kind == ManifestKind::Dir)
             .map(|(path, _)| path.as_path())
             .collect();
         let under_missing_directory = |path: &Path| {
@@ -208,10 +252,9 @@ impl CloneScan<'_> {
                 .skip(1)
                 .any(|ancestor| missing_directories.contains(ancestor))
         };
-
-        self.baseline
+        missing
             .iter()
-            .filter(|(path, row)| missing(path, row) && !under_missing_directory(path))
+            .filter(|(path, _)| !under_missing_directory(path))
             .map(|(path, row)| self.change(path.clone(), None, Some(row)))
             .collect()
     }
@@ -228,7 +271,9 @@ impl CloneScan<'_> {
         let kind = match (current, row) {
             (None, _) => ChangeKind::Deleted,
             // Without a manifest, a written file the base also has is an edit of it.
-            (Some(_), None) if !self.baseline_known && fs::symlink_metadata(&base_path).is_ok() => {
+            (Some(_), None)
+                if !self.baseline_known() && fs::symlink_metadata(&base_path).is_ok() =>
+            {
                 ChangeKind::Modified
             }
             (Some(_), None) => ChangeKind::Added,

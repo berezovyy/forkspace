@@ -34,8 +34,8 @@ pub fn remove_with(state: &mut State, name: &str, processes: Processes) -> Resul
 /// [`remove`] for a workspace [`ensure_all_unused`] found unused under the same state lock.
 /// Its processes are scanned again only when it has a dev server to stop, since stopping one
 /// can leave its children behind.
-pub fn remove_checked(state: &mut State, name: &str) -> Result {
-    remove_inner(state, name, Processes::Refuse, true)
+pub fn remove_checked(state: &mut State, name: &str, processes: Processes) -> Result {
+    remove_inner(state, name, processes, true)
 }
 
 fn remove_inner(state: &mut State, name: &str, processes: Processes, checked: bool) -> Result {

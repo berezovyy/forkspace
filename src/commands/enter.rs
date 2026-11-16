@@ -48,18 +48,31 @@ pub fn exec(args: EnterArgs) -> Result {
         .status()
         .io_context(|| "failed to spawn command".to_string())?;
     report_exit(&name, status);
+    // The command's own failure is forkspace's exit status, so `forkspace enter ws -- make
+    // test` fails when the tests do; cleanup below still happens first.
+    let failed = (!status.success()).then(|| exit_code(status));
 
     if args.merge_on_exit {
         let outcome = resolve_changes_on_exit(&name, backend.as_ref())?;
         if outcome == Outcome::Removed {
-            return Ok(());
+            return failed.map_or(Ok(()), |code| Err(ForkspaceError::CommandExited(code)));
         }
     }
     if args.ephemeral {
         drop_workspace(&name)?;
         println!("ephemeral workspace removed");
     }
-    Ok(())
+    failed.map_or(Ok(()), |code| Err(ForkspaceError::CommandExited(code)))
+}
+
+/// A shell's exit code for `status`: the program's own, or 128 plus the signal that ended it.
+fn exit_code(status: ExitStatus) -> i32 {
+    use std::os::unix::process::ExitStatusExt;
+
+    status
+        .code()
+        .or_else(|| status.signal().map(|signal| 128 + signal))
+        .unwrap_or(1)
 }
 
 /// `--sandbox-info`: where commands in `workspace` may write.
@@ -166,8 +179,7 @@ fn report_exit(name: &str, status: ExitStatus) {
     if status.success() {
         println!("left '{}'", name);
     } else {
-        let code = status.code().unwrap_or(-1);
-        eprintln!("left '{}' (exit code {})", name, code);
+        eprintln!("left '{}' (exit code {})", name, exit_code(status));
     }
 }
 

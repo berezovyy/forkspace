@@ -25,6 +25,7 @@ const LISTEN_PORT: u16 = 4000;
 /// loopback, since browsers and Node may resolve `localhost` to either.
 pub fn run_proxy(listen_port: u16) -> Result {
     raise_open_file_limit();
+    thread::spawn(exit_when_unneeded);
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, listen_port)).map_err(|e| {
         ForkspaceError::ProxyFailed(format!("failed to bind :{}: {}", listen_port, e))
     })?;
@@ -39,6 +40,35 @@ pub fn run_proxy(listen_port: u16) -> Result {
     }
     serve(listener);
     Ok(())
+}
+
+/// How long the daemon outlives the last dev server. It also covers startup: `run` starts
+/// the daemon before it records the dev server it is starting.
+const IDLE_GRACE: Duration = Duration::from_secs(5);
+
+/// Exit once nothing needs the proxy: no workspace has a running dev server, or the state it
+/// serves is gone (its `FORKSPACE_HOME` was deleted). Otherwise the port stays taken for good,
+/// and `run` from any other home fails. The next `run` starts a new daemon.
+fn exit_when_unneeded() {
+    let mut idle_since = std::time::Instant::now();
+    loop {
+        thread::sleep(Duration::from_millis(500));
+        let needed = paths::state_file().exists()
+            && State::peek().is_ok_and(|state| {
+                state.workspaces.values().any(|workspace| {
+                    workspace
+                        .process
+                        .as_ref()
+                        .is_some_and(|process| process.is_alive())
+                })
+            });
+        if needed {
+            idle_since = std::time::Instant::now();
+        } else if idle_since.elapsed() >= IDLE_GRACE {
+            eprintln!("proxy: no dev server is running; exiting");
+            std::process::exit(0);
+        }
+    }
 }
 
 fn serve(listener: TcpListener) {
@@ -173,8 +203,14 @@ fn spawn_daemon(listen_port: u16) -> Result<ProxyConfig> {
     )
     .map_err(|e| ForkspaceError::ProxyFailed(format!("spawn proxy: {}", e)))?;
 
-    // Give the daemon a moment to bind before the caller points a browser at it.
-    thread::sleep(Duration::from_millis(100));
+    // Wait until the daemon accepts connections before the caller points a browser at it,
+    // for at most the 100ms that used to be a fixed pause.
+    let deadline = std::time::Instant::now() + Duration::from_millis(100);
+    while std::net::TcpStream::connect(("127.0.0.1", listen_port)).is_err()
+        && std::time::Instant::now() < deadline
+    {
+        thread::sleep(Duration::from_millis(2));
+    }
 
     Ok(ProxyConfig {
         listen_port,

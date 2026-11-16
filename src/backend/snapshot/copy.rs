@@ -37,6 +37,15 @@ impl ForkPrimitive for CopyPrimitive {
         materialize_tree(base, dest, |_, _, _| Ok(Placed::No))
     }
 
+    fn materialize_recorded(
+        &self,
+        base: &Path,
+        dest: &Path,
+    ) -> Result<(ForkStats, Option<super::Recorded>)> {
+        let (stats, entries) = materialize_recorded(base, dest, |_, _, _| Ok(Placed::No), true)?;
+        Ok((stats, Some(entries)))
+    }
+
     fn summarize(&self, stats: &ForkStats, elapsed_ms: u128) -> ForkSummary {
         ForkSummary {
             degraded: true,
@@ -115,8 +124,38 @@ fn materialize<F>(
 where
     F: Fn(&Path, &Path, &Entry) -> Result<Placed> + Sync,
 {
+    let listed = walk_source(source)?;
+    materialize_from(listed, target, place_regular, record, durable)
+}
+
+/// [`materialize_recorded`] of a tree described by `listed` instead of walked: each entry is
+/// `(path relative to target, its facts, where to read it)`, in path order, so a directory
+/// comes before what it contains. Used when the tree to copy is a combination of layers that
+/// is cheaper to describe than to walk.
+pub(crate) fn materialize_listed<F>(
+    listed: Vec<(PathBuf, Entry, PathBuf)>,
+    target: &Path,
+    place_regular: F,
+    durable: bool,
+) -> Result<(ForkStats, Vec<(PathBuf, Entry)>)>
+where
+    F: Fn(&Path, &Path, &Entry) -> Result<Placed> + Sync,
+{
+    materialize_from(listed, target, &place_regular, true, durable)
+}
+
+fn materialize_from<F>(
+    listed: Vec<(PathBuf, Entry, PathBuf)>,
+    target: &Path,
+    place_regular: &F,
+    record: bool,
+    durable: bool,
+) -> Result<(ForkStats, Vec<(PathBuf, Entry)>)>
+where
+    F: Fn(&Path, &Path, &Entry) -> Result<Placed> + Sync,
+{
     fs::create_dir_all(target).io_context(|| format!("create {}", target.display()))?;
-    let mut plan = plan_tree(source, target, record)?;
+    let mut plan = plan_tree(listed, target, record)?;
     let mut stats = plan.stats;
     stats.absorb(place_files(&plan.files, place_regular)?);
     for (existing, destination) in &plan.links {
@@ -150,9 +189,33 @@ struct FileJob {
     entry: Entry,
 }
 
-/// Walk `source`, creating every directory and symlink under `target` and listing the
-/// regular files to place.
-fn plan_tree(source: &Path, target: &Path, record: bool) -> Result<TreePlan> {
+/// Every entry under `source`, read on several threads, in path order, with where to read it.
+fn walk_source(source: &Path) -> Result<Vec<(PathBuf, Entry, PathBuf)>> {
+    let skip_sidecars = stores_xattrs_in_sidecars(source);
+    let walked = crate::util::walk::parallel(source, |relative, _, entry| {
+        let sidecar = skip_sidecars
+            && entry.is_file()
+            && relative
+                .file_name()
+                .is_some_and(|name| name.as_encoded_bytes().starts_with(b"._"));
+        Ok((!sidecar).then_some(*entry))
+    })?;
+    Ok(walked
+        .into_iter()
+        .map(|(relative, entry)| {
+            let path = source.join(&relative);
+            (relative, entry, path)
+        })
+        .collect())
+}
+
+/// Create every directory and symlink of `listed` under `target` and list the regular files
+/// to place.
+fn plan_tree(
+    listed: Vec<(PathBuf, Entry, PathBuf)>,
+    target: &Path,
+    record: bool,
+) -> Result<TreePlan> {
     let mut plan = TreePlan {
         files: Vec::new(),
         links: Vec::new(),
@@ -162,19 +225,7 @@ fn plan_tree(source: &Path, target: &Path, record: bool) -> Result<TreePlan> {
     };
     // First destination of each multiply-linked source inode, keyed by `(dev, ino)`.
     let mut first_link: HashMap<(u64, u64), PathBuf> = HashMap::new();
-    let skip_sidecars = stores_xattrs_in_sidecars(source);
-    // The tree is read on several threads; entries come back in path order, so a directory
-    // always comes before what it contains.
-    let walked = crate::util::walk::parallel(source, |relative, _, entry| {
-        let sidecar = skip_sidecars
-            && entry.is_file()
-            && relative
-                .file_name()
-                .is_some_and(|name| name.as_encoded_bytes().starts_with(b"._"));
-        Ok((!sidecar).then_some(*entry))
-    })?;
-    for (relative, entry) in walked {
-        let source = source.join(&relative);
+    for (relative, entry, source) in listed {
         let destination = target.join(&relative);
         plan.stats.entries += 1;
         let recorded = record.then(|| {
@@ -285,6 +336,13 @@ where
             copy_sparse(source, destination, entry.len)?;
             stats.copied_files += 1;
             stats.copied_bytes += entry.len;
+            // A sparse-preserving copy allocates what its source does; facts read from a
+            // manifest carry no block count, so the size rounded up to a block stands in.
+            stats.allocated_bytes += if entry.blocks > 0 || entry.len == 0 {
+                entry.blocks * 512
+            } else {
+                entry.len.div_ceil(4096) * 4096
+            };
         }
     }
     // Permissions go last: a read-only mode (Git objects are 0444) would refuse the xattr
@@ -362,6 +420,7 @@ fn finish_directories(
         // A directory's size depends on how it was filled, so the copy's own is recorded.
         if let Some(index) = recorded {
             entries[index].1 = Entry::lstat(&destination)?;
+            stats.allocated_bytes += entries[index].1.blocks * 512;
         }
     }
     Ok(())

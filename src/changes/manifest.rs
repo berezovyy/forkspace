@@ -217,6 +217,24 @@ pub fn build(name: &str, view: &Path, fork_time_ns: u128) -> Result<usize> {
     build_rows(name, view, None, fork_time_ns)
 }
 
+/// [`build`] from entries a copy recorded while it created `view` (see
+/// `materialize_recorded`), instead of walking `view`. Nothing was written after the fork
+/// yet, so no row is dirty.
+pub(crate) fn build_from_entries(
+    name: &str,
+    view: &Path,
+    entries: &[(PathBuf, Entry)],
+) -> Result<usize> {
+    let path = manifest_path(name);
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    let temporary = directory.join(format!(".{name}.jsonl.tmp-{}", std::process::id()));
+    let rows = entries
+        .iter()
+        .map(|(relative, entry)| row_of(relative, &view.join(relative), entry, u128::MAX))
+        .collect::<Result<Vec<_>>>()?;
+    write_file(&path, &temporary, rows, true)
+}
+
 /// [`build`] for a manifest recorded after the workspace was handed to the user (the macOS
 /// background builder). Entries deleted or renamed in the view before the walk reached them
 /// are recovered from `base`: wherever a view directory changed after the fork, base entries
@@ -331,11 +349,14 @@ fn entries_missing_from_view(
     Ok(missing)
 }
 
-/// First bytes of a binary manifest. Manifests without them are JSON lines (the format
-/// before this one), which [`Manifest::open_file`] still reads.
-const MAGIC: &[u8; 8] = b"FSMANIF1";
-/// Magic, then the row count as a little-endian `u64`; one `u64` offset per row follows.
-const HEADER: usize = 16;
+/// First bytes of a binary manifest: magic, row count, and a checksum of everything after the
+/// header, each a little-endian `u64`; one `u64` offset per row follows. Manifests without a
+/// magic are JSON lines (the format before), which [`Manifest::open_file`] still reads.
+const MAGIC: &[u8; 8] = b"FSMANIF2";
+const HEADER: usize = 24;
+/// The first binary format: no checksum, so every row is parsed to check the file.
+const MAGIC_V1: &[u8; 8] = b"FSMANIF1";
+const HEADER_V1: usize = 16;
 const DIRTY: u8 = 1;
 const HAS_TARGET: u8 = 2;
 
@@ -345,8 +366,12 @@ pub struct Manifest {
 }
 
 enum Rows {
-    /// A binary manifest whose every offset and row was checked when it was opened.
-    Binary { bytes: Vec<u8>, count: usize },
+    /// A binary manifest checked when it was opened; its offset table starts at `table`.
+    Binary {
+        bytes: Vec<u8>,
+        count: usize,
+        table: usize,
+    },
     /// A JSON-lines manifest, parsed and sorted.
     Parsed(Vec<ManifestRow>),
 }
@@ -400,12 +425,26 @@ impl Manifest {
     /// The manifest file at `path`, in either format.
     pub fn open_file(path: &Path) -> Result<Self> {
         let bytes = fs::read(path).io_context(|| format!("open manifest {}", path.display()))?;
+        let invalid =
+            || ForkspaceError::StateCorrupted(format!("invalid manifest {}", path.display()));
         if bytes.starts_with(MAGIC) {
-            let count = checked_count(&bytes).ok_or_else(|| {
-                ForkspaceError::StateCorrupted(format!("invalid manifest {}", path.display()))
-            })?;
+            let count = summed_count(&bytes).ok_or_else(invalid)?;
             return Ok(Self {
-                rows: Rows::Binary { bytes, count },
+                rows: Rows::Binary {
+                    bytes,
+                    count,
+                    table: HEADER,
+                },
+            });
+        }
+        if bytes.starts_with(MAGIC_V1) {
+            let count = checked_count(&bytes, HEADER_V1).ok_or_else(invalid)?;
+            return Ok(Self {
+                rows: Rows::Binary {
+                    bytes,
+                    count,
+                    table: HEADER_V1,
+                },
             });
         }
         let mut rows = Vec::new();
@@ -442,8 +481,8 @@ impl Manifest {
     /// The row at `index` in path order.
     pub fn row(&self, index: usize) -> RowRef<'_> {
         match &self.rows {
-            Rows::Binary { bytes, .. } => {
-                binary_row(bytes, index)
+            Rows::Binary { bytes, table, .. } => {
+                binary_row(bytes, *table, index)
                     .expect("manifest rows were checked when it was opened")
                     .0
             }
@@ -473,8 +512,14 @@ impl Manifest {
             .take_while(move |row| row.path.starts_with(&prefix))
     }
 
+    /// The index just past the rows below the directory `encoded`: `'0'` follows `'/'` in
+    /// byte order, so `dir0` is the first path after every `dir/...`.
+    pub fn end_of_subtree(&self, encoded: &str) -> usize {
+        self.lower_bound(&format!("{encoded}0"))
+    }
+
     /// The index of the first row whose path is not below `encoded` in byte order.
-    fn lower_bound(&self, encoded: &str) -> usize {
+    pub fn lower_bound(&self, encoded: &str) -> usize {
         let (mut low, mut high) = (0, self.len());
         while low < high {
             let middle = (low + high) / 2;
@@ -488,18 +533,66 @@ impl Manifest {
     }
 }
 
-/// The row count of a binary manifest after checking that every offset points at a whole
-/// row, or `None` if the file is damaged.
-fn checked_count(bytes: &[u8]) -> Option<usize> {
+/// The row count of a checksummed manifest whose checksum matches, after checking every
+/// offset is in bounds, or `None` if the file is damaged. A matching checksum means the rows
+/// are the bytes that were written, so they are not parsed here.
+fn summed_count(bytes: &[u8]) -> Option<usize> {
     let count = usize::try_from(read_u64(bytes, MAGIC.len())?).ok()?;
     let table_end = HEADER.checked_add(count.checked_mul(8)?)?;
+    if table_end > bytes.len() || read_u64(bytes, 16)? != checksum(&bytes[HEADER..]) {
+        return None;
+    }
+    let mut previous = table_end;
+    for index in 0..count {
+        let offset = usize::try_from(read_u64(bytes, HEADER + index * 8)?).ok()?;
+        if offset < previous || offset >= bytes.len() {
+            return None;
+        }
+        previous = offset;
+    }
+    // The last row must end exactly at the end of the file.
+    if count > 0 {
+        let (_, end) = binary_row(bytes, HEADER, count - 1)?;
+        if end != bytes.len() {
+            return None;
+        }
+    } else if table_end != bytes.len() {
+        return None;
+    }
+    Some(count)
+}
+
+/// A fast 64-bit checksum of `bytes` (a multiply-rotate mix of 8-byte words); it catches
+/// torn, truncated and appended files, not tampering.
+fn checksum(bytes: &[u8]) -> u64 {
+    const MULTIPLIER: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut hash = MULTIPLIER ^ bytes.len() as u64;
+    let (words, rest) = bytes.as_chunks::<8>();
+    for word in words {
+        hash = (hash ^ u64::from_le_bytes(*word))
+            .wrapping_mul(MULTIPLIER)
+            .rotate_left(31);
+    }
+    for &byte in rest {
+        hash = (hash ^ u64::from(byte))
+            .wrapping_mul(MULTIPLIER)
+            .rotate_left(31);
+    }
+    hash
+}
+
+/// The row count of a first-format binary manifest after checking that every offset points
+/// at a whole row, or `None` if the file is damaged.
+fn checked_count(bytes: &[u8], header: usize) -> Option<usize> {
+    let count = usize::try_from(read_u64(bytes, MAGIC.len())?).ok()?;
+    let table_end = header.checked_add(count.checked_mul(8)?)?;
     if table_end > bytes.len() {
         return None;
     }
     let mut previous: Option<&str> = None;
     let mut end = table_end;
     for index in 0..count {
-        let (row, row_end) = binary_row(bytes, index)?;
+        let (row, row_end) = binary_row(bytes, header, index)?;
         if previous.is_some_and(|previous| previous.as_bytes() > row.path.as_bytes()) {
             return None;
         }
@@ -519,9 +612,10 @@ fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
 }
 
-/// Row `index` of a binary manifest and the offset just past it.
-fn binary_row(bytes: &[u8], index: usize) -> Option<(RowRef<'_>, usize)> {
-    let offset = usize::try_from(read_u64(bytes, HEADER + index * 8)?).ok()?;
+/// Row `index` of a binary manifest whose offset table starts at `table`, and the offset
+/// just past it.
+fn binary_row(bytes: &[u8], table: usize, index: usize) -> Option<(RowRef<'_>, usize)> {
+    let offset = usize::try_from(read_u64(bytes, table + index * 8)?).ok()?;
     let mut at = offset;
     let text = |at: &mut usize| -> Option<&str> {
         let len = read_u32(bytes, *at)? as usize;
@@ -568,19 +662,16 @@ pub(crate) fn write_binary(
     let row_len = |row: &ManifestRow| {
         4 + row.path.len() + 30 + row.target.as_ref().map_or(0, |target| 4 + target.len())
     };
-    writer.write_all(MAGIC)?;
-    writer.write_all(&(rows.len() as u64).to_le_bytes())?;
+    let mut body = Vec::with_capacity(rows.iter().map(|row| 8 + row_len(row)).sum());
     let mut offset = (HEADER + rows.len() * 8) as u64;
     for row in rows.iter() {
-        writer.write_all(&offset.to_le_bytes())?;
+        body.extend_from_slice(&offset.to_le_bytes());
         offset += row_len(row) as u64;
     }
-    let mut buffer = Vec::with_capacity(256);
     for row in rows.iter() {
-        buffer.clear();
-        buffer.extend_from_slice(&(row.path.len() as u32).to_le_bytes());
-        buffer.extend_from_slice(row.path.as_bytes());
-        buffer.push(match row.kind {
+        body.extend_from_slice(&(row.path.len() as u32).to_le_bytes());
+        body.extend_from_slice(row.path.as_bytes());
+        body.push(match row.kind {
             ManifestKind::File => 0,
             ManifestKind::Dir => 1,
             ManifestKind::Symlink => 2,
@@ -592,17 +683,19 @@ pub(crate) fn write_binary(
         if row.target.is_some() {
             flags |= HAS_TARGET;
         }
-        buffer.push(flags);
-        buffer.extend_from_slice(&row.mode.to_le_bytes());
-        buffer.extend_from_slice(&row.size.to_le_bytes());
-        buffer.extend_from_slice(&row.mtime_ns.to_le_bytes());
+        body.push(flags);
+        body.extend_from_slice(&row.mode.to_le_bytes());
+        body.extend_from_slice(&row.size.to_le_bytes());
+        body.extend_from_slice(&row.mtime_ns.to_le_bytes());
         if let Some(target) = &row.target {
-            buffer.extend_from_slice(&(target.len() as u32).to_le_bytes());
-            buffer.extend_from_slice(target.as_bytes());
+            body.extend_from_slice(&(target.len() as u32).to_le_bytes());
+            body.extend_from_slice(target.as_bytes());
         }
-        writer.write_all(&buffer)?;
     }
-    Ok(())
+    writer.write_all(MAGIC)?;
+    writer.write_all(&(rows.len() as u64).to_le_bytes())?;
+    writer.write_all(&checksum(&body).to_le_bytes())?;
+    writer.write_all(&body)
 }
 
 /// Every row of a manifest, owned; see [`stream`].
@@ -844,5 +937,13 @@ mod tests {
                 Err(ForkspaceError::StateCorrupted(_))
             ));
         }
+        let mut flipped = file.clone();
+        let last = flipped.len() - 5;
+        flipped[last] ^= 0x40;
+        fs::write(&path, &flipped).unwrap();
+        assert!(matches!(
+            Manifest::open_file(&path),
+            Err(ForkspaceError::StateCorrupted(_))
+        ));
     }
 }

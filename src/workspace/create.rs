@@ -27,6 +27,8 @@ pub struct CreateOptions {
     pub force_copy: bool,
     /// Overlay only: mount the base itself rather than a frozen copy of it.
     pub live: bool,
+    /// Create this Git branch in the view and record it; the fork fails without it.
+    pub branch: Option<String>,
 }
 
 /// Where a new workspace's contents come from, and the backend that will copy them.
@@ -87,7 +89,9 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
     );
     record_fork_time_files(&workspace);
     exclude_from_backups_if_asked(&workspace);
-    if let Err(error) = give_private_git(&mut workspace) {
+    let prepared = give_private_git(&mut workspace)
+        .and_then(|()| create_branch(&mut workspace, options.branch.as_deref()));
+    if let Err(error) = prepared {
         let _ = backend.destroy(&workspace, DestroyMode::Normal);
         let _ = crate::changes::manifest::remove(name);
         State::with_state(|state| {
@@ -103,6 +107,21 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         })
     })?;
     Ok(workspace)
+}
+
+/// Check out a new `branch` in the view and record it, before the workspace is saved, so
+/// `--branch` is all-or-nothing and costs no separate state write.
+fn create_branch(workspace: &mut Workspace, branch: Option<&str>) -> Result {
+    let Some(branch) = branch else {
+        return Ok(());
+    };
+    if crate::git::switch_new_branch(&workspace.view_path, branch).is_err() {
+        return Err(ForkspaceError::BranchExists(format!(
+            "'{branch}' could not be created; no workspace was kept"
+        )));
+    }
+    workspace.branch = Some(branch.to_string());
+    Ok(())
 }
 
 /// Workspaces stay in backups by default, since one can hold the only copy of an agent's

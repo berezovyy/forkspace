@@ -18,7 +18,7 @@ pub fn exec(args: NewArgs) -> Result {
         Some(name) => name,
         None => default_name(&args.from)?,
     };
-    let mut ws = workspace::create(
+    let ws = workspace::create(
         args.from,
         &name,
         CreateOptions {
@@ -26,11 +26,9 @@ pub fn exec(args: NewArgs) -> Result {
             tmpfs: args.tmpfs,
             force_copy: args.copy,
             live: args.live,
+            branch: args.branch,
         },
     )?;
-    if let Some(branch) = args.branch {
-        create_branch(&mut ws, branch)?;
-    }
     if !limits.is_empty() {
         super::limit::warn_without_systemd(&limits);
         State::with_state(|state| {
@@ -83,24 +81,6 @@ fn default_name(base: &Path) -> Result<String> {
                 "cannot derive a workspace name from the source path; pass a name".to_string(),
             )
         })
-}
-
-/// Switch the new workspace to a fresh `branch` and record it. On failure the workspace is
-/// removed again, so `--branch` is all-or-nothing.
-fn create_branch(ws: &mut Workspace, branch: String) -> Result {
-    if git::run_git(&ws.view_path, &["switch", "-c", &branch]).is_err() {
-        State::with_state(|state| {
-            workspace::remove::remove_with(state, &ws.name, workspace::remove::Processes::Kill)
-        })?;
-        return Err(ForkspaceError::BranchExists(format!(
-            "'{branch}' could not be created; no workspace was kept"
-        )));
-    }
-    ws.branch = Some(branch);
-    State::with_state(|state| {
-        state.require_workspace_mut(&ws.name)?.branch = ws.branch.clone();
-        Ok(())
-    })
 }
 
 /// Warn about Python virtual environments the fork copied whose scripts still point at the

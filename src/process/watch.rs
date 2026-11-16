@@ -161,8 +161,8 @@ pub fn is_alive(pid: u32, expected_identity: Option<&str>) -> bool {
     }
 }
 
-/// SIGTERM the process group led by `pid`, escalating to SIGKILL after 200ms.
-/// Returns whether a matching live process was found.
+/// SIGTERM the process group led by `pid`, escalating to SIGKILL if its leader is still alive
+/// after 200ms. Returns whether a matching live process was found.
 pub fn terminate_group(pid: u32, expected_identity: Option<&str>) -> bool {
     if pid == 1 || !is_alive(pid, expected_identity) {
         return false;
@@ -170,7 +170,12 @@ pub fn terminate_group(pid: u32, expected_identity: Option<&str>) -> bool {
     unsafe {
         libc::kill(-(pid as i32), libc::SIGTERM);
     }
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // Most servers exit within milliseconds of SIGTERM; check often rather than always
+    // waiting out the grace period.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+    while is_alive(pid, expected_identity) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     if is_alive(pid, expected_identity) {
         unsafe {
             libc::kill(-(pid as i32), libc::SIGKILL);

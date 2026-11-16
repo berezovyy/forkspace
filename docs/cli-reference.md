@@ -125,7 +125,8 @@ Start a dev server (or any long-running command) in the workspace with `$PORT` s
 the proxy on `localhost:4000` at it. `run` waits up to `--port-wait` seconds (default 10, `0`
 to skip) for the server to listen; a server that ignores `$PORT` is routed to the port it
 opened. `--port` is the port the app is told to use (default 3000), `--stop` stops the
-workspace's process, `--no-sandbox` lets it write outside the workspace.
+workspace's process, `--no-sandbox` lets it write outside the workspace. The proxy starts with
+the first dev server and exits a few seconds after the last one stops.
 
 ### `forkspace switch <name>`
 
@@ -230,6 +231,9 @@ Landlock and macOS bulk directory reads.
 | 5 | Conflict or refusal: nothing was changed |
 | 6 | The workspace's backend does not support this |
 | 7 | The backend is unavailable here (for example, no FUSE) |
+
+`enter -- command` exits with the command's own status instead (128 plus the signal number
+when a signal ended it), after `--ephemeral` or `--merge-on-exit` has done its work.
 
 An environment or capability error is one line naming both the problem and what to do about
 it, for the platform it happened on.

@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use crate::backend::snapshot::{materialize_recorded, Placed};
+use crate::backend::snapshot::{materialize_listed, materialize_recorded, Placed};
 use crate::changes::manifest::{self, Manifest};
 use crate::error::{ForkspaceError, Result};
 use crate::paths;
@@ -106,7 +106,7 @@ pub(crate) fn freeze(source: &Path, basis: Basis<'_>) -> Result<Frozen> {
             let previous_rows = previous
                 .as_ref()
                 .and_then(|(tree, _)| Manifest::open_file(&manifest_cache(tree)).ok());
-            build(&root, &source, started_ns, |relative, path, entry| {
+            build(&root, &source, started_ns, None, |relative, path, entry| {
                 let (tree, meta) = previous.as_ref()?;
                 let candidate = tree.join(relative);
                 let unchanged = match &previous_rows {
@@ -122,10 +122,18 @@ pub(crate) fn freeze(source: &Path, basis: Basis<'_>) -> Result<Frozen> {
                 unchanged.then_some(candidate)
             })
         }
-        Basis::Workspace { lower, upper } => build(&root, &source, started_ns, |relative, _, _| {
-            let written = fs::symlink_metadata(upper.join(relative)).is_ok();
-            (!written).then(|| lower.join(relative))
-        }),
+        Basis::Workspace { lower, upper } => {
+            // The view is a FUSE mount: reading all of it costs a round trip per entry. Its
+            // layers are plain directories, and the lower one carries its manifest.
+            let listed = match Manifest::open_file(&manifest_cache(lower)) {
+                Ok(rows) => layered_entries(&source, lower, upper, &rows)?,
+                Err(_) => None,
+            };
+            build(&root, &source, started_ns, listed, |relative, _, _| {
+                let written = fs::symlink_metadata(upper.join(relative)).is_ok();
+                (!written).then(|| lower.join(relative))
+            })
+        }
     }
 }
 
@@ -197,11 +205,13 @@ fn staging_pid(name: &str) -> Option<u32> {
 }
 
 /// Build a new frozen copy of `source`. `link_from(relative, path, facts)` names an identical
-/// file of an existing frozen copy to hard-link instead of copying.
+/// file of an existing frozen copy to hard-link instead of copying. `listed` describes the
+/// tree when that is cheaper than walking `source` (see [`layered_entries`]).
 fn build(
     root: &Path,
     source: &Path,
     started_ns: u128,
+    listed: Option<Vec<(PathBuf, Entry, PathBuf)>>,
     link_from: impl Fn(&Path, &Path, &Entry) -> Option<PathBuf> + Sync,
 ) -> Result<Frozen> {
     let id = format!("{started_ns:x}-{}", std::process::id());
@@ -212,22 +222,22 @@ fn build(
     // is checked before anything trusts it again (see [`settle`]).
     let boot = boot_id();
 
-    let materialized = materialize_recorded(
-        source,
-        &tree,
-        |path, target, entry| {
-            let relative = path.strip_prefix(source).map_err(|_| {
-                ForkspaceError::StateFailed("frozen copy walk escaped its source".to_string())
-            })?;
-            if let Some(existing) = link_from(relative, path, entry) {
-                if fs::hard_link(&existing, target).is_ok() {
-                    return Ok(Placed::Linked);
-                }
+    // Where a file lands in the copy names it; where it is read from may be another layer.
+    let place_file = |path: &Path, target: &Path, entry: &Entry| {
+        let relative = target.strip_prefix(&tree).map_err(|_| {
+            ForkspaceError::StateFailed("frozen copy entry escaped its tree".to_string())
+        })?;
+        if let Some(existing) = link_from(relative, path, entry) {
+            if fs::hard_link(&existing, target).is_ok() {
+                return Ok(Placed::Linked);
             }
-            place(path, target, reflink)
-        },
-        boot.is_none(),
-    );
+        }
+        place(path, target, reflink)
+    };
+    let materialized = match listed {
+        Some(listed) => materialize_listed(listed, &tree, place_file, boot.is_none()),
+        None => materialize_recorded(source, &tree, place_file, boot.is_none()),
+    };
     let (stats, entries) = match materialized {
         Ok(materialized) => materialized,
         Err(error) => {
@@ -254,6 +264,17 @@ fn build(
     fs::rename(&staging, &finished)
         .io_context(|| format!("install frozen copy {}", finished.display()))?;
     sync_dir(root)?;
+    let own_files: u64 = [
+        finished.clone(),
+        finished.join(TREE),
+        finished.join(META),
+        finished.join(MANIFEST),
+    ]
+    .iter()
+    .filter_map(|path| Entry::lstat(path).ok())
+    .map(|entry| entry.blocks * 512)
+    .sum();
+    crate::disk::note_frozen_copy(&id, stats.allocated_bytes + own_files);
     if boot.is_some() {
         PENDING_FLUSHES
             .lock()
@@ -267,6 +288,82 @@ fn build(
         copied_bytes: stats.copied_bytes,
         linked_files: stats.linked_files,
     })
+}
+
+/// The entries of the overlay view `view` whose upper layer is `upper` and whose lower layer
+/// is the frozen copy `lower` with the manifest `rows`, in path order, each with where to
+/// read it. Only directories the upper layer has are read through the view, so fuse-overlayfs
+/// itself decides what they show (whiteouts, opaque directories); every directory the upper
+/// layer lacks is exactly the lower one, described by its manifest without reading it.
+/// `None` if the layers disagree with the view, so the caller walks the view instead.
+fn layered_entries(
+    view: &Path,
+    lower: &Path,
+    upper: &Path,
+    rows: &Manifest,
+) -> Result<Option<Vec<(PathBuf, Entry, PathBuf)>>> {
+    use super::whiteout::is_device_whiteout;
+
+    let mut listed = Vec::new();
+    let mut pending = vec![PathBuf::new()];
+    while let Some(directory) = pending.pop() {
+        let shown = view.join(&directory);
+        let children = fs::read_dir(&shown).io_context(|| format!("read {}", shown.display()))?;
+        for child in children {
+            let child = child.io_context(|| format!("read {}", shown.display()))?;
+            let relative = directory.join(child.file_name());
+            let written = upper.join(&relative);
+            let in_upper =
+                fs::symlink_metadata(&written).is_ok_and(|metadata| !is_device_whiteout(&metadata));
+            if in_upper {
+                let facts = Entry::lstat(&written)?;
+                if facts.is_dir() {
+                    pending.push(relative.clone());
+                }
+                listed.push((relative, facts, written));
+                continue;
+            }
+            let encoded = manifest::encode_path(&relative);
+            let Some(row) = rows.get(&encoded) else {
+                return Ok(None);
+            };
+            listed.push((relative.clone(), row_entry(&row), lower.join(&relative)));
+            if row.kind == manifest::ManifestKind::Dir {
+                for below in rows.under(&encoded) {
+                    let relative = manifest::decode_path(below.path)?;
+                    let source = lower.join(&relative);
+                    listed.push((relative, row_entry(&below), source));
+                }
+            }
+        }
+    }
+    listed.sort_by(|a, b| {
+        a.0.as_os_str()
+            .as_encoded_bytes()
+            .cmp(b.0.as_os_str().as_encoded_bytes())
+    });
+    Ok(Some(listed))
+}
+
+/// The facts a manifest row records, as a walk would have read them.
+fn row_entry(row: &manifest::RowRef<'_>) -> Entry {
+    use crate::util::walk::Kind;
+
+    Entry {
+        kind: match row.kind {
+            manifest::ManifestKind::File => Kind::File,
+            manifest::ManifestKind::Dir => Kind::Dir,
+            manifest::ManifestKind::Symlink => Kind::Symlink,
+        },
+        len: row.size,
+        mode: row.mode,
+        mtime_ns: row.mtime_ns,
+        ctime_ns: 0,
+        dev: 0,
+        ino: 0,
+        nlink: 1,
+        blocks: 0,
+    }
 }
 
 /// Write the manifest of the copy `tree` (being built in `staging`) from the entries

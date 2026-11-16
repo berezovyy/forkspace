@@ -7,26 +7,67 @@
 use std::collections::BTreeSet;
 
 /// TCP ports in LISTEN state owned by processes in `leader`'s session, sorted ascending.
+///
+/// The leader's descendants are looked at first, which takes a few reads instead of one per
+/// process on the machine; only when none of them listens is the whole session searched, for
+/// a server that a parent which already exited left behind.
 #[cfg(target_os = "linux")]
 pub(crate) fn listening_ports(leader: u32) -> Vec<u16> {
+    let descendants = descendants(leader);
+    if !descendants.is_empty() {
+        let ports = ports_of(leader, &descendants);
+        if !ports.is_empty() {
+            return ports;
+        }
+    }
+    let Ok(processes) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let session: Vec<u32> = processes
+        .flatten()
+        .filter_map(|process| process.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| session_of(*pid) == Some(leader))
+        .collect();
+    ports_of(leader, &session)
+}
+
+/// `leader` and every process below it, from `/proc/<pid>/task/<tid>/children`. Empty when the
+/// kernel does not provide those files.
+#[cfg(target_os = "linux")]
+fn descendants(leader: u32) -> Vec<u32> {
+    let mut found = vec![leader];
+    let mut index = 0;
+    while index < found.len() {
+        let pid = found[index];
+        index += 1;
+        let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
+            continue;
+        };
+        for task in tasks.flatten() {
+            let Ok(children) = std::fs::read_to_string(task.path().join("children")) else {
+                if pid == leader {
+                    return Vec::new();
+                }
+                continue;
+            };
+            found.extend(
+                children
+                    .split_whitespace()
+                    .filter_map(|child| child.parse::<u32>().ok()),
+            );
+        }
+    }
+    found
+}
+
+/// The LISTEN ports, seen from `leader`'s network namespace, whose sockets one of `pids` holds.
+#[cfg(target_os = "linux")]
+fn ports_of(leader: u32, pids: &[u32]) -> Vec<u16> {
     use std::collections::HashSet;
     use std::fs;
 
     let mut socket_inodes = HashSet::new();
-    let Ok(processes) = fs::read_dir("/proc") else {
-        return Vec::new();
-    };
-    for process in processes.flatten() {
-        let Some(pid) = process
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse::<u32>().ok())
-        else {
-            continue;
-        };
-        if session_of(pid) != Some(leader) {
-            continue;
-        }
+    for &pid in pids {
         let Ok(descriptors) = fs::read_dir(format!("/proc/{pid}/fd")) else {
             continue;
         };

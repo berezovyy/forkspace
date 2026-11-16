@@ -26,6 +26,23 @@ that heading into the version and date, and the section becomes the GitHub relea
   went from 20 ms to 2 ms on a Next.js app). JSON-lines manifests from 0.1.0 are still read.
 - `new` reads the workspace's Git `HEAD` without starting `git`, and scans for Python virtual
   environments in the frozen copy rather than through the FUSE view.
+- Stopping a dev server no longer always waits 200 ms after SIGTERM, `drop --kill` scans
+  processes once for every workspace, and `run`/`switch` look for the server's port among
+  its own processes instead of every process on the machine (checking every 10 ms).
+- A workspace stacked on an overlay workspace is frozen from its parent's layers: only
+  directories the parent changed are read through FUSE; the rest comes from the parent's
+  frozen-copy manifest.
+- Change scans of copy, reflink and APFS-clone workspaces (`diff`, `ls`, `gc`, `merge`)
+  look rows up in the sorted manifest and skip `node_modules` as one range.
+- `--copy` and reflink forks record their manifest while copying instead of walking the copy.
+- `land` and `new --branch` read and write Git refs directly where the repository allows
+  instead of starting `git` for each step, and `--branch` is saved with the workspace.
+- Manifests carry a checksum, so opening one no longer parses every row; `ls` adds a new
+  frozen copy to its cached size instead of measuring every copy again.
+- `enter -- command` exits with the command's status (it always exited 0), as documented, so
+  `forkspace enter --ephemeral -- make test` fails when the tests do.
+- The `localhost:4000` proxy exits a few seconds after the last dev server stops, or when its
+  `FORKSPACE_HOME` is gone, instead of holding the port until the next reboot.
 - Measured on ext4 (NVMe) with a 424 MB `node_modules`: first fork 1.15 s → 0.26 s, later
   forks 78 → 25 ms, a one-file merge 3.7 s → 21 ms, `pull` 4.2 s → 0.19 s, `drop` of two
   workspaces 99 → 21 ms.

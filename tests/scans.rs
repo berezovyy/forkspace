@@ -148,3 +148,33 @@ fn repeated_scans_give_identical_sorted_output() {
     sorted.sort();
     assert_eq!(paths, sorted);
 }
+
+/// Skipping a pruned directory's rows must not skip a sibling whose name sorts among them:
+/// `node_modules-extra` sorts between `node_modules` and `node_modules/…`.
+#[test]
+fn deletions_next_to_a_skipped_directory_are_reported() {
+    let env = Env::new();
+    let project = env.project();
+    fs::create_dir_all(project.join("node_modules-extra")).unwrap();
+    fs::write(project.join("node_modules-extra/keep.js"), "keep\n").unwrap();
+    fs::write(project.join("node_modules.js"), "shim\n").unwrap();
+    assert!(env.run(&["drop", "ws"]).status.success());
+    let forked = env.run(&["new", "ws", "--from", project.to_str().unwrap(), "--copy"]);
+    assert!(forked.status.success());
+
+    let view = env.view();
+    fs::remove_dir_all(view.join("node_modules-extra")).unwrap();
+    fs::remove_file(view.join("node_modules.js")).unwrap();
+    fs::remove_file(view.join("node_modules/pkg/package.json")).unwrap();
+
+    let listed: serde_json::Value =
+        serde_json::from_str(&env.ok(&["diff", "ws", "--json"])).unwrap();
+    let mut paths: Vec<&str> = listed["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|change| change["path"].as_str().unwrap())
+        .collect();
+    paths.sort_unstable();
+    assert_eq!(paths, ["node_modules-extra", "node_modules.js"]);
+}

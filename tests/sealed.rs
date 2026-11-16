@@ -346,6 +346,70 @@ fn a_damaged_copy_left_unflushed_by_a_crash_is_reported_and_never_reused() {
     );
 }
 
+/// Every path under `root` with its kind and content, for comparing two trees.
+fn snapshot_tree(root: &Path) -> Vec<(String, String)> {
+    let mut listed = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let relative = path.strip_prefix(root).unwrap().display().to_string();
+            if relative == ".git" || relative.starts_with(".git/") {
+                continue;
+            }
+            let kind = entry.file_type().unwrap();
+            let what = if kind.is_symlink() {
+                format!("link {}", fs::read_link(&path).unwrap().display())
+            } else if kind.is_dir() {
+                pending.push(path);
+                "dir".to_string()
+            } else {
+                format!("file {}", fs::read_to_string(&path).unwrap())
+            };
+            listed.push((relative, what));
+        }
+    }
+    listed.sort();
+    listed
+}
+
+#[test]
+fn a_stacked_copy_matches_its_parent_view_after_every_kind_of_change() {
+    skip_without_overlay!();
+    let env = Env::new();
+    let project = env.project();
+    for directory in ["keep/inner", "gone/deep", "reborn", "swap"] {
+        fs::create_dir_all(project.join(directory)).unwrap();
+    }
+    fs::write(project.join("keep/inner/k.txt"), "k\n").unwrap();
+    fs::write(project.join("gone/deep/g.txt"), "g\n").unwrap();
+    fs::write(project.join("reborn/old.txt"), "old\n").unwrap();
+    fs::write(project.join("swap/s.txt"), "s\n").unwrap();
+    std::os::unix::fs::symlink("a.txt", project.join("link")).unwrap();
+    env.new_workspace("parent", &[]);
+
+    let view = env.view("parent");
+    fs::write(view.join("a.txt"), "edited\n").unwrap();
+    fs::remove_file(view.join("b.txt")).unwrap();
+    fs::write(view.join("added.txt"), "added\n").unwrap();
+    fs::remove_dir_all(view.join("gone")).unwrap();
+    fs::remove_dir_all(view.join("reborn")).unwrap();
+    fs::create_dir(view.join("reborn")).unwrap();
+    fs::write(view.join("reborn/new.txt"), "new\n").unwrap();
+    fs::remove_dir_all(view.join("swap")).unwrap();
+    fs::write(view.join("swap"), "now a file\n").unwrap();
+    fs::create_dir_all(view.join("fresh/nested")).unwrap();
+    fs::write(view.join("fresh/nested/f.txt"), "f\n").unwrap();
+    fs::write(view.join("keep/inner/k2.txt"), "k2\n").unwrap();
+
+    let parent = view.to_str().unwrap().to_string();
+    let _ = parent;
+    env.run(&["new", "child", "--from", "parent"]);
+    assert_eq!(snapshot_tree(&env.view("child")), snapshot_tree(&view));
+    assert_eq!(env.stdout(&["diff", "child"]).trim(), "clean — no changes");
+}
+
 #[test]
 fn merge_then_pull_moves_one_workspace_s_changes_into_another() {
     skip_without_overlay!();

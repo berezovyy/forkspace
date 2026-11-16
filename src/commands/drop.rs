@@ -114,17 +114,26 @@ fn remove_each(
     names: &[String],
     processes: Processes,
 ) -> Result<Option<ForkspaceError>> {
-    let checked = processes == Processes::Refuse;
-    if checked {
-        let recorded = names
-            .iter()
-            .map(|name| state.require_workspace(name))
-            .collect::<Result<Vec<_>>>()?;
+    let recorded = names
+        .iter()
+        .map(|name| state.require_workspace(name))
+        .collect::<Result<Vec<_>>>()?;
+    // One scan of the machine's processes serves every workspace. Refusing, it is the check;
+    // killing, it tells which workspaces have nothing to stop and need no scan of their own.
+    let idle: Vec<String> = if processes == Processes::Refuse {
         workspace::remove::ensure_all_unused(&recorded, processes)?;
-    }
+        names.to_vec()
+    } else {
+        let found = crate::process::members::find_all(&recorded);
+        recorded
+            .iter()
+            .filter(|workspace| found.get(&workspace.name).is_none_or(Vec::is_empty))
+            .map(|workspace| workspace.name.clone())
+            .collect()
+    };
     for (index, name) in names.iter().enumerate() {
-        let removed = if checked {
-            workspace::remove::remove_checked(state, name)
+        let removed = if idle.contains(name) {
+            workspace::remove::remove_checked(state, name, processes)
         } else {
             workspace::remove::remove_with(state, name, processes)
         };

@@ -45,6 +45,20 @@ impl ForkPrimitive for ReflinkPrimitive {
         materialize_tree(base, dest, |source, target, _| reflink_file(source, target))
     }
 
+    fn materialize_recorded(
+        &self,
+        base: &Path,
+        dest: &Path,
+    ) -> Result<(ForkStats, Option<super::Recorded>)> {
+        let (stats, entries) = super::copy::materialize_recorded(
+            base,
+            dest,
+            |source, target, _| reflink_file(source, target),
+            true,
+        )?;
+        Ok((stats, Some(entries)))
+    }
+
     fn summarize(&self, stats: &ForkStats, _elapsed_ms: u128) -> ForkSummary {
         ForkSummary {
             degraded: false,

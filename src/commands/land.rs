@@ -24,7 +24,7 @@ pub fn exec(args: LandArgs) -> Result {
             .unwrap_or_else(|| source_branch.clone());
         ensure_valid_target(&base, &target_branch)?;
 
-        let base_tip = git::rev_parse(&base, "HEAD")?;
+        let base_tip = git::head_commit(&base)?;
         ensure_no_external_objects(&workspace.view_path, &base_tip, &source_branch)?;
 
         git::prune_staging_refs(&base);
@@ -79,10 +79,15 @@ fn ensure_landable(args: &LandArgs, workspace: &Workspace, base: &Path) -> Resul
             remedy: MERGE_INSTEAD.to_string(),
         });
     }
-    if !git::status(view, false)?.is_empty() {
+    // One status with untracked files answers both questions: `??` lines are untracked,
+    // every other line is a tracked change.
+    let status = git::status(view, true)?;
+    if status
+        .lines()
+        .any(|line| !line.is_empty() && !line.starts_with("??"))
+    {
         return Err(ForkspaceError::WorkspaceDirty(args.name.clone()));
     }
-    let status = git::status(view, true)?;
     if status.lines().any(|line| line.starts_with("??")) {
         let consequence = if args.drop {
             " and will be discarded by --drop"
@@ -149,7 +154,7 @@ fn move_target_branch(
     base_tip: &str,
     force: bool,
 ) -> Result<String> {
-    let tip = git::rev_parse(base, staging)?;
+    let tip = git::resolve(base, staging)?;
     let target = format!("refs/heads/{target_branch}");
     if !git::ref_exists(base, &target) {
         let count = git::commit_count(base, &format!("{base_tip}..{tip}"))?;
@@ -157,7 +162,7 @@ fn move_target_branch(
         return Ok(format!("created '{target_branch}' ({count} commits)"));
     }
 
-    let old = git::rev_parse(base, &target)?;
+    let old = git::resolve(base, &target)?;
     let count = git::commit_count(base, &format!("{old}..{tip}"))?;
     if git::is_ancestor(base, &old, &tip)? {
         git::update_ref(base, &target, &tip)?;

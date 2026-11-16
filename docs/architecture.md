@@ -59,7 +59,12 @@ a merge looks up the rows it needs by binary search instead of parsing every row
 copy carries the manifest of its tree, written while it is built; forks of it install that
 file as a hard link (manifests are only ever replaced by rename), and the next freeze reads
 it to decide which files to link and whether the project changed. Older JSON-lines manifests
-are still read.
+are still read. A manifest carries a checksum of its rows, checked when it is opened.
+
+A workspace stacked on an overlay workspace freezes from the parent's layers rather than its
+mounted view: directories the parent's upper layer has are read through the view, so
+fuse-overlayfs decides what they show, and every other directory is the parent's frozen copy,
+taken from its manifest and hard-linked without being read.
 
 ## Review and exchange
 
