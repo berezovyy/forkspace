@@ -43,6 +43,9 @@ that heading into the version and date, and the section becomes the GitHub relea
   `forkspace enter --ephemeral -- make test` fails when the tests do.
 - The `localhost:4000` proxy exits a few seconds after the last dev server stops, or when its
   `FORKSPACE_HOME` is gone, instead of holding the port until the next reboot.
+- `pull` records only what changed in the project since the workspace's frozen copy instead
+  of building a whole new copy (160 -> 65 ms), and copies create and finish directories on
+  several threads.
 - Measured on ext4 (NVMe) with a 424 MB `node_modules`: first fork 1.15 s → 0.26 s, later
   forks 78 → 25 ms, a one-file merge 3.7 s → 21 ms, `pull` 4.2 s → 0.19 s, `drop` of two
   workspaces 99 → 21 ms.

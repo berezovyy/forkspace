@@ -72,6 +72,7 @@ impl From<LegacyWorkspace> for Workspace {
             backend_state: BackendState::Overlay(OverlayState {
                 lower: None,
                 ancestor: None,
+                ancestor_base: None,
                 upper: value.upper,
                 work: value.work,
                 merged: value.merged,

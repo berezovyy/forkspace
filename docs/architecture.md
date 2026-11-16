@@ -61,6 +61,13 @@ file as a hard link (manifests are only ever replaced by rename), and the next f
 it to decide which files to link and whether the project changed. Older JSON-lines manifests
 are still read. A manifest carries a checksum of its rows, checked when it is opened.
 
+`pull` re-baselines a sealed overlay on a delta rather than a new full copy: the entries that
+changed since the full frozen copy the workspace builds on (with the directories above them),
+a list of deleted paths, and the manifest of the whole project at pull time. A path's
+fork-time version comes from the delta, else from the full copy unless the delta lists it as
+deleted (`Workspace::ancestor_file`). A delta is never mounted or reused for a new fork;
+the full copy below it stays alive while a workspace measures against the delta.
+
 A workspace stacked on an overlay workspace freezes from the parent's layers rather than its
 mounted view: directories the parent's upper layer has are read through the view, so
 fuse-overlayfs decides what they show, and every other directory is the parent's frozen copy,

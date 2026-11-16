@@ -5,7 +5,7 @@
 //! character device, or a zero-length `.wh.` file) marks a deletion of the entry it names.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
@@ -27,7 +27,7 @@ pub fn collect_changes_fast(workspace: &Workspace) -> Result<Vec<FileChange>> {
 
 fn collect(workspace: &Workspace, need_line_counts: bool) -> Result<Vec<FileChange>> {
     let upper = workspace.upper_path()?;
-    let ancestor = workspace.ancestor_dir();
+    let ancestor = |relative: &Path| workspace.ancestor_file(relative);
     if !upper.exists() {
         return Ok(Vec::new());
     }
@@ -52,13 +52,13 @@ fn collect(workspace: &Workspace, need_line_counts: bool) -> Result<Vec<FileChan
 
         let metadata = entry.metadata().ok();
         if metadata.as_ref().is_some_and(is_device_whiteout) {
-            if fs::symlink_metadata(ancestor.join(rel)).is_ok() {
+            if fs::symlink_metadata(ancestor(rel)).is_ok() {
                 changes.push(FileChange::deletion(rel.to_path_buf()));
             }
             continue;
         }
         if metadata.is_some_and(|metadata| metadata.len() == 0) {
-            match valid_whiteout(rel, file_name, ancestor) {
+            match valid_whiteout(rel, file_name, &ancestor) {
                 Some(Whiteout::Opaque) => continue,
                 Some(Whiteout::Deletion(original_name)) => {
                     changes.push(FileChange::deletion(rel.with_file_name(original_name)));
@@ -71,7 +71,7 @@ fn collect(workspace: &Workspace, need_line_counts: bool) -> Result<Vec<FileChan
             continue;
         }
 
-        let base_path = ancestor.join(rel);
+        let base_path = ancestor(rel);
         if let Some(change) = classify_file(
             rel.to_path_buf(),
             entry.path(),
@@ -88,12 +88,16 @@ fn collect(workspace: &Workspace, need_line_counts: bool) -> Result<Vec<FileChan
 
 /// Parse `file_name` as a whiteout. A deletion whiteout only counts when the base still
 /// has the entry it hides; otherwise it is an add-then-delete with nothing to report.
-fn valid_whiteout(rel: &Path, file_name: &str, base: &Path) -> Option<Whiteout> {
+fn valid_whiteout(
+    rel: &Path,
+    file_name: &str,
+    ancestor: &dyn Fn(&Path) -> PathBuf,
+) -> Option<Whiteout> {
     match Whiteout::parse(file_name)? {
         Whiteout::Opaque => Some(Whiteout::Opaque),
         Whiteout::Deletion(original_name) => {
             let target = rel.with_file_name(&original_name);
-            fs::symlink_metadata(base.join(target))
+            fs::symlink_metadata(ancestor(&target))
                 .is_ok()
                 .then_some(Whiteout::Deletion(original_name))
         }

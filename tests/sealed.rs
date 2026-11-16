@@ -441,6 +441,140 @@ fn a_stacked_copy_matches_its_parent_view_after_every_kind_of_change() {
     assert_eq!(env.stdout(&["diff", "child"]).trim(), "clean — no changes");
 }
 
+/// The frozen copies that are deltas (a `base` in their meta), and the files in each tree.
+fn deltas(env: &Env) -> Vec<(PathBuf, usize)> {
+    env.frozen_copies()
+        .into_iter()
+        .filter(|copy| {
+            fs::read_to_string(copy.join("meta.json")).is_ok_and(|meta| meta.contains("\"base\""))
+        })
+        .map(|copy| {
+            let files = walk_files(&copy.join("tree"));
+            (copy, files)
+        })
+        .collect()
+}
+
+fn walk_files(root: &Path) -> usize {
+    fs::read_dir(root)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| {
+                    if entry.file_type().unwrap().is_dir() {
+                        walk_files(&entry.path())
+                    } else {
+                        1
+                    }
+                })
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
+#[test]
+fn pull_records_only_what_changed_and_everything_still_measures_right() {
+    skip_without_overlay!();
+    let env = Env::new();
+    let project = env.project();
+    fs::create_dir_all(project.join("dir/sub")).unwrap();
+    fs::write(project.join("dir/sub/x.txt"), "x\n").unwrap();
+    fs::write(project.join("c.txt"), "c\n").unwrap();
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "--quiet", "-m", "more"]);
+    env.new_workspace("w", &[]);
+    fs::write(env.view("w").join("a.txt"), "ours\n").unwrap();
+
+    // The project moves on: an edit, an addition, a deleted file and a deleted directory.
+    fs::write(project.join("b.txt"), "b from project\n").unwrap();
+    fs::write(project.join("new.txt"), "new\n").unwrap();
+    fs::remove_file(project.join("c.txt")).unwrap();
+    fs::remove_dir_all(project.join("dir")).unwrap();
+    env.run(&["pull", "w"]);
+
+    let view = env.view("w");
+    assert_eq!(
+        fs::read_to_string(view.join("b.txt")).unwrap(),
+        "b from project\n"
+    );
+    assert_eq!(fs::read_to_string(view.join("new.txt")).unwrap(), "new\n");
+    assert!(!view.join("c.txt").exists() && !view.join("dir").exists());
+    let diff = env.stdout(&["diff", "w", "--stat"]);
+    assert!(
+        diff.contains("1 files changed, 0 added, 1 modified, 0 deleted"),
+        "{diff}"
+    );
+    assert!(env.stdout(&["diff", "w", "--full"]).contains("-a\n+ours"));
+    let made = deltas(&env);
+    assert_eq!(made.len(), 1, "pull made a delta, not a full copy");
+    assert!(
+        made[0].1 <= 2,
+        "the delta holds only the changed files: {made:?}"
+    );
+
+    // A second pull replaces the delta; the old one is cleaned up.
+    fs::write(project.join("new.txt"), "newer\n").unwrap();
+    env.run(&["pull", "w"]);
+    env.run(&["ls"]);
+    let made = deltas(&env);
+    assert_eq!(made.len(), 1, "{made:?}");
+    assert_eq!(fs::read_to_string(view.join("new.txt")).unwrap(), "newer\n");
+    assert!(env
+        .stdout(&["diff", "w", "--stat"])
+        .contains("1 files changed"));
+
+    // Merging still moves only the workspace's own edit.
+    let plan = env.stdout(&["merge", "w", "--dry-run"]);
+    assert!(
+        plan.contains("modify a.txt") && !plan.contains("b.txt"),
+        "{plan}"
+    );
+    env.run(&["merge", "w", "--no-install"]);
+    assert_eq!(fs::read_to_string(project.join("a.txt")).unwrap(), "ours\n");
+
+    // A new fork of the changed project gets a whole copy of its own, never a delta.
+    env.new_workspace("fresh", &[]);
+    assert_eq!(
+        fs::read_to_string(env.view("fresh").join("new.txt")).unwrap(),
+        "newer\n"
+    );
+    env.run(&["drop", "--all"]);
+    env.run(&["ls"]);
+    assert!(env.frozen_copies().is_empty(), "{:?}", env.frozen_copies());
+}
+
+#[test]
+fn line_merges_read_the_fork_time_version_through_a_delta() {
+    skip_without_overlay!();
+    let env = Env::new();
+    let project = env.project();
+    fs::write(project.join("lines.txt"), "one\ntwo\nthree\nfour\nfive\n").unwrap();
+    fs::write(project.join("other.txt"), "other\n").unwrap();
+    env.new_workspace("w", &[]);
+    // A first pull leaves the workspace measured against a delta.
+    fs::write(project.join("other.txt"), "other changed\n").unwrap();
+    env.run(&["pull", "w"]);
+    assert_eq!(deltas(&env).len(), 1);
+
+    // Both sides now edit different lines of a file the delta does not hold.
+    fs::write(
+        env.view("w").join("lines.txt"),
+        "ONE\ntwo\nthree\nfour\nfive\n",
+    )
+    .unwrap();
+    fs::write(project.join("lines.txt"), "one\ntwo\nthree\nfour\nFIVE\n").unwrap();
+    env.run(&["pull", "w"]);
+    assert_eq!(
+        fs::read_to_string(env.view("w").join("lines.txt")).unwrap(),
+        "ONE\ntwo\nthree\nfour\nFIVE\n"
+    );
+    env.run(&["merge", "w", "--no-install"]);
+    assert_eq!(
+        fs::read_to_string(project.join("lines.txt")).unwrap(),
+        "ONE\ntwo\nthree\nfour\nFIVE\n"
+    );
+}
+
 #[test]
 fn merge_then_pull_moves_one_workspace_s_changes_into_another() {
     skip_without_overlay!();

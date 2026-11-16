@@ -28,14 +28,15 @@ const MAX_FILE_BYTES: u64 = 8 << 20;
 
 /// The fork-time version of `relative` in `workspace`, if one is known and is a regular file.
 pub fn file(workspace: &Workspace, relative: &Path) -> Option<PathBuf> {
-    let root = match &workspace.backend_state {
+    let path = match &workspace.backend_state {
         BackendState::Overlay(layers) if layers.lower.is_some() => {
-            workspace.ancestor_dir().to_path_buf()
+            workspace.ancestor_file(relative)
         }
         BackendState::Overlay(_) => return None,
-        BackendState::MacClone { .. } | BackendState::CowDir { .. } => dir(&workspace.name),
+        BackendState::MacClone { .. } | BackendState::CowDir { .. } => {
+            dir(&workspace.name).join(relative)
+        }
     };
-    let path = root.join(relative);
     fs::symlink_metadata(&path)
         .is_ok_and(|metadata| metadata.is_file())
         .then_some(path)

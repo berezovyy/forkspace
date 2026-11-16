@@ -229,6 +229,18 @@ impl Workspace {
         }
     }
 
+    /// Where the version of `relative` this workspace's changes are measured against lives.
+    /// The path may not exist: then there is no such version. After a `pull` the version may
+    /// sit in a delta over an older frozen copy (see `frozen::freeze_delta`).
+    pub fn ancestor_file(&self, relative: &Path) -> PathBuf {
+        if let BackendState::Overlay(state) = &self.backend_state {
+            if let (Some(delta), Some(base)) = (&state.ancestor, &state.ancestor_base) {
+                return crate::backend::overlay::frozen::resolve_delta(delta, base, relative);
+            }
+        }
+        self.ancestor_dir().join(relative)
+    }
+
     /// Whether the overlay layers live on tmpfs (always false for snapshot workspaces).
     pub fn tmpfs(&self) -> bool {
         self.linux_state().is_ok_and(|state| state.tmpfs)

@@ -50,6 +50,10 @@ pub struct OverlayState {
     /// re-baselines on a fresh copy of the base without remounting the view.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ancestor: Option<PathBuf>,
+    /// When `ancestor` is a delta (see `frozen::freeze_delta`), the full frozen copy it
+    /// builds on: the delta holds only what changed since that copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ancestor_base: Option<PathBuf>,
     pub upper: PathBuf,
     pub work: PathBuf,
     pub merged: PathBuf,
@@ -67,6 +71,7 @@ impl OverlayState {
         Self {
             lower: None,
             ancestor: None,
+            ancestor_base: None,
             upper: root.join("upper"),
             work: root.join("work"),
             merged: root.join("merged"),

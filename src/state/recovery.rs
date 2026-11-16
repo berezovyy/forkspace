@@ -109,9 +109,13 @@ impl State {
             let Ok(layers) = workspace.linux_state() else {
                 continue;
             };
-            for tree in [layers.lower.as_ref(), layers.ancestor.as_ref()]
-                .into_iter()
-                .flatten()
+            for tree in [
+                layers.lower.as_ref(),
+                layers.ancestor.as_ref(),
+                layers.ancestor_base.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
             {
                 users.entry(tree.clone()).or_default().push(&workspace.name);
             }
@@ -140,7 +144,13 @@ impl State {
             self.workspaces
                 .values()
                 .filter_map(|workspace| workspace.linux_state().ok())
-                .flat_map(|layers| [layers.lower.as_deref(), layers.ancestor.as_deref()])
+                .flat_map(|layers| {
+                    [
+                        layers.lower.as_deref(),
+                        layers.ancestor.as_deref(),
+                        layers.ancestor_base.as_deref(),
+                    ]
+                })
                 .flatten(),
         );
         frozen::unreferenced(&referenced)

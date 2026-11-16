@@ -325,10 +325,33 @@ pub fn finish(workspace: &mut Workspace, path: &Path) -> Result {
     // the ancestor.
     let ancestor = match &mut workspace.backend_state {
         BackendState::Overlay(layers) if layers.lower.is_some() => {
-            let frozen = frozen::freeze(&workspace.base, frozen::Basis::Project)?;
-            layers.ancestor =
-                (layers.lower.as_ref() != Some(&frozen.tree)).then(|| frozen.tree.clone());
-            frozen.tree
+            // The full frozen copy the baseline builds on: a delta's base, else the baseline.
+            let full = layers
+                .ancestor_base
+                .clone()
+                .or_else(|| layers.ancestor.clone())
+                .or_else(|| layers.lower.clone())
+                .expect("a sealed overlay has a lower layer");
+            match frozen::freeze_delta(&workspace.base, &full)? {
+                Some(frozen::Delta::Unchanged) => {
+                    layers.ancestor = (layers.lower.as_ref() != Some(&full)).then(|| full.clone());
+                    layers.ancestor_base = None;
+                    full
+                }
+                // Only what changed since `full` is recorded; no whole new copy is made.
+                Some(frozen::Delta::Made(delta)) => {
+                    layers.ancestor = Some(delta.clone());
+                    layers.ancestor_base = Some(full);
+                    delta
+                }
+                None => {
+                    let frozen = frozen::freeze(&workspace.base, frozen::Basis::Project)?;
+                    layers.ancestor =
+                        (layers.lower.as_ref() != Some(&frozen.tree)).then(|| frozen.tree.clone());
+                    layers.ancestor_base = None;
+                    frozen.tree
+                }
+            }
         }
         BackendState::Overlay(_) => workspace.base.clone(),
         BackendState::MacClone { .. } | BackendState::CowDir { .. } => {

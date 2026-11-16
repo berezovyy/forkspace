@@ -64,6 +64,9 @@ struct Meta {
     /// were flushed before they were used, and have none).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     boot: Option<String>,
+    /// For a delta (see [`freeze_delta`]): the tree of the full frozen copy it builds on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base: Option<PathBuf>,
 }
 
 /// What a new frozen copy can share with an existing one.
@@ -258,6 +261,7 @@ fn build(
         started_ns,
         entries: stats.entries,
         boot: boot.clone(),
+        base: None,
     };
     write_atomic(&staging.join(META), &serde_json::to_vec_pretty(&meta)?)?;
     let finished = root.join(&id);
@@ -505,12 +509,18 @@ pub(crate) fn settle(tree: &Path) -> Settled {
     if meta.as_ref().is_some_and(|meta| trusted(dir, meta)) {
         return Settled::Trusted;
     }
+    // A delta's rows live in it or in the full copy below it.
+    let base = meta.as_ref().and_then(|meta| meta.base.clone());
+    let locate = |relative: &Path| match &base {
+        Some(base) => resolve_delta(tree, base, relative),
+        None => tree.join(relative),
+    };
     let intact = Manifest::open_file(&manifest_cache(tree)).is_ok_and(|rows| {
         meta.as_ref()
             .is_none_or(|meta| rows.len() as u64 == meta.entries)
             && rows.iter().all(|row| {
                 manifest::decode_path(row.path).is_ok_and(|relative| {
-                    Entry::lstat(&tree.join(relative)).is_ok_and(|entry| {
+                    Entry::lstat(&locate(&relative)).is_ok_and(|entry| {
                         manifest::ManifestKind::of_entry(&entry) == row.kind
                             && (row.kind == manifest::ManifestKind::Dir
                                 || (entry.len == row.size
@@ -527,6 +537,209 @@ pub(crate) fn settle(tree: &Path) -> Settled {
     }
     let _ = fs::write(dir.join(DAMAGED), b"");
     Settled::Damaged
+}
+
+const DELETED: &str = "deleted";
+
+/// What [`freeze_delta`] made.
+pub(crate) enum Delta {
+    /// The project still matches the full copy: measure against it directly.
+    Unchanged,
+    /// The tree of a new delta.
+    Made(PathBuf),
+}
+
+/// Record what `source` changed since the full frozen copy `base` as a delta beside it: the
+/// changed and added entries (with the directories above them) in its tree, the deleted
+/// paths in `deleted`, and the manifest of the whole of `source`. `pull` measures a
+/// workspace against it without copying or linking every unchanged file, which a full copy
+/// costs; [`resolve_delta`] finds each path's version. `None` when `base` has no manifest to
+/// compare with (a copy older than manifests): the caller makes a full copy instead.
+pub(crate) fn freeze_delta(source: &Path, base: &Path) -> Result<Option<Delta>> {
+    let Ok(rows) = Manifest::open_file(&manifest_cache(base)) else {
+        return Ok(None);
+    };
+    let Some(base_meta) = base
+        .parent()
+        .and_then(|dir| fs::read(dir.join(META)).ok())
+        .and_then(|bytes| serde_json::from_slice::<Meta>(&bytes).ok())
+        .filter(|meta| meta.base.is_none())
+    else {
+        return Ok(None);
+    };
+    let root = paths::frozen_root();
+    ensure_private_dir(&root)?;
+    let _lock = lock(&root, true)?;
+    let source = source
+        .canonicalize()
+        .io_context(|| format!("canonicalize {}", source.display()))?;
+    let started_ns = now_unix_ns();
+
+    // One walk of the project: every entry's facts, and whether it differs from `base`.
+    let walked = crate::util::walk::parallel(&source, |relative, path, entry| {
+        let encoded = manifest::encode_path(relative);
+        let differs = rows
+            .get(&encoded)
+            .is_none_or(|row| !same_as_row(path, entry, &row, base_meta.started_ns));
+        Ok(Some((encoded, *entry, differs)))
+    })?;
+    let seen: std::collections::HashSet<&str> = walked
+        .iter()
+        .map(|(_, (encoded, _, _))| encoded.as_str())
+        .collect();
+    let deleted: Vec<&str> = rows
+        .iter()
+        .map(|row| row.path)
+        .filter(|path| !seen.contains(path))
+        .collect();
+    if deleted.is_empty() && walked.iter().all(|(_, (_, _, differs))| !differs) {
+        return Ok(Some(Delta::Unchanged));
+    }
+
+    // The delta's tree: what differs, and the directories that hold it.
+    let mut wanted = std::collections::BTreeSet::new();
+    for (relative, (_, _, differs)) in &walked {
+        if *differs {
+            wanted.extend(
+                relative
+                    .ancestors()
+                    .filter(|path| !path.as_os_str().is_empty()),
+            );
+        }
+    }
+    let listed: Vec<(PathBuf, Entry, PathBuf)> = walked
+        .iter()
+        .filter(|(relative, _)| wanted.contains(relative.as_path()))
+        .map(|(relative, (_, entry, _))| (relative.clone(), *entry, source.join(relative)))
+        .collect();
+    let mut manifest_rows = Vec::with_capacity(walked.len());
+    for (relative, (encoded, entry, differs)) in &walked {
+        manifest_rows.push(if *differs {
+            manifest::row_of(relative, &source.join(relative), entry, u128::MAX)?
+        } else {
+            rows.get(encoded)
+                .expect("an unchanged entry has a row")
+                .to_row()
+        });
+    }
+
+    let id = format!("{started_ns:x}-{}", std::process::id());
+    let staging = root.join(format!(".{id}.tmp"));
+    let tree = staging.join(TREE);
+    let boot = boot_id();
+    let built = (|| -> Result<u64> {
+        fs::create_dir_all(&tree).io_context(|| format!("create {}", tree.display()))?;
+        let (stats, _) =
+            materialize_listed(listed, &tree, |_, _, _| Ok(Placed::No), boot.is_none())?;
+        let mut deleted_list = deleted.join("\n");
+        deleted_list.push('\n');
+        fs::write(staging.join(DELETED), deleted_list)
+            .io_context(|| format!("write {}", staging.display()))?;
+        let temporary = staging.join(format!(".{MANIFEST}.tmp-{}", std::process::id()));
+        manifest::write_file(
+            &staging.join(MANIFEST),
+            &temporary,
+            manifest_rows,
+            boot.is_none(),
+        )?;
+        let meta = Meta {
+            source: source.clone(),
+            started_ns,
+            entries: walked.len() as u64,
+            boot: boot.clone(),
+            base: Some(base.to_path_buf()),
+        };
+        write_atomic(&staging.join(META), &serde_json::to_vec_pretty(&meta)?)?;
+        Ok(stats.allocated_bytes)
+    })();
+    let allocated = match built {
+        Ok(allocated) => allocated,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+    };
+    let finished = root.join(&id);
+    fs::rename(&staging, &finished)
+        .io_context(|| format!("install frozen delta {}", finished.display()))?;
+    sync_dir(&root)?;
+    if boot.is_some() {
+        PENDING_FLUSHES
+            .lock()
+            .expect("pending flushes")
+            .push(finished.clone());
+    }
+    let own: u64 = [
+        finished.join(META),
+        finished.join(MANIFEST),
+        finished.join(DELETED),
+    ]
+    .iter()
+    .filter_map(|path| Entry::lstat(path).ok())
+    .map(|entry| entry.blocks * 512)
+    .sum();
+    crate::disk::note_frozen_copy(&id, allocated + own);
+    Ok(Some(Delta::Made(finished.join(TREE))))
+}
+
+/// Where the version of `relative` in the delta `delta` over the full copy `base` lives: the
+/// delta's own entry, else `base`'s unless the delta records it deleted. The path may not
+/// exist (no such version).
+pub(crate) fn resolve_delta(delta: &Path, base: &Path, relative: &Path) -> PathBuf {
+    let own = delta.join(relative);
+    if fs::symlink_metadata(&own).is_ok() || deleted_in(delta, relative) {
+        return own;
+    }
+    let below = base.join(relative);
+    if fs::symlink_metadata(&below).is_ok() {
+        below
+    } else {
+        own
+    }
+}
+
+/// Whether the delta `delta` records `relative`, or a directory above it, as deleted.
+fn deleted_in(delta: &Path, relative: &Path) -> bool {
+    use std::collections::{HashMap, HashSet};
+    use std::sync::{Arc, OnceLock};
+
+    // A delta never changes, so its list is read once per process.
+    static LISTS: OnceLock<std::sync::Mutex<HashMap<PathBuf, Arc<HashSet<String>>>>> =
+        OnceLock::new();
+    let list = {
+        let mut lists = LISTS
+            .get_or_init(Default::default)
+            .lock()
+            .expect("deleted lists");
+        lists
+            .entry(delta.to_path_buf())
+            .or_insert_with(|| {
+                let file = delta.parent().unwrap_or(delta).join(DELETED);
+                Arc::new(
+                    fs::read_to_string(file)
+                        .unwrap_or_default()
+                        .lines()
+                        .filter(|line| !line.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                )
+            })
+            .clone()
+    };
+    if list.is_empty() {
+        return false;
+    }
+    let encoded = manifest::encode_path(relative);
+    let mut prefix = encoded.as_str();
+    loop {
+        if list.contains(prefix) {
+            return true;
+        }
+        match prefix.rfind('/') {
+            Some(index) => prefix = &prefix[..index],
+            None => return false,
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -563,8 +776,12 @@ fn newest_for(root: &Path, source: &Path) -> Option<(PathBuf, Meta)> {
             let meta: Meta =
                 serde_json::from_slice(&fs::read(entry.path().join(META)).ok()?).ok()?;
             let tree = entry.path().join(TREE);
-            (meta.source == source && tree.is_dir() && trusted(&entry.path(), &meta))
-                .then_some((tree, meta))
+            // A delta is not a whole tree: it can be measured against, never mounted.
+            (meta.source == source
+                && meta.base.is_none()
+                && tree.is_dir()
+                && trusted(&entry.path(), &meta))
+            .then_some((tree, meta))
         })
         .max_by_key(|(_, meta)| meta.started_ns)
 }

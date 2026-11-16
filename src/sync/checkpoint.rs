@@ -330,7 +330,7 @@ fn step(path: &Path, current: &Path) -> MergedStep {
 fn fork_time_version(workspace: &Workspace, path: &Path) -> Option<PathBuf> {
     match &workspace.backend_state {
         BackendState::Overlay(layers) if layers.lower.is_some() => {
-            let original = workspace.ancestor_dir().join(path);
+            let original = workspace.ancestor_file(path);
             fs::symlink_metadata(&original)
                 .is_ok_and(|metadata| !metadata.is_dir())
                 .then_some(original)
