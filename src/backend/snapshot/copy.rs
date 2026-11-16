@@ -225,6 +225,7 @@ fn plan_tree(
     };
     // First destination of each multiply-linked source inode, keyed by `(dev, ino)`.
     let mut first_link: HashMap<(u64, u64), PathBuf> = HashMap::new();
+    let mut symlinks = Vec::new();
     for (relative, entry, source) in listed {
         let destination = target.join(&relative);
         plan.stats.entries += 1;
@@ -234,15 +235,13 @@ fn plan_tree(
         });
 
         if entry.is_dir() {
-            fs::create_dir_all(&destination)
-                .io_context(|| format!("create {}", destination.display()))?;
             plan.directories
                 .push((source, destination, entry, recorded));
             continue;
         }
         plan.stats.observe_entry(&entry);
         if entry.is_symlink() {
-            copy_symlink(&source, &destination, &entry)?;
+            symlinks.push((source, destination, entry));
         } else if entry.is_file() {
             if entry.nlink > 1 {
                 let identity = (entry.dev, entry.ino);
@@ -264,7 +263,74 @@ fn plan_tree(
             )));
         }
     }
+    // Directories one depth at a time, each depth on several threads: a directory's parent
+    // always exists before it is created.
+    for level in by_depth(&plan.directories, |(_, destination, _, _)| destination) {
+        for_each_parallel(&level, |(_, destination, _, _)| {
+            fs::create_dir(destination)
+                .or_else(|error| match error.kind() {
+                    std::io::ErrorKind::AlreadyExists => Ok(()),
+                    _ => Err(error),
+                })
+                .io_context(|| format!("create {}", destination.display()))
+        })?;
+    }
+    for_each_parallel(
+        &symlinks.iter().collect::<Vec<_>>(),
+        |(source, destination, entry)| copy_symlink(source, destination, entry),
+    )?;
     Ok(plan)
+}
+
+/// `items` grouped by the depth of their path, shallowest first, keeping their order.
+fn by_depth<T>(items: &[T], path: impl Fn(&T) -> &PathBuf) -> Vec<Vec<&T>> {
+    let mut levels: Vec<Vec<&T>> = Vec::new();
+    for item in items {
+        let depth = path(item).components().count();
+        if levels.len() <= depth {
+            levels.resize_with(depth + 1, Vec::new);
+        }
+        levels[depth].push(item);
+    }
+    levels.retain(|level| !level.is_empty());
+    levels
+}
+
+/// Run `work` for every item on up to [`crate::util::walk::threads`] threads; the first error
+/// stops the rest and is returned.
+fn for_each_parallel<T: Sync>(items: &[T], work: impl Fn(&T) -> Result + Sync) -> Result {
+    let threads = crate::util::walk::threads()
+        .min(items.len().div_ceil(32))
+        .max(1);
+    if threads == 1 {
+        return items.iter().try_for_each(&work);
+    }
+    let next = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let failure = Mutex::new(None);
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    let Some(item) = items.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                        break;
+                    };
+                    if let Err(error) = work(item) {
+                        stop.store(true, Ordering::Relaxed);
+                        failure
+                            .lock()
+                            .expect("parallel failure")
+                            .get_or_insert(error);
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    match failure.into_inner().expect("parallel failure") {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 /// Files a thread takes on before another is worth starting.
@@ -405,23 +471,40 @@ fn sync_tree(target: &Path) -> Result {
 }
 
 /// Applies directory metadata once every entry exists, deepest first, so later writes cannot
-/// bump a finished mtime and a parent's restrictive mode cannot block its children.
+/// bump a finished mtime and a parent's restrictive mode cannot block its children. The
+/// directories of one depth do not affect each other, so each depth runs on several threads.
 fn finish_directories(
     directories: Vec<(PathBuf, PathBuf, Entry, Option<usize>)>,
     stats: &mut ForkStats,
     entries: &mut [(PathBuf, Entry)],
 ) -> Result {
-    for (source, destination, entry, recorded) in directories.into_iter().rev() {
-        copy_xattrs(&source, &destination, false)?;
-        set_mtime(&destination, &entry, false)?;
-        fs::set_permissions(&destination, fs::Permissions::from_mode(entry.mode))
-            .io_context(|| format!("set permissions on {}", destination.display()))?;
-        stats.observe_entry(&entry);
-        // A directory's size depends on how it was filled, so the copy's own is recorded.
-        if let Some(index) = recorded {
-            entries[index].1 = Entry::lstat(&destination)?;
-            stats.allocated_bytes += entries[index].1.blocks * 512;
-        }
+    let finished = Mutex::new(Vec::new());
+    for level in by_depth(&directories, |(_, destination, _, _)| destination)
+        .into_iter()
+        .rev()
+    {
+        for_each_parallel(&level, |(source, destination, entry, recorded)| {
+            copy_xattrs(source, destination, false)?;
+            set_mtime(destination, entry, false)?;
+            fs::set_permissions(destination, fs::Permissions::from_mode(entry.mode))
+                .io_context(|| format!("set permissions on {}", destination.display()))?;
+            // A directory's size depends on how it was filled, so the copy's own is recorded.
+            if let Some(index) = recorded {
+                let copy = Entry::lstat(destination)?;
+                finished
+                    .lock()
+                    .expect("finished directories")
+                    .push((*index, copy));
+            }
+            Ok(())
+        })?;
+    }
+    for (_, _, entry, _) in &directories {
+        stats.observe_entry(entry);
+    }
+    for (index, copy) in finished.into_inner().expect("finished directories") {
+        stats.allocated_bytes += copy.blocks * 512;
+        entries[index].1 = copy;
     }
     Ok(())
 }

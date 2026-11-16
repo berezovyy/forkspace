@@ -138,17 +138,41 @@ pub fn counts<'a>(workspaces: impl IntoIterator<Item = &'a Workspace>) -> HashMa
         })
         .collect();
     let excluded = own_lineage();
-    for pid in os::all_pids() {
-        if excluded.contains(&pid) {
-            continue;
-        }
-        // Read each process's directories once, then match them against every workspace.
-        let directories = os::working_dirs(pid);
-        for (name, roots) in &roots {
-            if directories.iter().any(|directory| inside(directory, roots)) {
-                counted.entry(name.clone()).or_default().insert(pid);
-            }
-        }
+    let pids: Vec<u32> = os::all_pids()
+        .into_iter()
+        .filter(|pid| !excluded.contains(pid))
+        .collect();
+    // Read each process's directories once, on a few threads, then match them against every
+    // workspace.
+    let threads = crate::util::walk::threads()
+        .min(pids.len().div_ceil(64))
+        .max(1);
+    let found: Vec<(String, u32)> = std::thread::scope(|scope| {
+        let roots = &roots;
+        let workers: Vec<_> = pids
+            .chunks(pids.len().div_ceil(threads).max(1))
+            .map(|chunk| {
+                scope.spawn(move || {
+                    let mut found = Vec::new();
+                    for &pid in chunk {
+                        let directories = os::working_dirs(pid);
+                        for (name, roots) in roots {
+                            if directories.iter().any(|directory| inside(directory, roots)) {
+                                found.push((name.clone(), pid));
+                            }
+                        }
+                    }
+                    found
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("process count thread"))
+            .collect()
+    });
+    for (name, pid) in found {
+        counted.entry(name).or_default().insert(pid);
     }
     counted
         .into_iter()

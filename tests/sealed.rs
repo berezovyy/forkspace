@@ -308,6 +308,37 @@ fn an_intact_copy_left_unflushed_by_a_crash_is_verified_and_kept() {
 }
 
 #[test]
+fn a_copy_whose_meta_was_lost_in_a_crash_is_checked_not_trusted() {
+    skip_without_overlay!();
+    let env = Env::new();
+    env.new_workspace("one", &[]);
+    let copy = env.frozen_copies().remove(0);
+    unflush_from_earlier_boot(&copy);
+    fs::write(copy.join("meta.json"), b"").unwrap();
+
+    let listed = env.run(&["ls"]);
+    assert!(String::from_utf8_lossy(&listed.stderr).is_empty());
+    assert!(
+        copy.join("durable").exists(),
+        "an intact copy is verified from its manifest"
+    );
+
+    unflush_from_earlier_boot_without_meta(&copy);
+    let torn = copy.join("tree/a.txt");
+    let mut permissions = fs::metadata(&torn).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o644);
+    fs::set_permissions(&torn, permissions).unwrap();
+    fs::write(&torn, b"").unwrap();
+    let warned = env.run(&["ls"]);
+    assert!(String::from_utf8_lossy(&warned.stderr).contains("damaged"));
+}
+
+/// [`unflush_from_earlier_boot`] for a copy whose `meta.json` is already unreadable.
+fn unflush_from_earlier_boot_without_meta(copy: &Path) {
+    let _ = fs::remove_file(copy.join("durable"));
+}
+
+#[test]
 fn a_damaged_copy_left_unflushed_by_a_crash_is_reported_and_never_reused() {
     skip_without_overlay!();
     let env = Env::new();

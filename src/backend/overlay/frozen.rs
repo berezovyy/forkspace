@@ -497,17 +497,17 @@ pub(crate) fn settle(tree: &Path) -> Settled {
     if dir.join(DAMAGED).exists() {
         return Settled::Damaged;
     }
-    let Some(meta) = fs::read(dir.join(META))
+    // An unreadable `meta.json` is checked like an unflushed copy, never trusted: it can only
+    // be unreadable when a crash interrupted the copy's writes.
+    let meta = fs::read(dir.join(META))
         .ok()
-        .and_then(|bytes| serde_json::from_slice::<Meta>(&bytes).ok())
-    else {
-        return Settled::Trusted;
-    };
-    if trusted(dir, &meta) {
+        .and_then(|bytes| serde_json::from_slice::<Meta>(&bytes).ok());
+    if meta.as_ref().is_some_and(|meta| trusted(dir, meta)) {
         return Settled::Trusted;
     }
     let intact = Manifest::open_file(&manifest_cache(tree)).is_ok_and(|rows| {
-        rows.len() as u64 == meta.entries
+        meta.as_ref()
+            .is_none_or(|meta| rows.len() as u64 == meta.entries)
             && rows.iter().all(|row| {
                 manifest::decode_path(row.path).is_ok_and(|relative| {
                     Entry::lstat(&tree.join(relative)).is_ok_and(|entry| {
@@ -576,7 +576,7 @@ fn unchanged_since(source: &Path, tree: &Path, meta: &Meta) -> Result<bool> {
     let rows = Manifest::open_file(&manifest_cache(tree)).ok();
     let differs = AtomicBool::new(false);
     let seen = AtomicU64::new(0);
-    crate::util::walk::parallel::<(), _>(source, |relative, path, current| {
+    let walked = crate::util::walk::parallel::<(), _>(source, |relative, path, current| {
         seen.fetch_add(1, Ordering::Relaxed);
         if differs.load(Ordering::Relaxed) {
             return Ok(None);
@@ -598,10 +598,18 @@ fn unchanged_since(source: &Path, tree: &Path, meta: &Meta) -> Result<bool> {
         };
         if !same {
             differs.store(true, Ordering::Relaxed);
+            // One difference settles it: stop the walk rather than read the rest.
+            return Err(ForkspaceError::StateFailed(
+                "the project changed".to_string(),
+            ));
         }
         Ok(None)
-    })?;
-    Ok(!differs.load(Ordering::Relaxed) && seen.into_inner() == meta.entries)
+    });
+    if differs.load(Ordering::Relaxed) {
+        return Ok(false);
+    }
+    walked?;
+    Ok(seen.into_inner() == meta.entries)
 }
 
 /// [`same_file`] and its directory and symlink counterparts, against a manifest row of the

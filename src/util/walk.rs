@@ -115,27 +115,44 @@ where
     T: Send,
     F: Fn(&Path, &Path, &Entry) -> Result<Step<T>> + Sync,
 {
-    let kept = Mutex::new(Vec::new());
+    // Results go to one of several shards, picked by thread, so walker threads rarely wait
+    // on each other's pushes.
+    const SHARDS: usize = 64;
+    let shards: Vec<Mutex<Vec<(PathBuf, T)>>> =
+        (0..SHARDS).map(|_| Mutex::new(Vec::new())).collect();
     let keep = |relative: &Path, path: &Path, entry: &Entry| -> Result<bool> {
         let (item, descend) = match visit(relative, path, entry)? {
             Step::Descend(item) => (item, true),
             Step::Prune(item) => (item, false),
         };
         if let Some(item) = item {
-            kept.lock()
+            shards[thread_shard() % SHARDS]
+                .lock()
                 .expect("walk results lock")
                 .push((relative.to_path_buf(), item));
         }
         Ok(descend)
     };
     walk(root, &keep)?;
-    let mut kept = kept.into_inner().expect("walk results lock");
-    kept.sort_by(|a, b| {
+    let mut kept: Vec<(PathBuf, T)> = shards
+        .into_iter()
+        .flat_map(|shard| shard.into_inner().expect("walk results lock"))
+        .collect();
+    // Every path is visited once, so an unstable sort gives the same order.
+    kept.sort_unstable_by(|a, b| {
         a.0.as_os_str()
             .as_encoded_bytes()
             .cmp(b.0.as_os_str().as_encoded_bytes())
     });
     Ok(kept)
+}
+
+/// A number that differs between the threads of a walk, to spread their results over shards.
+fn thread_shard() -> usize {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::thread::current().id().hash(&mut hasher);
+    hasher.finish() as usize
 }
 
 /// A walk callback: the relative path, the full path, and the entry; returns whether to
