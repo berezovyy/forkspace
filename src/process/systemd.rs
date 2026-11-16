@@ -236,17 +236,61 @@ pub fn stop_unit(unit: &str) {
         .output();
 }
 
-/// Unload workspace `name`'s (now empty) slice.
+thread_local! {
+    /// Slices [`stop_slice`] leaves for the end of a [`batch_slice_stops`] call.
+    static DEFERRED_STOPS: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Unload workspace `name`'s (now empty) slice. A slice whose cgroup does not exist was
+/// never started (or is already gone), so there is nothing to stop. Inside
+/// [`batch_slice_stops`] the stop is left for one `systemctl` call at its end.
 pub fn stop_slice(name: &str) {
+    if slice_cgroup_path(name).is_some_and(|path| !path.is_dir()) {
+        return;
+    }
+    let deferred = DEFERRED_STOPS.with(|deferred| {
+        deferred
+            .borrow_mut()
+            .as_mut()
+            .map(|names| names.push(slice(name)))
+            .is_some()
+    });
+    if !deferred {
+        stop_units(&[slice(name)]);
+    }
+}
+
+/// Run `work`, then stop every slice it asked [`stop_slice`] to stop with one `systemctl`
+/// call instead of one per workspace.
+pub fn batch_slice_stops<T>(work: impl FnOnce() -> T) -> T {
+    DEFERRED_STOPS.with(|deferred| *deferred.borrow_mut() = Some(Vec::new()));
+    let result = work();
+    let units = DEFERRED_STOPS
+        .with(|deferred| deferred.borrow_mut().take())
+        .unwrap_or_default();
+    if !units.is_empty() {
+        stop_units(&units);
+    }
+    result
+}
+
+fn stop_units(units: &[String]) {
     if available() {
         let _ = Command::new("systemctl")
-            .args(["--user", "stop", &slice(name)])
+            .args(["--user", "stop"])
+            .args(units)
             .output();
     }
 }
 
 /// The cgroup directory of workspace `name`'s slice, if it exists.
 fn slice_cgroup(name: &str) -> Option<PathBuf> {
+    slice_cgroup_path(name).filter(|directory| directory.is_dir())
+}
+
+/// Where workspace `name`'s slice cgroup is when it exists, or `None` when this process does
+/// not run under a systemd user manager and the location cannot be known.
+fn slice_cgroup_path(name: &str) -> Option<PathBuf> {
     if !cfg!(target_os = "linux") {
         return None;
     }
@@ -260,11 +304,12 @@ fn slice_cgroup(name: &str) -> Option<PathBuf> {
     if !manager.contains("/user@") {
         return None;
     }
-    let directory = PathBuf::from("/sys/fs/cgroup")
-        .join(manager.trim_start_matches('/'))
-        .join("forkspace.slice")
-        .join(slice(name));
-    directory.is_dir().then_some(directory)
+    Some(
+        PathBuf::from("/sys/fs/cgroup")
+            .join(manager.trim_start_matches('/'))
+            .join("forkspace.slice")
+            .join(slice(name)),
+    )
 }
 
 /// `systemd-escape`: keep `[A-Za-z0-9:_.]` (no leading `.`), write other bytes as `\xNN`.

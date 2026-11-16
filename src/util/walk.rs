@@ -148,71 +148,49 @@ fn walk(root: &Path, keep: &Keep<'_>) -> Result {
     super::bulk::walk(root, threads(), keep)
 }
 
-/// Call `keep` for every entry under `root`.
+/// Call `keep` for every entry under `root`. Directories are read on several threads; each
+/// entry is `lstat`ed relative to its open directory (`statx` on the directory descriptor),
+/// so the kernel never resolves the full path of a deep `node_modules` entry again.
 #[cfg(not(target_os = "macos"))]
 fn walk(root: &Path, keep: &Keep<'_>) -> Result {
-    use ignore::{WalkBuilder, WalkState};
+    super::queue::run(root, threads(), &|directory| {
+        visit_directory(root, directory, keep)
+    })
+}
 
-    let failure = Mutex::new(None);
-    let walker = WalkBuilder::new(root)
-        .standard_filters(false)
-        .follow_links(false)
-        .threads(threads())
-        .build_parallel();
-    walker.run(|| {
-        Box::new(|walked| {
-            let outcome = walked
-                .map_err(|error| walk_error(root, error))
-                .and_then(|walked| {
-                    if walked.depth() == 0 {
-                        return Ok(true);
-                    }
-                    let path = walked.path();
-                    let entry = Entry::lstat(path)?;
-                    let relative = path.strip_prefix(root).map_err(|_| {
-                        ForkspaceError::StateFailed(format!(
-                            "{} escaped the walk of {}",
-                            path.display(),
-                            root.display()
-                        ))
-                    })?;
-                    keep(relative, path, &entry)
-                });
-            match outcome {
-                Ok(true) => WalkState::Continue,
-                Ok(false) => WalkState::Skip,
-                Err(error) => {
-                    failure
-                        .lock()
-                        .expect("walk failure lock")
-                        .get_or_insert(error);
-                    WalkState::Quit
-                }
-            }
-        })
-    });
-    match failure.into_inner().expect("walk failure lock") {
-        Some(error) => Err(error),
-        None => Ok(()),
+/// Read `directory` and call `keep` for each entry; returns the subdirectories to descend into.
+#[cfg(not(target_os = "macos"))]
+fn visit_directory(root: &Path, directory: &Path, keep: &Keep<'_>) -> Result<Vec<PathBuf>> {
+    use crate::util::IoContext;
+
+    let entries =
+        fs::read_dir(directory).io_context(|| format!("failed to walk {}", directory.display()))?;
+    let mut descend = Vec::new();
+    for entry in entries {
+        let entry = entry.io_context(|| format!("failed to walk {}", directory.display()))?;
+        let path = entry.path();
+        let walked = entry
+            .metadata()
+            .map(|metadata| Entry::of(&metadata))
+            .io_context(|| format!("inspect {}", path.display()))?;
+        let relative = path.strip_prefix(root).map_err(|_| {
+            ForkspaceError::StateFailed(format!(
+                "{} escaped the walk of {}",
+                path.display(),
+                root.display()
+            ))
+        })?;
+        if keep(relative, &path, &walked)? && walked.is_dir() {
+            descend.push(path);
+        }
     }
+    Ok(descend)
 }
 
 pub(crate) fn threads() -> usize {
     std::thread::available_parallelism()
-        .map(|count| count.get().min(8))
+        .map(|count| count.get().min(16))
         .unwrap_or(4)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn walk_error(root: &Path, error: ignore::Error) -> ForkspaceError {
-    let source = match error.io_error() {
-        Some(io) => std::io::Error::new(io.kind(), error.to_string()),
-        None => std::io::Error::other(error.to_string()),
-    };
-    ForkspaceError::Io {
-        context: format!("failed to walk {}", root.display()),
-        source,
-    }
 }
 
 #[cfg(test)]

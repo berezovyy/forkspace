@@ -4,14 +4,17 @@
 //! one [`ManifestRow`] per entry, written to `<manifest_dir>/<name>.jsonl`. Paths are
 //! percent-encoded ([`encode_path`]) so non-UTF-8 names survive the round trip. On macOS the
 //! manifest is built in a detached background process ([`spawn`]).
+//!
+//! The file is binary despite its name: a header, an offset per row, and the rows sorted by
+//! encoded path, so [`Manifest`] finds a row by binary search and reads every row without
+//! parsing text. Manifests written before this format are JSON lines; they are still read.
 
 mod worker;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
-use std::io::{BufRead, BufReader, BufWriter, Lines, Write};
-use std::iter::Enumerate;
+use std::io::{BufWriter, Write};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
@@ -184,7 +187,12 @@ fn row(root: &Path, entry: &walkdir::DirEntry, fork_time_ns: u128) -> Result<Man
 }
 
 /// The manifest row of the entry at `path` (`relative` to the view) with facts `entry`.
-fn row_of(relative: &Path, path: &Path, entry: &Entry, fork_time_ns: u128) -> Result<ManifestRow> {
+pub(crate) fn row_of(
+    relative: &Path,
+    path: &Path,
+    entry: &Entry,
+    fork_time_ns: u128,
+) -> Result<ManifestRow> {
     let kind = ManifestKind::of_entry(entry);
     let target = if kind == ManifestKind::Symlink {
         let target =
@@ -221,62 +229,60 @@ pub fn build_after_fork(name: &str, view: &Path, base: &Path, fork_time_ns: u128
 fn build_rows(name: &str, view: &Path, base: Option<&Path>, fork_time_ns: u128) -> Result<usize> {
     let path = manifest_path(name);
     let directory = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(directory)
-        .io_context(|| format!("create manifest directory {}", directory.display()))?;
     // State recovery deletes `.<name>.jsonl.tmp-<pid>` leftovers once `<pid>` has exited, so
     // an interrupted build is cleaned up later. Keep this exact name.
     let temporary = directory.join(format!(".{name}.jsonl.tmp-{}", std::process::id()));
-    let file = fs::File::create(&temporary)
-        .io_context(|| format!("create manifest {}", temporary.display()))?;
+    let rows = collect_rows(view, base, fork_time_ns)?;
+    write_file(&path, &temporary, rows, true)
+}
 
+/// Install `rows` as the binary manifest at `path`, written first to `temporary` in the same
+/// directory. With `durable`, the file and the rename are synced before this returns; without,
+/// the caller flushes them later. Returns the row count.
+pub(crate) fn write_file(
+    path: &Path,
+    temporary: &Path,
+    mut rows: Vec<ManifestRow>,
+    durable: bool,
+) -> Result<usize> {
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(directory)
+        .io_context(|| format!("create manifest directory {}", directory.display()))?;
+    let file = fs::File::create(temporary)
+        .io_context(|| format!("create manifest {}", temporary.display()))?;
     let mut writer = BufWriter::new(file);
-    let count = write_rows(&mut writer, view, base, fork_time_ns, &temporary)?;
+    write_binary(&mut writer, &mut rows)
+        .io_context(|| format!("write manifest {}", temporary.display()))?;
     let file = writer.into_inner().map_err(|error| ForkspaceError::Io {
         context: format!("flush manifest {}", temporary.display()),
         source: error.into_error(),
     })?;
-
-    file.sync_all()
-        .io_context(|| format!("sync manifest {}", temporary.display()))?;
-    fs::rename(&temporary, &path).io_context(|| format!("install manifest {}", path.display()))?;
-    fs::File::open(directory)
-        .and_then(|directory| directory.sync_all())
-        .io_context(|| format!("sync manifest directory {}", directory.display()))?;
-    Ok(count)
+    if durable {
+        file.sync_all()
+            .io_context(|| format!("sync manifest {}", temporary.display()))?;
+    }
+    fs::rename(temporary, path).io_context(|| format!("install manifest {}", path.display()))?;
+    if durable {
+        crate::util::fs::sync_dir(directory)?;
+    }
+    Ok(rows.len())
 }
 
-fn write_rows(
-    writer: &mut impl Write,
-    view: &Path,
-    base: Option<&Path>,
-    fork_time_ns: u128,
-    temporary: &Path,
-) -> Result<usize> {
-    let mut write = |root: &Path, entry: &walkdir::DirEntry| -> Result {
-        serde_json::to_writer(&mut *writer, &row(root, entry, fork_time_ns)?)?;
-        writer
-            .write_all(b"\n")
-            .io_context(|| format!("write manifest {}", temporary.display()))
-    };
+/// The rows of every entry in `view`, with base entries the view lost after the fork when
+/// `base` is given (see [`build_after_fork`]).
+fn collect_rows(view: &Path, base: Option<&Path>, fork_time_ns: u128) -> Result<Vec<ManifestRow>> {
     let Some(base) = base else {
         // At fork time the view is not in use yet: read it on several threads.
         let rows = crate::util::walk::parallel(view, |relative, path, metadata| {
             row_of(relative, path, metadata, fork_time_ns).map(Some)
         })?;
-        for (_, row) in &rows {
-            serde_json::to_writer(&mut *writer, row)?;
-            writer
-                .write_all(b"\n")
-                .io_context(|| format!("write manifest {}", temporary.display()))?;
-        }
-        return Ok(rows.len());
+        return Ok(rows.into_iter().map(|(_, row)| row).collect());
     };
-    let mut count = 0;
+    let mut rows = Vec::new();
     for entry in WalkDir::new(view).follow_links(false) {
         let entry = entry.walk_context(view)?;
         if entry.depth() > 0 {
-            write(view, &entry)?;
-            count += 1;
+            rows.push(row(view, &entry, fork_time_ns)?);
         }
         let changed_dir = entry.file_type().is_dir()
             && entry
@@ -285,12 +291,11 @@ fn write_rows(
         if changed_dir {
             let relative = entry.path().strip_prefix(view).unwrap_or(Path::new(""));
             for missing in entries_missing_from_view(view, base, relative, fork_time_ns)? {
-                write(base, &missing)?;
-                count += 1;
+                rows.push(row(base, &missing, fork_time_ns)?);
             }
         }
     }
-    Ok(count)
+    Ok(rows)
 }
 
 /// Base entries under directory `relative` that the view no longer has and that the base has
@@ -326,40 +331,334 @@ fn entries_missing_from_view(
     Ok(missing)
 }
 
-/// Streaming reader over a manifest's rows; see [`stream`].
+/// First bytes of a binary manifest. Manifests without them are JSON lines (the format
+/// before this one), which [`Manifest::open_file`] still reads.
+const MAGIC: &[u8; 8] = b"FSMANIF1";
+/// Magic, then the row count as a little-endian `u64`; one `u64` offset per row follows.
+const HEADER: usize = 16;
+const DIRTY: u8 = 1;
+const HAS_TARGET: u8 = 2;
+
+/// A fork manifest loaded for lookups, its rows sorted by encoded path.
+pub struct Manifest {
+    rows: Rows,
+}
+
+enum Rows {
+    /// A binary manifest whose every offset and row was checked when it was opened.
+    Binary { bytes: Vec<u8>, count: usize },
+    /// A JSON-lines manifest, parsed and sorted.
+    Parsed(Vec<ManifestRow>),
+}
+
+/// One row of a [`Manifest`], borrowed from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowRef<'a> {
+    pub path: &'a str,
+    pub kind: ManifestKind,
+    pub size: u64,
+    pub mtime_ns: i128,
+    pub mode: u32,
+    pub target: Option<&'a str>,
+    pub dirty: bool,
+}
+
+impl RowRef<'_> {
+    pub fn to_row(&self) -> ManifestRow {
+        ManifestRow {
+            path: self.path.to_string(),
+            kind: self.kind,
+            size: self.size,
+            mtime_ns: self.mtime_ns,
+            mode: self.mode,
+            target: self.target.map(str::to_string),
+            dirty: self.dirty,
+        }
+    }
+}
+
+impl<'a> From<&'a ManifestRow> for RowRef<'a> {
+    fn from(row: &'a ManifestRow) -> Self {
+        Self {
+            path: &row.path,
+            kind: row.kind,
+            size: row.size,
+            mtime_ns: row.mtime_ns,
+            mode: row.mode,
+            target: row.target.as_deref(),
+            dirty: row.dirty,
+        }
+    }
+}
+
+impl Manifest {
+    /// Workspace `name`'s manifest.
+    pub fn open(name: &str) -> Result<Self> {
+        Self::open_file(&manifest_path(name))
+    }
+
+    /// The manifest file at `path`, in either format.
+    pub fn open_file(path: &Path) -> Result<Self> {
+        let bytes = fs::read(path).io_context(|| format!("open manifest {}", path.display()))?;
+        if bytes.starts_with(MAGIC) {
+            let count = checked_count(&bytes).ok_or_else(|| {
+                ForkspaceError::StateCorrupted(format!("invalid manifest {}", path.display()))
+            })?;
+            return Ok(Self {
+                rows: Rows::Binary { bytes, count },
+            });
+        }
+        let mut rows = Vec::new();
+        for (index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
+            if line.is_empty() {
+                continue;
+            }
+            let row: ManifestRow = serde_json::from_slice(line).map_err(|error| {
+                ForkspaceError::StateCorrupted(format!(
+                    "invalid manifest {} line {}: {error}",
+                    path.display(),
+                    index + 1
+                ))
+            })?;
+            rows.push(row);
+        }
+        rows.sort_by(|a, b| a.path.as_bytes().cmp(b.path.as_bytes()));
+        Ok(Self {
+            rows: Rows::Parsed(rows),
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        match &self.rows {
+            Rows::Binary { count, .. } => *count,
+            Rows::Parsed(rows) => rows.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The row at `index` in path order.
+    pub fn row(&self, index: usize) -> RowRef<'_> {
+        match &self.rows {
+            Rows::Binary { bytes, .. } => {
+                binary_row(bytes, index)
+                    .expect("manifest rows were checked when it was opened")
+                    .0
+            }
+            Rows::Parsed(rows) => RowRef::from(&rows[index]),
+        }
+    }
+
+    /// Every row, in path order.
+    pub fn iter(&self) -> impl Iterator<Item = RowRef<'_>> {
+        (0..self.len()).map(|index| self.row(index))
+    }
+
+    /// The row whose encoded path is `encoded`.
+    pub fn get(&self, encoded: &str) -> Option<RowRef<'_>> {
+        let index = self.lower_bound(encoded);
+        (index < self.len())
+            .then(|| self.row(index))
+            .filter(|row| row.path == encoded)
+    }
+
+    /// The rows below the directory whose encoded path is `encoded`, in path order.
+    pub fn under<'a>(&'a self, encoded: &str) -> impl Iterator<Item = RowRef<'a>> + 'a {
+        let prefix = format!("{encoded}/");
+        let start = self.lower_bound(&prefix);
+        (start..self.len())
+            .map(|index| self.row(index))
+            .take_while(move |row| row.path.starts_with(&prefix))
+    }
+
+    /// The index of the first row whose path is not below `encoded` in byte order.
+    fn lower_bound(&self, encoded: &str) -> usize {
+        let (mut low, mut high) = (0, self.len());
+        while low < high {
+            let middle = (low + high) / 2;
+            if self.row(middle).path.as_bytes() < encoded.as_bytes() {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        low
+    }
+}
+
+/// The row count of a binary manifest after checking that every offset points at a whole
+/// row, or `None` if the file is damaged.
+fn checked_count(bytes: &[u8]) -> Option<usize> {
+    let count = usize::try_from(read_u64(bytes, MAGIC.len())?).ok()?;
+    let table_end = HEADER.checked_add(count.checked_mul(8)?)?;
+    if table_end > bytes.len() {
+        return None;
+    }
+    let mut previous: Option<&str> = None;
+    let mut end = table_end;
+    for index in 0..count {
+        let (row, row_end) = binary_row(bytes, index)?;
+        if previous.is_some_and(|previous| previous.as_bytes() > row.path.as_bytes()) {
+            return None;
+        }
+        previous = Some(row.path);
+        end = end.max(row_end);
+    }
+    // Anything after the last row (an append, a second write) means the file is not the one
+    // that was written.
+    (end == bytes.len()).then_some(count)
+}
+
+fn read_u64(bytes: &[u8], at: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?))
+}
+
+fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+}
+
+/// Row `index` of a binary manifest and the offset just past it.
+fn binary_row(bytes: &[u8], index: usize) -> Option<(RowRef<'_>, usize)> {
+    let offset = usize::try_from(read_u64(bytes, HEADER + index * 8)?).ok()?;
+    let mut at = offset;
+    let text = |at: &mut usize| -> Option<&str> {
+        let len = read_u32(bytes, *at)? as usize;
+        let start = *at + 4;
+        let value = std::str::from_utf8(bytes.get(start..start.checked_add(len)?)?).ok()?;
+        *at = start + len;
+        Some(value)
+    };
+    let path = text(&mut at)?;
+    let kind = match *bytes.get(at)? {
+        0 => ManifestKind::File,
+        1 => ManifestKind::Dir,
+        2 => ManifestKind::Symlink,
+        _ => return None,
+    };
+    let flags = *bytes.get(at + 1)?;
+    let mode = read_u32(bytes, at + 2)?;
+    let size = read_u64(bytes, at + 6)?;
+    let mtime_ns = i128::from_le_bytes(bytes.get(at + 14..at + 30)?.try_into().ok()?);
+    at += 30;
+    let target = if flags & HAS_TARGET != 0 {
+        Some(text(&mut at)?)
+    } else {
+        None
+    };
+    let row = RowRef {
+        path,
+        kind,
+        size,
+        mtime_ns,
+        mode,
+        target,
+        dirty: flags & DIRTY != 0,
+    };
+    Some((row, at))
+}
+
+/// Write `rows` as a binary manifest, sorted by path.
+pub(crate) fn write_binary(
+    writer: &mut impl Write,
+    rows: &mut [ManifestRow],
+) -> std::io::Result<()> {
+    rows.sort_by(|a, b| a.path.as_bytes().cmp(b.path.as_bytes()));
+    let row_len = |row: &ManifestRow| {
+        4 + row.path.len() + 30 + row.target.as_ref().map_or(0, |target| 4 + target.len())
+    };
+    writer.write_all(MAGIC)?;
+    writer.write_all(&(rows.len() as u64).to_le_bytes())?;
+    let mut offset = (HEADER + rows.len() * 8) as u64;
+    for row in rows.iter() {
+        writer.write_all(&offset.to_le_bytes())?;
+        offset += row_len(row) as u64;
+    }
+    let mut buffer = Vec::with_capacity(256);
+    for row in rows.iter() {
+        buffer.clear();
+        buffer.extend_from_slice(&(row.path.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(row.path.as_bytes());
+        buffer.push(match row.kind {
+            ManifestKind::File => 0,
+            ManifestKind::Dir => 1,
+            ManifestKind::Symlink => 2,
+        });
+        let mut flags = 0;
+        if row.dirty {
+            flags |= DIRTY;
+        }
+        if row.target.is_some() {
+            flags |= HAS_TARGET;
+        }
+        buffer.push(flags);
+        buffer.extend_from_slice(&row.mode.to_le_bytes());
+        buffer.extend_from_slice(&row.size.to_le_bytes());
+        buffer.extend_from_slice(&row.mtime_ns.to_le_bytes());
+        if let Some(target) = &row.target {
+            buffer.extend_from_slice(&(target.len() as u32).to_le_bytes());
+            buffer.extend_from_slice(target.as_bytes());
+        }
+        writer.write_all(&buffer)?;
+    }
+    Ok(())
+}
+
+/// Every row of a manifest, owned; see [`stream`].
 pub struct ManifestReader {
-    path: PathBuf,
-    lines: Enumerate<Lines<BufReader<fs::File>>>,
+    manifest: Manifest,
+    next: usize,
 }
 
 impl Iterator for ManifestReader {
     type Item = Result<ManifestRow>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (index, line) = self.lines.next()?;
-        let line_number = index + 1;
-        let path = &self.path;
-        let row = line
-            .io_context(|| format!("read manifest {} line {line_number}", path.display()))
-            .and_then(|line| {
-                serde_json::from_str(&line).map_err(|error| {
-                    ForkspaceError::StateCorrupted(format!(
-                        "invalid manifest {} line {line_number}: {error}",
-                        path.display()
-                    ))
-                })
-            });
-        Some(row)
+        if self.next >= self.manifest.len() {
+            return None;
+        }
+        let row = self.manifest.row(self.next).to_row();
+        self.next += 1;
+        Some(Ok(row))
     }
 }
 
-/// Open workspace `name`'s manifest for row-by-row reading.
-pub fn stream(name: &str) -> Result<ManifestReader> {
+/// Durably install a copy of the manifest file `source` as workspace `name`'s manifest, the
+/// way [`build`] installs one it walked. Nothing is left behind when the copy fails.
+pub fn install_copy(name: &str, source: &Path) -> Result {
     let path = manifest_path(name);
-    let file = fs::File::open(&path).io_context(|| format!("open manifest {}", path.display()))?;
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(directory)
+        .io_context(|| format!("create manifest directory {}", directory.display()))?;
+    // The temporary name state recovery knows how to clean up (see `build_rows`).
+    let temporary = directory.join(format!(".{name}.jsonl.tmp-{}", std::process::id()));
+    // Manifests are only ever replaced by a rename, never written in place, so a hard link to
+    // a durable `source` is as good as a copy and costs no data write. Another filesystem
+    // gets a copy.
+    let placed = match fs::hard_link(source, &temporary) {
+        Ok(()) => Ok(()),
+        Err(_) => fs::copy(source, &temporary)
+            .io_context(|| format!("copy manifest {}", source.display()))
+            .and_then(|_| crate::util::fs::sync_file(&temporary)),
+    };
+    let installed = placed
+        .and_then(|()| {
+            fs::rename(&temporary, &path)
+                .io_context(|| format!("install manifest {}", path.display()))
+        })
+        .and_then(|()| crate::util::fs::sync_dir(directory));
+    if installed.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    installed
+}
+
+/// Read workspace `name`'s manifest row by row, in path order.
+pub fn stream(name: &str) -> Result<ManifestReader> {
     Ok(ManifestReader {
-        path,
-        lines: BufReader::new(file).lines().enumerate(),
+        manifest: Manifest::open(name)?,
+        next: 0,
     })
 }
 
@@ -470,4 +769,80 @@ fn has_post_fork_writes(workspace: &Workspace) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(path: &str, kind: ManifestKind, target: Option<&str>, dirty: bool) -> ManifestRow {
+        ManifestRow {
+            path: path.to_string(),
+            kind,
+            size: path.len() as u64,
+            mtime_ns: -1_700_000_000_123_456_789,
+            mode: 0o644,
+            target: target.map(str::to_string),
+            dirty,
+        }
+    }
+
+    fn sample() -> Vec<ManifestRow> {
+        vec![
+            row("src/b.ts", ManifestKind::File, None, false),
+            row("src", ManifestKind::Dir, None, false),
+            row("link", ManifestKind::Symlink, Some("src/b.ts"), false),
+            row("src/a%20b.ts", ManifestKind::File, None, true),
+            row("src-other", ManifestKind::File, None, false),
+        ]
+    }
+
+    #[test]
+    fn binary_manifest_round_trips_and_finds_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m");
+        let mut file = Vec::new();
+        write_binary(&mut file, &mut sample()).unwrap();
+        fs::write(&path, &file).unwrap();
+
+        let manifest = Manifest::open_file(&path).unwrap();
+        let mut expected = sample();
+        expected.sort_by(|a, b| a.path.cmp(&b.path));
+        let read: Vec<ManifestRow> = manifest.iter().map(|row| row.to_row()).collect();
+        assert_eq!(read, expected);
+        assert_eq!(manifest.get("link").unwrap().target, Some("src/b.ts"));
+        assert!(manifest.get("src/a%20b.ts").unwrap().dirty);
+        assert!(manifest.get("missing").is_none());
+        let under: Vec<&str> = manifest.under("src").map(|row| row.path).collect();
+        assert_eq!(under, ["src/a%20b.ts", "src/b.ts"]);
+    }
+
+    #[test]
+    fn json_lines_manifests_are_still_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m");
+        let lines: String = sample()
+            .iter()
+            .map(|row| serde_json::to_string(row).unwrap() + "\n")
+            .collect();
+        fs::write(&path, lines).unwrap();
+        let manifest = Manifest::open_file(&path).unwrap();
+        assert_eq!(manifest.len(), 5);
+        assert_eq!(manifest.get("src/b.ts").unwrap().to_row(), sample()[0]);
+    }
+
+    #[test]
+    fn a_damaged_binary_manifest_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m");
+        let mut file = Vec::new();
+        write_binary(&mut file, &mut sample()).unwrap();
+        for cut in [9, HEADER + 3, file.len() - 1] {
+            fs::write(&path, &file[..cut]).unwrap();
+            assert!(matches!(
+                Manifest::open_file(&path),
+                Err(ForkspaceError::StateCorrupted(_))
+            ));
+        }
+    }
 }

@@ -38,6 +38,7 @@ impl State {
         changed |= self.trash_abandoned_creates(&trash_root);
         changed |= self.forget_interrupted_drops(&trash_root);
         changed |= self.trash_unused_frozen_copies();
+        self.settle_frozen_copies();
         changed |= self.remove_orphan_manifests();
         self.remove_orphan_ancestors();
         changed |= self.adopt_untracked_trash(&trash_root);
@@ -97,6 +98,36 @@ impl State {
             }
         }
         changed
+    }
+
+    /// Check the frozen copies workspaces use that a crash may have left unflushed (see
+    /// [`frozen::settle`]), and warn about the workspaces whose copy was damaged. A copy is
+    /// checked once: afterwards it is marked durable or damaged.
+    fn settle_frozen_copies(&self) {
+        let mut users: std::collections::BTreeMap<PathBuf, Vec<&str>> = Default::default();
+        for workspace in self.workspaces.values() {
+            let Ok(layers) = workspace.linux_state() else {
+                continue;
+            };
+            for tree in [layers.lower.as_ref(), layers.ancestor.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                users.entry(tree.clone()).or_default().push(&workspace.name);
+            }
+        }
+        for (tree, names) in users {
+            if frozen::settle(&tree) == frozen::Settled::Damaged
+                && !tree.with_file_name("damaged-reported").exists()
+            {
+                let _ = fs::write(tree.with_file_name("damaged-reported"), b"");
+                eprintln!(
+                    "warning: the machine stopped before the frozen copy {} was written to disk, and it is damaged; save the changes of {} (forkspace diff --full), then drop and create them again",
+                    tree.display(),
+                    names.join(", ")
+                );
+            }
+        }
     }
 
     /// Frozen copies no workspace mounts or measures against (none while a create is in

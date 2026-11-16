@@ -4,7 +4,6 @@ use crate::cli::{CheckpointArgs, CheckpointsArgs, RestoreArgs};
 use crate::error::Result;
 use crate::state::State;
 use crate::sync::checkpoint::{self, Checkpoint};
-use crate::sync::three_way::is_lockfile;
 use crate::sync::{install, join_paths};
 use crate::workspace::guard;
 
@@ -87,8 +86,7 @@ pub fn restore(args: RestoreArgs) -> Result {
                 join_paths(&restored.unrestorable)
             );
         }
-        let lockfile_changed = restored.changed.iter().any(|path| is_lockfile(path));
-        if lockfile_changed && !args.no_install {
+        if install::touches_dependencies(&restored.changed) && !args.no_install {
             if let Some(manager) = install::detect_package_manager(&workspace) {
                 install::run_install(&workspace.view_path, manager)?;
                 println!("ran package install in workspace");

@@ -73,7 +73,13 @@ pub struct InheritedVenv {
 /// script shebangs hold absolute paths, so `.venv/bin/pip install` in the workspace runs the
 /// base's interpreter and installs into the base. Looks at the view's top two levels.
 pub fn inherited_venvs(workspace: &Workspace) -> Vec<InheritedVenv> {
-    let view = &workspace.view_path;
+    // A new overlay view shows its lower layer unchanged, and that is a plain directory:
+    // reading it avoids a FUSE round trip per directory.
+    let lower = workspace
+        .linux_state()
+        .ok()
+        .and_then(|layers| layers.lower.clone());
+    let view = lower.as_ref().unwrap_or(&workspace.view_path);
     let mut found = Vec::new();
     for directory in candidate_dirs(view) {
         if !directory.join("pyvenv.cfg").is_file() {

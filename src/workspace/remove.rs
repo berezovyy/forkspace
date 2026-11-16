@@ -28,6 +28,17 @@ pub fn remove(state: &mut State, name: &str) -> Result {
 
 /// [`remove`], choosing what happens to processes still using the workspace.
 pub fn remove_with(state: &mut State, name: &str, processes: Processes) -> Result {
+    remove_inner(state, name, processes, false)
+}
+
+/// [`remove`] for a workspace [`ensure_all_unused`] found unused under the same state lock.
+/// Its processes are scanned again only when it has a dev server to stop, since stopping one
+/// can leave its children behind.
+pub fn remove_checked(state: &mut State, name: &str) -> Result {
+    remove_inner(state, name, Processes::Refuse, true)
+}
+
+fn remove_inner(state: &mut State, name: &str, processes: Processes, checked: bool) -> Result {
     guard::ensure_idle(name)?;
     let workspace = state.require_workspace(name)?.clone();
     warn_if_unlanded(state, name);
@@ -35,7 +46,9 @@ pub fn remove_with(state: &mut State, name: &str, processes: Processes) -> Resul
     if let Some(process) = &workspace.process {
         process.terminate();
     }
-    crate::util::trace::time("processes", || ensure_unused(&workspace, processes))?;
+    if !checked || workspace.process.is_some() {
+        crate::util::trace::time("processes", || ensure_unused(&workspace, processes))?;
+    }
 
     let backend = select_backend(Some(workspace.backend_kind))?;
     remove_after_cleanup(state, name, || {
@@ -49,12 +62,31 @@ pub fn remove_with(state: &mut State, name: &str, processes: Processes) -> Resul
 /// it first. Processes that only have files open there are never killed. The `forkspace run`
 /// dev server's process group does not count: removal stops it anyway.
 pub fn ensure_unused(workspace: &Workspace, processes: Processes) -> Result {
+    refuse_if_used(workspace, processes, members::find(workspace))
+}
+
+/// [`ensure_unused`] for several workspaces with one scan of the machine's processes,
+/// refusing at the first one in use.
+pub fn ensure_all_unused(workspaces: &[&Workspace], processes: Processes) -> Result {
+    let mut found = members::find_all(workspaces);
+    for workspace in workspaces {
+        let members = found.remove(&workspace.name).unwrap_or_default();
+        refuse_if_used(workspace, processes, members)?;
+    }
+    Ok(())
+}
+
+/// Refuse while `found` (the processes using `workspace`) is not empty; see [`ensure_unused`].
+fn refuse_if_used(
+    workspace: &Workspace,
+    processes: Processes,
+    mut found: Vec<members::Member>,
+) -> Result {
     let server_group = workspace
         .process
         .as_ref()
         .filter(|process| process.is_alive())
         .map(|process| process.pid);
-    let mut found = members::find(workspace);
     found
         .retain(|member| server_group.is_none_or(|group| process_group(member.pid) != Some(group)));
     if found.is_empty() {

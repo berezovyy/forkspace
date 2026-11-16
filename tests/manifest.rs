@@ -94,7 +94,7 @@ fn dirty_guard_and_line_level_corruption_are_detected() {
         .write_all(b"{truncated\n")
         .unwrap();
     let message = manifest::read("dirty").unwrap_err().to_string();
-    assert!(message.contains("line 2"));
+    assert!(message.contains("invalid manifest"), "{message}");
 }
 
 #[test]

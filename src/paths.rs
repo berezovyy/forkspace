@@ -37,6 +37,11 @@ pub fn snapshot_dir(name: &str) -> PathBuf {
     snapshot_root().join(name)
 }
 
+/// What the last successful fuse-overlayfs probe ran against; see `probe_fuse_overlayfs`.
+pub fn fuse_probe_cache() -> PathBuf {
+    forkspace_home().join("fuse-overlayfs-probe")
+}
+
 /// Frozen copies of projects that sealed overlay workspaces mount as their lower layer.
 pub fn frozen_root() -> PathBuf {
     forkspace_home().join("frozen")

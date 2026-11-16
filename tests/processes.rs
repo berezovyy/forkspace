@@ -157,6 +157,36 @@ fn processes_that_leave_the_workspace_directory_are_still_killed_through_the_sli
     assert!(wait_until_gone("3103"));
 }
 
+/// `drop --all` checks every workspace with one process scan, names the busy one, and removes
+/// nothing until it is free.
+#[test]
+fn drop_all_refuses_and_removes_nothing_while_one_workspace_is_in_use() {
+    let env = Env::new("copy", false);
+    let project = env.root.path().join("project");
+    assert!(env
+        .run(&["new", "idle", "--from", project.to_str().unwrap(), "--copy"])
+        .status
+        .success());
+    env.start("nohup sleep 3106 >/dev/null 2>&1 & exit 0");
+
+    let refused = env.run(&["drop", "--all"]);
+    assert_eq!(refused.status.code(), Some(5));
+    let message = String::from_utf8_lossy(&refused.stderr);
+    let pid = running("3106")[0];
+    assert!(message.contains("'ws'"), "{message}");
+    assert!(message.contains(&format!("sleep (pid {pid}")), "{message}");
+    let listed = String::from_utf8(env.run(&["ls"]).stdout).unwrap();
+    assert!(listed.contains("idle") && listed.contains("ws"), "{listed}");
+
+    let dropped = env.run(&["drop", "--all", "--kill"]);
+    assert!(
+        dropped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dropped.stderr)
+    );
+    assert!(wait_until_gone("3106"));
+}
+
 #[test]
 fn without_systemd_the_proc_scan_still_finds_the_process() {
     let env = Env::new("copy", false);

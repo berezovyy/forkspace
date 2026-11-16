@@ -43,30 +43,83 @@ impl Member {
 
 /// Every process using `workspace`, including ones that only have files open there.
 pub fn find(workspace: &Workspace) -> Vec<Member> {
-    let roots = roots(workspace);
-    let in_slice: HashSet<u32> = systemd::slice_pids(&workspace.name).into_iter().collect();
+    find_all(&[workspace])
+        .remove(&workspace.name)
+        .unwrap_or_default()
+}
+
+/// [`find`] for several workspaces in one pass over the machine's processes, keyed by
+/// workspace name. Each process is inspected once against every workspace's directories
+/// together; only a process that uses one of them is matched to each workspace in turn.
+pub fn find_all(workspaces: &[&Workspace]) -> HashMap<String, Vec<Member>> {
+    let roots: Vec<Vec<PathBuf>> = workspaces
+        .iter()
+        .map(|workspace| roots(workspace))
+        .collect();
+    let all_roots: Vec<PathBuf> = roots.iter().flatten().cloned().collect();
+    let in_slice: Vec<HashSet<u32>> = workspaces
+        .iter()
+        .map(|workspace| systemd::slice_pids(&workspace.name).into_iter().collect())
+        .collect();
     let excluded = own_lineage();
-    let mut members = Vec::new();
-    for pid in os::all_pids() {
-        if excluded.contains(&pid) {
-            continue;
-        }
-        let usage = if in_slice.contains(&pid) {
-            Some(true)
-        } else {
-            os::usage(pid, &roots, true)
-        };
-        if let Some(owned) = usage {
-            let found = member(pid, owned);
+    let mut found: HashMap<String, Vec<Member>> = workspaces
+        .iter()
+        .map(|workspace| (workspace.name.clone(), Vec::new()))
+        .collect();
+    // Reading every process's open files is most of the scan; spread it over a few threads.
+    // Only the rare process that uses a workspace is looked at again below.
+    let pids: Vec<u32> = os::all_pids()
+        .into_iter()
+        .filter(|pid| !excluded.contains(pid))
+        .collect();
+    let users = |pids: &[u32]| -> Vec<u32> {
+        pids.iter()
+            .copied()
+            .filter(|pid| {
+                in_slice.iter().any(|slice| slice.contains(pid))
+                    || os::usage(*pid, &all_roots, true).is_some()
+            })
+            .collect()
+    };
+    let threads = crate::util::walk::threads()
+        .min(pids.len().div_ceil(64))
+        .max(1);
+    let users: Vec<u32> = std::thread::scope(|scope| {
+        let users = &users;
+        let workers: Vec<_> = pids
+            .chunks(pids.len().div_ceil(threads).max(1))
+            .map(|chunk| scope.spawn(move || users(chunk)))
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("process scan thread"))
+            .collect()
+    });
+    for pid in users {
+        for (index, workspace) in workspaces.iter().enumerate() {
+            let usage = if in_slice[index].contains(&pid) {
+                Some(true)
+            } else {
+                os::usage(pid, &roots[index], true)
+            };
+            let Some(owned) = usage else {
+                continue;
+            };
+            let member = member(pid, owned);
             // The fuse-overlayfs daemon serving the view holds its layers open; unmounting
             // stops it.
-            if found.name != "fuse-overlayfs" {
-                members.push(found);
+            if member.name != "fuse-overlayfs" {
+                found
+                    .entry(workspace.name.clone())
+                    .or_default()
+                    .push(member);
             }
         }
     }
-    members.sort_by_key(|member| member.pid);
-    members
+    for members in found.values_mut() {
+        members.sort_by_key(|member| member.pid);
+    }
+    found
 }
 
 /// For each of `workspaces`, how many processes run in it (working directory, root, or

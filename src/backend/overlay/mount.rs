@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::error::{ForkspaceError, Result};
@@ -11,9 +11,78 @@ use crate::util::now_unix_ns;
 
 /// Mounts and immediately unmounts a scratch overlay to prove fuse-overlayfs works here.
 /// The error is a human-readable reason.
+///
+/// A success is remembered for the same fuse-overlayfs binary (path, size, mtime), user, and
+/// boot, so later forks skip the scratch mount; a failed workspace mount forgets it
+/// ([`forget_probe`]).
 pub fn probe_fuse_overlayfs() -> std::result::Result<(), String> {
     open_fuse_device().map_err(|e| format!("cannot open /dev/fuse: {e}"))?;
+    let key = probe_key();
+    if key.as_deref().is_some_and(|key| {
+        fs::read_to_string(crate::paths::fuse_probe_cache()).is_ok_and(|saved| saved == key)
+    }) {
+        return Ok(());
+    }
+    let result = probe_mount();
+    if let (Ok(()), Some(key)) = (&result, key) {
+        // A cache: losing it in a crash only costs the next fork a probe, so it is not synced.
+        let cache = crate::paths::fuse_probe_cache();
+        let temporary = cache.with_extension(format!("tmp-{}", std::process::id()));
+        if fs::write(&temporary, key.as_bytes()).is_ok() && fs::rename(&temporary, &cache).is_err()
+        {
+            let _ = fs::remove_file(&temporary);
+        }
+    }
+    result
+}
 
+/// Forget a remembered probe success, so the next fork probes again.
+pub(crate) fn forget_probe() {
+    let _ = fs::remove_file(crate::paths::fuse_probe_cache());
+}
+
+/// What a probe result holds for: the fuse-overlayfs binary that `mount_overlay` runs, the
+/// user, and the boot. `None` when the binary cannot be found, so nothing is remembered.
+fn probe_key() -> Option<String> {
+    let binary = resolve_program(find_fuse_overlayfs())?;
+    let metadata = fs::metadata(&binary).ok()?;
+    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
+    Some(format!(
+        "binary={}\nsize={}\nmtime={}.{}\nuid={}\nboot={}\n",
+        binary.display(),
+        metadata.len(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        unsafe { libc::getuid() },
+        boot.trim()
+    ))
+}
+
+/// The file `Command::new(program)` would run: `program` itself when it is a path, else the
+/// first executable of that name on `PATH`.
+fn resolve_program(program: &str) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let executable = |path: &Path| {
+        fs::metadata(path)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+    };
+    if program.contains('/') {
+        let path = PathBuf::from(program);
+        return executable(&path).then_some(path);
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|directory| directory.join(program))
+        .find(|path| executable(path))
+}
+
+/// [`probe_fuse_overlayfs`] without the remembered result: always mounts, and remembers nothing.
+pub fn probe_fuse_overlayfs_fresh() -> std::result::Result<(), String> {
+    open_fuse_device().map_err(|e| format!("cannot open /dev/fuse: {e}"))?;
+    probe_mount()
+}
+
+fn probe_mount() -> std::result::Result<(), String> {
     let root = std::env::temp_dir().join(format!(
         "forkspace-fuse-probe-{}-{}",
         std::process::id(),

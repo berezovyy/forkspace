@@ -144,7 +144,7 @@ fn record_fork_time_files(workspace: &Workspace) {
 fn give_private_git(workspace: &mut Workspace) -> Result {
     let private = super::private_git::privatize(&workspace.base, &workspace.view_path)?;
     if private || workspace.view_path.join(".git").exists() {
-        workspace.git_head_at_fork = crate::git::rev_parse(&workspace.view_path, "HEAD").ok();
+        workspace.git_head_at_fork = crate::git::head_commit(&workspace.view_path).ok();
     }
     Ok(())
 }

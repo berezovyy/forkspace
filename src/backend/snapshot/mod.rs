@@ -14,7 +14,7 @@ mod xattr;
 
 #[cfg(target_os = "macos")]
 pub(crate) use clonefile::ClonefilePrimitive;
-pub(crate) use copy::{materialize_tree, CopyPrimitive, Placed};
+pub(crate) use copy::{materialize_recorded, CopyPrimitive, Placed};
 #[cfg(target_os = "linux")]
 pub(crate) use reflink::{probe as reflink_probe, reflink_file, ReflinkPrimitive};
 
@@ -32,7 +32,6 @@ use crate::changes::manifest::{self, ManifestStatus};
 use crate::changes::FileChange;
 use crate::error::{ForkspaceError, Result};
 use crate::paths;
-use crate::util::fs::ctime_ns;
 use crate::util::{now_unix_ns, trace, IoContext};
 use crate::workspace::Workspace;
 
@@ -59,9 +58,19 @@ pub(crate) struct ForkStats {
 }
 
 impl ForkStats {
-    pub(crate) fn observe(&mut self, metadata: &fs::Metadata) {
-        let ctime = u128::try_from(ctime_ns(metadata)).unwrap_or(0);
+    pub(crate) fn observe_entry(&mut self, entry: &crate::util::walk::Entry) {
+        let ctime = u128::try_from(entry.ctime_ns).unwrap_or(0);
         self.max_ctime_ns = self.max_ctime_ns.max(ctime);
+    }
+
+    /// Add the counters of `other`, gathered on another thread, to these.
+    pub(crate) fn absorb(&mut self, other: ForkStats) {
+        self.reflinked_files += other.reflinked_files;
+        self.linked_files += other.linked_files;
+        self.entries += other.entries;
+        self.copied_files += other.copied_files;
+        self.copied_bytes += other.copied_bytes;
+        self.max_ctime_ns = self.max_ctime_ns.max(other.max_ctime_ns);
     }
 }
 

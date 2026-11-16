@@ -64,10 +64,19 @@ pub fn base_changes(workspace: &Workspace) -> Result<Vec<FileChange>> {
             workspace.name
         )));
     }
+    let manifest = manifest::Manifest::open(&workspace.name)?;
     let mut rows = BTreeMap::new();
-    for row in manifest::stream(&workspace.name)? {
-        let row = row?;
-        rows.insert(manifest::decode_path(&row.path)?, row);
+    for row in manifest.iter() {
+        // Encoding keeps `node_modules` and `.git` as they are, so rows inside them (most of
+        // a JavaScript project) are skipped before they are decoded.
+        if row
+            .path
+            .split('/')
+            .any(|component| component == "node_modules" || component == ".git")
+        {
+            continue;
+        }
+        rows.insert(manifest::decode_path(row.path)?, row.to_row());
     }
 
     let mut present = BTreeSet::new();
@@ -328,7 +337,14 @@ pub fn finish(workspace: &mut Workspace, path: &Path) -> Result {
         }
     };
     let fork_time_ns = now_unix_ns();
-    manifest::build(&workspace.name, &ancestor, fork_time_ns)?;
+    // A frozen ancestor carries its manifest; anything else is walked.
+    let cache = frozen::manifest_cache(&ancestor);
+    let copied = matches!(&workspace.backend_state, BackendState::Overlay(layers) if layers.lower.is_some())
+        && cache.exists()
+        && manifest::install_copy(&workspace.name, &cache).is_ok();
+    if !copied {
+        manifest::build(&workspace.name, &ancestor, fork_time_ns)?;
+    }
     workspace.fork_time_ns = fork_time_ns;
     workspace.manifest_generation = workspace.manifest_generation.saturating_add(1);
     workspace.last_pull = Some(now_rfc3339());

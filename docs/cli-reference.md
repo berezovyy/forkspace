@@ -65,8 +65,9 @@ winner.
 ### `forkspace merge <name>`
 
 Apply the workspace's changes to its base, after printing the plan. Files both sides changed
-are merged line by line; when the same lines changed, merge refuses and changes nothing. A
-lockfile change runs the project's package manager afterwards.
+are merged line by line; when the same lines changed, merge refuses and changes nothing. When
+the merge changes `package.json`, a lockfile or package-manager settings (such as `.npmrc`),
+the project's package manager runs afterwards; other merges leave dependencies alone.
 
 | Flag | |
 | :-- | :-- |
@@ -89,7 +90,8 @@ changed; binary and very large files both sides changed refuse the pull. A check
 first. The name defaults to `$FORKSPACE_WORKSPACE`.
 
 `--dry-run` (with `--json`) prints the plan, `--theirs` takes the project's version on
-conflicts, `--resume` finishes an interrupted pull, `--no-install` skips the package manager.
+conflicts, `--resume` finishes an interrupted pull, `--no-install` skips the package manager
+(which runs only when the pull changes `package.json`, a lockfile or package-manager settings).
 
 ### `forkspace land <name>`
 
@@ -114,7 +116,8 @@ List a workspace's checkpoints; `--json` for tools.
 
 Return the workspace to a checkpoint. A checkpoint of the current state is taken first, so a
 restore can be undone. `--resume` finishes an interrupted restore; `--no-install` skips the
-package manager when a lockfile changes.
+package manager, which otherwise runs when the restore changes `package.json`, a lockfile or
+package-manager settings.
 
 ### `forkspace run <name> -- <command>`
 

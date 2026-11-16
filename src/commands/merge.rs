@@ -12,11 +12,13 @@ use crate::sync::plan::{self, MergePlan, PlanOptions};
 use crate::sync::{install, join_paths, merge, undo};
 use crate::workspace::{guard, Workspace};
 
-/// The outcome of the apply step: the journal still to close, and what was transferred
-/// (zero when resuming, where the original plan is no longer known).
+/// The outcome of the apply step: the journal still to close, what was transferred (zero
+/// when resuming, where the original plan is no longer known), and whether the transfer can
+/// change the installed dependencies (assumed when resuming, for the same reason).
 struct Applied {
     journal: Option<PathBuf>,
     counts: ChangeCounts,
+    dependencies_changed: bool,
 }
 
 pub fn exec(args: MergeArgs) -> Result {
@@ -43,7 +45,7 @@ pub fn exec(args: MergeArgs) -> Result {
         let Some(applied) = apply(&args, &workspace)? else {
             return Ok(());
         };
-        run_post_merge_steps(&args, &workspace)?;
+        run_post_merge_steps(&args, &workspace, applied.dependencies_changed)?;
         if let Some(path) = &applied.journal {
             journal::finish_undo(path)?;
             journal::set_phase(path, OperationPhase::Done)?;
@@ -94,6 +96,7 @@ fn apply(args: &MergeArgs, workspace: &Workspace) -> Result<Option<Applied>> {
         return Ok(Some(Applied {
             journal: Some(merge::resume(workspace)?),
             counts: ChangeCounts::default(),
+            dependencies_changed: true,
         }));
     }
 
@@ -135,13 +138,21 @@ fn apply(args: &MergeArgs, workspace: &Workspace) -> Result<Option<Applied>> {
     Ok(Some(Applied {
         journal,
         counts: ChangeCounts::of(&plan.changes),
+        dependencies_changed: install::touches_dependencies(
+            plan.changes.iter().map(|change| &change.path),
+        ),
     }))
 }
 
-/// Package install and optional commit in the base. These run before the journal is closed,
+/// Package install (only when the merge changed a package manifest, lockfile, or package
+/// manager setting) and optional commit in the base. These run before the journal is closed,
 /// so a failure leaves the merge resumable.
-fn run_post_merge_steps(args: &MergeArgs, workspace: &Workspace) -> Result {
-    if !args.no_install {
+fn run_post_merge_steps(
+    args: &MergeArgs,
+    workspace: &Workspace,
+    dependencies_changed: bool,
+) -> Result {
+    if !args.no_install && dependencies_changed {
         if let Some(manager) = install::detect_package_manager(workspace) {
             crate::util::trace::time("install", || install::run_install(&workspace.base, manager))?;
             println!("ran package install");
@@ -200,7 +211,7 @@ fn undo(args: &MergeArgs) -> Result {
             join_paths(&report.newer_merge)
         );
     }
-    if !args.no_install && report.restored + report.removed > 0 {
+    if !args.no_install && install::touches_dependencies(&report.reverted) {
         if let Some(manager) = install::detect_in(&report.project) {
             install::run_install(&report.project, manager)?;
             println!("ran package install");

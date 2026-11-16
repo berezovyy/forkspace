@@ -13,9 +13,10 @@ pub fn exec(args: PullArgs) -> Result {
         let workspace = state.require_workspace(&name)?.clone();
         guard::require_live_view(state, &workspace)?;
 
-        // `count` is `None` when resuming, where the original plan is no longer known.
-        let (journal, count, marked) = if args.resume {
-            (pull::resume_apply(&workspace)?, None, Vec::new())
+        // `count` is `None` when resuming, where the original plan is no longer known; the
+        // install then runs, since the plan may have changed the dependencies.
+        let (journal, count, marked, dependencies_changed) = if args.resume {
+            (pull::resume_apply(&workspace)?, None, Vec::new(), true)
         } else {
             guard::ensure_no_interrupted_pull(&name)?;
             let plan = pull::build_with(&workspace, args.theirs, !args.no_install)?;
@@ -31,11 +32,23 @@ pub fn exec(args: PullArgs) -> Result {
                 false,
                 true,
             )?;
+            let dependencies_changed = install::touches_dependencies(
+                plan.changes
+                    .iter()
+                    .map(|change| &change.path)
+                    .chain(&plan.auto_merged)
+                    .chain(&plan.marked),
+            );
             let journal = pull::start(&workspace, &plan)?;
-            (journal, Some(plan.changes.len()), plan.marked)
+            (
+                journal,
+                Some(plan.changes.len()),
+                plan.marked,
+                dependencies_changed,
+            )
         };
 
-        if !args.no_install {
+        if !args.no_install && dependencies_changed {
             install_in_workspace(&workspace)?;
         }
         let recorded = state.require_workspace_mut(&name)?;

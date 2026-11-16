@@ -72,6 +72,42 @@ pub fn rev_parse(directory: &Path, revision: &str) -> Result<String> {
     capture_git(directory, &["rev-parse", "--verify", revision])
 }
 
+/// The commit `HEAD` names in the repository at `directory`. A plain repository's loose or
+/// packed refs are read directly, which saves starting `git`; anything else (a worktree or
+/// submodule `.git` file, reftable, a symbolic ref) goes through `git rev-parse`.
+pub fn head_commit(directory: &Path) -> Result<String> {
+    read_head(directory).map_or_else(|| rev_parse(directory, "HEAD"), Ok)
+}
+
+fn read_head(directory: &Path) -> Option<String> {
+    let git = directory.join(".git");
+    if !git.is_dir() {
+        return None;
+    }
+    let head = std::fs::read_to_string(git.join("HEAD")).ok()?;
+    let head = head.trim();
+    let Some(reference) = head.strip_prefix("ref: ") else {
+        return is_object_id(head).then(|| head.to_string());
+    };
+    if !reference.starts_with("refs/") || reference.split('/').any(|part| part == "..") {
+        return None;
+    }
+    if let Ok(loose) = std::fs::read_to_string(git.join(reference)) {
+        let id = loose.trim();
+        return is_object_id(id).then(|| id.to_string());
+    }
+    let packed = std::fs::read_to_string(git.join("packed-refs")).ok()?;
+    packed.lines().find_map(|line| {
+        let (id, name) = line.split_once(' ')?;
+        (name == reference && is_object_id(id)).then(|| id.to_string())
+    })
+}
+
+/// A full SHA-1 or SHA-256 object id.
+fn is_object_id(text: &str) -> bool {
+    matches!(text.len(), 40 | 64) && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 pub fn ref_exists(directory: &Path, reference: &str) -> bool {
     succeeds(directory, &["show-ref", "--verify", "--quiet", reference])
 }

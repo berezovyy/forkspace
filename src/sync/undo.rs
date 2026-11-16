@@ -92,6 +92,8 @@ pub struct UndoReport {
     pub changed_since: Vec<PathBuf>,
     /// Paths a newer merge also changed; undo that merge first.
     pub newer_merge: Vec<PathBuf>,
+    /// Paths restored or removed, in the order they were reverted.
+    pub reverted: Vec<PathBuf>,
 }
 
 /// Start recording a merge of `changes` from `workspace` into `project`. Returns the
@@ -211,8 +213,14 @@ pub fn undo(workspace: Option<&str>) -> Result<UndoReport> {
             continue;
         }
         match revert(&dir, &record.project, step)? {
-            Reverted::Restored => report.restored += 1,
-            Reverted::Removed => report.removed += 1,
+            Reverted::Restored => {
+                report.restored += 1;
+                report.reverted.push(step.path.clone());
+            }
+            Reverted::Removed => {
+                report.removed += 1;
+                report.reverted.push(step.path.clone());
+            }
             Reverted::Nothing => {}
             Reverted::ChangedSince => {
                 report.changed_since.push(step.path.clone());

@@ -106,14 +106,29 @@ fn remove_all(
     names: &[String],
     processes: Processes,
 ) -> Result<Option<ForkspaceError>> {
-    if processes == Processes::Refuse {
-        for name in names {
-            let recorded = state.require_workspace(name)?.clone();
-            workspace::remove::ensure_unused(&recorded, processes)?;
-        }
+    crate::process::systemd::batch_slice_stops(|| remove_each(state, names, processes))
+}
+
+fn remove_each(
+    state: &mut State,
+    names: &[String],
+    processes: Processes,
+) -> Result<Option<ForkspaceError>> {
+    let checked = processes == Processes::Refuse;
+    if checked {
+        let recorded = names
+            .iter()
+            .map(|name| state.require_workspace(name))
+            .collect::<Result<Vec<_>>>()?;
+        workspace::remove::ensure_all_unused(&recorded, processes)?;
     }
     for (index, name) in names.iter().enumerate() {
-        if let Err(error) = workspace::remove::remove_with(state, name, processes) {
+        let removed = if checked {
+            workspace::remove::remove_checked(state, name)
+        } else {
+            workspace::remove::remove_with(state, name, processes)
+        };
+        if let Err(error) = removed {
             if index > 0 {
                 eprintln!("removed {} workspaces before '{name}' failed", index);
             }

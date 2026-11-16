@@ -3,6 +3,7 @@
 pub(crate) mod bulk;
 pub mod fs;
 mod glob;
+mod queue;
 pub mod style;
 pub mod trace;
 pub mod walk;

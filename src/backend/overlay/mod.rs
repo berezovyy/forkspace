@@ -29,6 +29,7 @@ use crate::error::Result;
 use crate::paths;
 use crate::util::{trace, IoContext};
 use crate::workspace::Workspace;
+pub use frozen::flush_pending;
 use mount::{mount_overlay, unmount_overlay, ViewHealth};
 
 const CAPABILITIES: Capabilities = Capabilities {
@@ -118,15 +119,42 @@ fn apply_forkspaceclean(view: &Path) {
 /// fuse-overlayfs reads any `.wh.<name>` entry in the lower layer as a whiteout, so a base
 /// file with that name would vanish from the view together with `<name>`. Refuse such bases
 /// rather than fork a view that silently hides files.
-fn refuse_reserved_names(name: &str) -> Result {
-    for row in crate::changes::manifest::stream(name)? {
-        let row = row?;
-        let reserved = row
-            .path
-            .split('/')
-            .any(|component| component.starts_with(".wh."));
-        if reserved {
-            let path = crate::changes::manifest::decode_path(&row.path)?;
+/// Record workspace `name`'s fork manifest of its lower layer `lower`. A frozen copy whose
+/// manifest an earlier fork recorded (and checked) gets a copy of it; otherwise the layer is
+/// walked and checked, and a clean result is kept for the next fork of the same copy.
+fn record_manifest(
+    name: &str,
+    frozen: Option<&frozen::Frozen>,
+    lower: &Path,
+    fork_time_ns: u128,
+) -> Result {
+    use crate::changes::manifest;
+
+    if let Some(frozen) = frozen {
+        let cache = frozen::manifest_cache(&frozen.tree);
+        if cache.exists() && manifest::install_copy(name, &cache).is_ok() {
+            return Ok(());
+        }
+    }
+    manifest::build(name, lower, fork_time_ns)?;
+    let clean = refuse_reserved_names(name)?;
+    if let Some(frozen) = frozen.filter(|_| clean) {
+        // Only an optimization for the next fork: a failure here costs that fork a walk.
+        let _ = frozen::save_manifest_cache(&frozen.tree, &manifest::manifest_path(name));
+    }
+    Ok(())
+}
+
+/// Refuse a lower layer with a `.wh.` path component, which fuse-overlayfs reserves for
+/// deletion markers. Returns whether no row is dirty: an entry written while the manifest was
+/// recorded makes the manifest specific to this fork, so it must not be reused.
+fn refuse_reserved_names(name: &str) -> Result<bool> {
+    let mut clean = true;
+    let manifest = crate::changes::manifest::Manifest::open(name)?;
+    for row in manifest.iter() {
+        clean &= !row.dirty;
+        if frozen::has_whiteout_name(row.path) {
+            let path = crate::changes::manifest::decode_path(row.path)?;
             return Err(crate::error::ForkspaceError::CapabilityUnsupported {
                 diagnosis: format!(
                     "{} uses the .wh. prefix, which fuse-overlayfs reserves for deletion markers",
@@ -136,7 +164,7 @@ fn refuse_reserved_names(name: &str) -> Result {
             });
         }
     }
-    Ok(())
+    Ok(clean)
 }
 
 /// The frozen copy a new workspace mounts: of the project, or, when stacking on a sealed
@@ -216,13 +244,13 @@ impl WorkspaceBackend for OverlayBackend {
             mount_overlay(&lower, &layers.upper, &layers.work, &layers.merged)
         });
         if let Err(error) = mounted {
+            mount::forget_probe();
             cleanup(&layers);
             return Err(error);
         }
         let recorded = trace::time("manifest", || {
-            crate::changes::manifest::build(&req.name, &lower, fork_time_ns)
-        })
-        .and_then(|_| refuse_reserved_names(&req.name));
+            record_manifest(&req.name, frozen.as_ref(), &lower, fork_time_ns)
+        });
         if let Err(error) = recorded {
             let _ = unmount_overlay(&layers.merged);
             let _ = crate::changes::manifest::remove(&req.name);

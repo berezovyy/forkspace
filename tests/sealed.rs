@@ -173,6 +173,180 @@ fn later_forks_reuse_the_frozen_copy_or_link_unchanged_files() {
 }
 
 #[test]
+fn forks_of_one_frozen_copy_share_its_manifest() {
+    skip_without_overlay!();
+    let env = Env::new();
+    env.new_workspace("one", &[]);
+    let copies = env.frozen_copies();
+    let cache = copies[0].join("manifest.jsonl");
+    assert!(
+        cache.is_file(),
+        "the first fork keeps its manifest for the next"
+    );
+
+    env.new_workspace("two", &[]);
+    let manifests = env.home.path().join("manifests");
+    let two = manifests.join("two.jsonl");
+    assert_eq!(
+        fs::read(manifests.join("one.jsonl")).unwrap(),
+        fs::read(&two).unwrap()
+    );
+    let cached = fs::read(&cache).unwrap();
+
+    // The copied manifest is a working baseline: an edit shows in diff and merges back.
+    fs::write(env.view("two").join("a.txt"), "edited\n").unwrap();
+    assert!(env
+        .stdout(&["diff", "two", "--stat"])
+        .contains("1 modified"));
+    env.run(&["merge", "two", "--no-install"]);
+    assert_eq!(
+        fs::read_to_string(env.project().join("a.txt")).unwrap(),
+        "edited\n"
+    );
+
+    assert_eq!(
+        fs::read(&cache).unwrap(),
+        cached,
+        "work in a workspace never changes the copy's manifest"
+    );
+
+    // A changed project gets a new frozen copy, which records its own manifest.
+    env.new_workspace("three", &[]);
+    let copies = env.frozen_copies();
+    assert_eq!(copies.len(), 2);
+    assert!(copies
+        .iter()
+        .all(|copy| copy.join("manifest.jsonl").is_file()));
+}
+
+/// A successful fuse-overlayfs probe is remembered, and a record that no longer matches the
+/// machine is replaced by a fresh probe.
+#[test]
+fn a_successful_fuse_probe_is_remembered() {
+    skip_without_overlay!();
+    let env = Env::new();
+    let project = env.project();
+    let fork = |name: &str| {
+        // No FORKSPACE_BACKEND: the backend is chosen by probing.
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", env.home.path())
+            .args(["new", name, "--from", project.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let record = env.home.path().join("fuse-overlayfs-probe");
+
+    fork("one");
+    let saved = fs::read_to_string(&record).unwrap();
+    assert!(
+        saved.contains("binary=") && saved.contains("boot="),
+        "{saved}"
+    );
+
+    fs::write(&record, "binary=/nowhere\n").unwrap();
+    fork("two");
+    assert_eq!(fs::read_to_string(&record).unwrap(), saved);
+    assert_eq!(env.stdout(&["diff", "two"]).trim(), "clean — no changes");
+}
+
+/// Wait for the background flush of `copy` to mark it durable.
+fn wait_for_durable(copy: &Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !copy.join("durable").exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{} was never marked durable",
+            copy.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Pretend the frozen copy `copy` was written in an earlier boot and never flushed.
+fn unflush_from_earlier_boot(copy: &Path) {
+    wait_for_durable(copy);
+    fs::remove_file(copy.join("durable")).unwrap();
+    let meta = fs::read_to_string(copy.join("meta.json")).unwrap();
+    let mut meta: serde_json::Value = serde_json::from_str(&meta).unwrap();
+    meta["boot"] = serde_json::Value::String("an-earlier-boot".to_string());
+    fs::write(copy.join("meta.json"), meta.to_string()).unwrap();
+}
+
+#[test]
+fn frozen_copies_are_flushed_in_the_background() {
+    skip_without_overlay!();
+    let env = Env::new();
+    env.new_workspace("one", &[]);
+    let copies = env.frozen_copies();
+    wait_for_durable(&copies[0]);
+    assert!(fs::read_to_string(copies[0].join("meta.json"))
+        .unwrap()
+        .contains("\"boot\""));
+}
+
+#[test]
+fn an_intact_copy_left_unflushed_by_a_crash_is_verified_and_kept() {
+    skip_without_overlay!();
+    let env = Env::new();
+    env.new_workspace("one", &[]);
+    let copy = env.frozen_copies().remove(0);
+    unflush_from_earlier_boot(&copy);
+
+    let listed = env.run(&["ls"]);
+    assert!(String::from_utf8_lossy(&listed.stderr).is_empty());
+    assert!(
+        copy.join("durable").exists(),
+        "an intact copy is marked durable"
+    );
+    env.new_workspace("two", &[]);
+    assert_eq!(env.frozen_copies(), [copy], "the verified copy is reused");
+}
+
+#[test]
+fn a_damaged_copy_left_unflushed_by_a_crash_is_reported_and_never_reused() {
+    skip_without_overlay!();
+    let env = Env::new();
+    env.new_workspace("one", &[]);
+    let copy = env.frozen_copies().remove(0);
+    unflush_from_earlier_boot(&copy);
+    // What a crash before the flush leaves: a file whose data never reached the disk.
+    let torn = copy.join("tree/b.txt");
+    let mut permissions = fs::metadata(&torn).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o644);
+    fs::set_permissions(&torn, permissions).unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&torn)
+        .unwrap();
+
+    let listed = env.run(&["ls"]);
+    let warning = String::from_utf8_lossy(&listed.stderr);
+    assert!(
+        warning.contains("damaged") && warning.contains("one"),
+        "{warning}"
+    );
+    let again = env.run(&["ls"]);
+    assert!(
+        String::from_utf8_lossy(&again.stderr).is_empty(),
+        "reported once"
+    );
+
+    env.new_workspace("two", &[]);
+    let copies = env.frozen_copies();
+    assert_eq!(copies.len(), 2, "the damaged copy is not reused");
+    assert_eq!(
+        fs::read_to_string(env.view("two").join("b.txt")).unwrap(),
+        "b\n"
+    );
+}
+
+#[test]
 fn merge_then_pull_moves_one_workspace_s_changes_into_another() {
     skip_without_overlay!();
     let env = Env::new();

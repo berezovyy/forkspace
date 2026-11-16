@@ -107,7 +107,7 @@ pub fn generate_patch(workspace: &Workspace, changes: &[FileChange]) -> Result<S
 /// Workspaces recorded before the fork-time `HEAD` was kept fall back to a full change scan.
 pub fn workspace_head_changed(workspace: &Workspace) -> Result<bool> {
     if let Some(head) = &workspace.git_head_at_fork {
-        let current = crate::git::rev_parse(&workspace.view_path, "HEAD").unwrap_or_default();
+        let current = crate::git::head_commit(&workspace.view_path).unwrap_or_default();
         return Ok(&current != head);
     }
     Ok(select_backend(Some(workspace.backend_kind))?

@@ -2,7 +2,6 @@
 //!
 //! A plan is pure inspection; [`crate::sync::merge`] applies it.
 
-use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
@@ -261,7 +260,7 @@ pub(crate) fn matches_ancestor(path: &Path, row: &ManifestRow) -> bool {
 fn tree_matches_ancestor(
     path: &Path,
     relative: &Path,
-    rows: &HashMap<PathBuf, ManifestRow>,
+    ancestor: &dyn Fn(&Path) -> Option<ManifestRow>,
 ) -> bool {
     WalkDir::new(path)
         .min_depth(1)
@@ -273,8 +272,8 @@ fn tree_matches_ancestor(
                     .path()
                     .strip_prefix(path)
                     .ok()
-                    .and_then(|inner| rows.get(&relative.join(inner)))
-                    .is_some_and(|row| !row.dirty && matches_ancestor(entry.path(), row))
+                    .and_then(|inner| ancestor(&relative.join(inner)))
+                    .is_some_and(|row| !row.dirty && matches_ancestor(entry.path(), &row))
             })
         })
 }
@@ -336,9 +335,14 @@ fn classify(
 ) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
     let manifest_ready = workspace.manifest_status == ManifestStatus::Ready;
     let rows = if manifest_ready {
-        ancestor_rows(&workspace.name)?
+        Some(manifest::Manifest::open(&workspace.name)?)
     } else {
-        HashMap::new()
+        None
+    };
+    let ancestor = |relative: &Path| -> Option<ManifestRow> {
+        let rows = rows.as_ref()?;
+        rows.get(&manifest::encode_path(relative))
+            .map(|row| row.to_row())
     };
     let mut conflicts = Vec::new();
     let mut ancestor_unknown = Vec::new();
@@ -351,13 +355,13 @@ fn classify(
         {
             continue;
         }
-        match rows.get(&change.path) {
+        match ancestor(&change.path) {
             Some(row) if row.dirty => ancestor_unknown.push(change.path.clone()),
-            Some(row) if !matches_ancestor(&current, row) => conflicts.push(change.path.clone()),
+            Some(row) if !matches_ancestor(&current, &row) => conflicts.push(change.path.clone()),
             Some(row)
                 if row.kind == ManifestKind::Dir
                     && change.kind == ChangeKind::Deleted
-                    && !tree_matches_ancestor(&current, &change.path, &rows) =>
+                    && !tree_matches_ancestor(&current, &change.path, &ancestor) =>
             {
                 conflicts.push(change.path.clone());
             }
@@ -371,15 +375,6 @@ fn classify(
     conflicts.sort();
     ancestor_unknown.sort();
     Ok((conflicts, ancestor_unknown))
-}
-
-fn ancestor_rows(workspace: &str) -> Result<HashMap<PathBuf, ManifestRow>> {
-    manifest::stream(workspace)?
-        .map(|row| {
-            let row = row?;
-            Ok((manifest::decode_path(&row.path)?, row))
-        })
-        .collect()
 }
 
 /// Every non-deleted entry is staged next to its target before an atomic rename, so the base

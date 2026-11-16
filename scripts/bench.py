@@ -383,7 +383,7 @@ def one_run(binary, env, project, home, args, result):
         handle.write("edited\n")
     timed("diff (one edit)", "diff", "ws1")
     timed("merge --dry-run", "merge", "ws1", "--dry-run")
-    timed("merge (one file)", "merge", "ws1", "--quiet", "--no-install")
+    timed("merge (one file)", "merge", "ws1", "--quiet")
     edit_target.write_text("benchmark\n")
     timed("ls (1 workspace)", "ls")
     for number in range(2, args.workspaces + 1):

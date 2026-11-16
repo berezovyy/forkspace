@@ -47,6 +47,20 @@ progress is saved at most every 100 ms rather than after each step. Every state 
 routine leftovers (`state/recovery.rs`); an unfinished operation needs its explicit `--resume`.
 Process records include a per-spawn identity, so recycled PIDs are never signalled.
 
+A new frozen copy is not flushed before the fork returns: it records the boot it was written
+in, and a detached `sync -f` marks it `durable` once the data is on disk. The flush starts
+after the command's own small `fsync`s, so they do not queue behind it. Until then the copy
+is trusted only within the same boot; after a crash, state recovery checks every copy a
+workspace uses against its manifest before marking it durable, and a copy that does not match
+is marked damaged, reported once, and never reused.
+
+Fork manifests are binary: a header, one offset per row, and rows sorted by encoded path, so
+a merge looks up the rows it needs by binary search instead of parsing every row. A frozen
+copy carries the manifest of its tree, written while it is built; forks of it install that
+file as a hard link (manifests are only ever replaced by rename), and the next freeze reads
+it to decide which files to link and whether the project changed. Older JSON-lines manifests
+are still read.
+
 ## Review and exchange
 
 `merge` transfers file state and flattens it; `land` fetches commit objects and keeps history;

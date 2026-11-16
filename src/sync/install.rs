@@ -74,6 +74,35 @@ pub fn detect_in(view: &Path) -> Option<PackageManager> {
         .map(|&(_, manager)| manager)
 }
 
+/// Files whose change can change what `install` does: package manifests, lockfiles, and
+/// package-manager configuration. A transfer that touches none of them leaves the installed
+/// dependencies as they were, so the install step is skipped.
+const DEPENDENCY_FILES: &[&str] = &[
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "bun.lock",
+    "bun.lockb",
+    "bunfig.toml",
+    ".npmrc",
+    ".yarnrc",
+    ".yarnrc.yml",
+    ".pnpmfile.cjs",
+];
+
+/// Whether any of `paths` is a file that can change the result of a package install.
+pub fn touches_dependencies<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> bool {
+    paths.into_iter().any(|path| {
+        path.as_ref()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| DEPENDENCY_FILES.contains(&name))
+    })
+}
+
 /// Run `<manager> install` in `directory`.
 pub(crate) fn run_install(directory: &Path, manager: PackageManager) -> Result {
     let command = manager.command();
@@ -105,4 +134,23 @@ fn project_root(workspace: &Workspace) -> Option<PathBuf> {
             .ok()?
             .view_path(workspace),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::touches_dependencies;
+
+    #[test]
+    fn only_manifests_lockfiles_and_settings_touch_dependencies() {
+        assert!(!touches_dependencies([
+            "app/page.tsx",
+            "src/package.ts",
+            "README.md"
+        ]));
+        assert!(touches_dependencies(["app/page.tsx", "package.json"]));
+        assert!(touches_dependencies(["packages/ui/package.json"]));
+        assert!(touches_dependencies(["pnpm-lock.yaml"]));
+        assert!(touches_dependencies([".npmrc"]));
+        assert!(!touches_dependencies(Vec::<&str>::new()));
+    }
 }

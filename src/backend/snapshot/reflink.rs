@@ -42,7 +42,7 @@ impl ForkPrimitive for ReflinkPrimitive {
     }
 
     fn materialize(&self, base: &Path, dest: &Path) -> Result<ForkStats> {
-        materialize_tree(base, dest, reflink_file)
+        materialize_tree(base, dest, |source, target, _| reflink_file(source, target))
     }
 
     fn summarize(&self, stats: &ForkStats, _elapsed_ms: u128) -> ForkSummary {

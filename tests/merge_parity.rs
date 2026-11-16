@@ -375,3 +375,78 @@ fn installer_failure_keeps_the_applied_journal_resumable_and_never_drops() {
         .map(|mut entries| entries.next().is_none())
         .unwrap_or(true));
 }
+
+/// A merge runs the package install only when it changes a package manifest, lockfile, or
+/// package-manager setting: a source-only merge into a JavaScript project leaves npm alone.
+#[test]
+#[serial]
+fn merge_installs_only_when_dependencies_change() {
+    let home = common::setup_test_env();
+    let base = tempfile::tempdir().unwrap();
+    fs::write(base.path().join("page.tsx"), b"old\n").unwrap();
+    fs::write(
+        base.path().join("package.json"),
+        br#"{"name":"merge-fixture","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    fs::write(
+        base.path().join("package-lock.json"),
+        br#"{"lockfileVersion":3,"packages":{"":{}}}"#,
+    )
+    .unwrap();
+
+    let tools = tempfile::tempdir().unwrap();
+    let marker = tools.path().join("installed");
+    let npm = tools.path().join("npm");
+    fs::write(
+        &npm,
+        format!("#!/bin/sh\necho run >> '{}'\n", marker.display()),
+    )
+    .unwrap();
+    fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let forkspace = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .env("PATH", &path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let view = |name: &str| {
+        forkspace::state::State::load()
+            .unwrap()
+            .require_workspace(name)
+            .unwrap()
+            .view_path
+            .clone()
+    };
+    let base_path = base.path().to_str().unwrap();
+
+    forkspace(&["new", "source-only", "--from", base_path, "--copy"]);
+    fs::write(view("source-only").join("page.tsx"), b"new\n").unwrap();
+    let merged = forkspace(&["merge", "source-only", "--drop"]);
+    assert!(!merged.contains("ran package install"), "{merged}");
+    assert!(!marker.exists(), "npm ran for a source-only merge");
+    assert_eq!(fs::read(base.path().join("page.tsx")).unwrap(), b"new\n");
+
+    forkspace(&["new", "add-dependency", "--from", base_path, "--copy"]);
+    fs::write(
+        view("add-dependency").join("package.json"),
+        br#"{"name":"merge-fixture","version":"1.0.0","dependencies":{"zod":"^3.0.0"}}"#,
+    )
+    .unwrap();
+    let merged = forkspace(&["merge", "add-dependency", "--drop"]);
+    assert!(merged.contains("ran package install"), "{merged}");
+    assert_eq!(fs::read_to_string(&marker).unwrap(), "run\n");
+}

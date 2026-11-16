@@ -175,6 +175,9 @@ pub fn start(
     let path = path(op, workspace, fork_time_ns);
     let mut journal = OperationJournal::new(op, workspace, source, target, changes, fork_time_ns);
     journal.merged = merged;
+    // Resuming treats a planned and an applying journal alike, so the first save already says
+    // `Applying` and [`apply_remaining`] does not write it a second time.
+    journal.phase = OperationPhase::Applying;
     if op == OperationKind::Merge {
         journal.undo = Some(undo::begin(workspace, &journal.target, &journal.changes)?);
     }
@@ -186,8 +189,10 @@ pub fn start(
 /// Apply every step from `next` onward, persisting progress at least every [`SAVE_INTERVAL`].
 pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
     let mut journal = load(path)?;
-    journal.phase = OperationPhase::Applying;
-    save(path, &journal)?;
+    if journal.phase != OperationPhase::Applying {
+        journal.phase = OperationPhase::Applying;
+        save(path, &journal)?;
+    }
     let mut saved = std::time::Instant::now();
     let staging = staging_dir(path);
     let undo = journal.undo.clone();
@@ -225,8 +230,9 @@ pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
             saved = std::time::Instant::now();
         }
     }
+    // Not saved: every step is safe to apply twice, so a crash before the caller records the
+    // next phase only makes a resume repeat the steps since the last save.
     journal.phase = OperationPhase::Applied;
-    save(path, &journal)?;
     Ok(journal)
 }
 

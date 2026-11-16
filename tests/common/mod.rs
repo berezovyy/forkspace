@@ -100,7 +100,7 @@ pub fn cleanup_workspace(ws: &forkspace::workspace::Workspace) {
 #[macro_export]
 macro_rules! skip_without_overlay {
     () => {{
-        if let Err(reason) = forkspace::backend::overlay::mount::probe_fuse_overlayfs() {
+        if let Err(reason) = forkspace::backend::overlay::mount::probe_fuse_overlayfs_fresh() {
             eprintln!(
                 "FORKSPACE_TEST_SKIP {{\"capability\":\"fuse-overlayfs\",\"reason\":{}}}",
                 serde_json::to_string(&reason).expect("serialize skip reason")
