@@ -31,73 +31,73 @@ with no fork running.
 
 <!-- bench:begin -->
 
-### Linux 7.0.0-38-generic, ext4: next-15.5.4 (2026-10-13)
+### Linux 7.0.0-43-generic, ext4: next-15.5.4 (2026-11-17)
 
-forkspace 0.1.0; Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz, 16 CPUs, 31 GiB RAM. Corpus: 20,158 entries, 431.5 MiB allocated. 5 runs per backend after 1 warm-up, a fresh `FORKSPACE_HOME` each run; times are wall-clock for the whole command, p50 / p95.
+forkspace 0.2.0; Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz, 16 CPUs, 31 GiB RAM. Corpus: 20,158 entries, 431.5 MiB allocated. 5 runs per backend after 1 warm-up, a fresh `FORKSPACE_HOME` each run; times are wall-clock for the whole command, p50 / p95.
 
 | Command | `linux` |
 | :-- | --: |
-| `new` | 129 ms / 209 ms |
-| `diff --stat (clean)` | 1.4 ms / 2.1 ms |
+| `new` | 223 ms / 247 ms |
+| `diff --stat (clean)` | 1.5 ms / 1.7 ms |
 | `diff (one edit)` | 1.4 ms / 1.7 ms |
-| `merge --dry-run` | 31.9 ms / 37.5 ms |
-| `merge (one file)` | 70.6 ms / 167 ms |
-| `ls (1 workspace)` | 1.5 ms / 2.4 ms |
-| `ls (5 workspaces)` | 2.6 ms / 2.9 ms |
-| `drop` | 12.7 ms / 43.6 ms |
+| `merge --dry-run` | 11.9 ms / 43.1 ms |
+| `merge (one file)` | 76.5 ms / 94.4 ms |
+| `ls (1 workspace)` | 4.5 ms / 4.7 ms |
+| `ls (5 workspaces)` | 6.5 ms / 6.6 ms |
+| `drop` | 15.3 ms / 15.7 ms |
 
-- Phases on `linux` (p50): `new`: preflight 6.4 ms, materialize 3.3 ms, manifest 78.8 ms, state 7.7 ms; `merge (one file)`: scan 0.1 ms, plan 22.8 ms, apply 31.3 ms; `ls (5 workspaces)`: scan 1.0 ms.
+- Phases on `linux` (p50): `new`: preflight 0.2 ms, freeze 200 ms, materialize 3.0 ms, manifest 1.3 ms, state 2.5 ms; `merge (one file)`: scan 0.0 ms, plan 1.4 ms, apply 28.3 ms; `ls (5 workspaces)`: scan 0.8 ms.
 
-- Disk after one fork on `linux`: forkspace's own allocation 2.7 MiB; volume free space changed by 3.3 MiB (noisy).
-- Project writes while `new` forked it on `linux` (53 writes over 114 ms): p99 0.5 ms, max 0.5 ms; idle p99 0.2 ms, max 0.2 ms.
-
-
-### Linux 7.0.0-38-generic, ext4: synthetic-1000 (2026-10-13)
-
-forkspace 0.1.0; Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz, 16 CPUs, 31 GiB RAM. Corpus: 1,053 entries, 4.1 MiB allocated. 5 runs per backend after 1 warm-up, a fresh `FORKSPACE_HOME` each run; times are wall-clock for the whole command, p50 / p95.
-
-| Command | `linux` | `copy` |
-| :-- | --: | --: |
-| `new` | 41.6 ms / 42.4 ms | 5.34 s / 5.73 s |
-| `diff --stat (clean)` | 1.2 ms / 1.4 ms | 3.3 ms / 6.7 ms |
-| `diff (one edit)` | 1.2 ms / 1.5 ms | 2.9 ms / 5.5 ms |
-| `merge --dry-run` | 10.8 ms / 11.1 ms | 14.8 ms / 43.6 ms |
-| `merge (one file)` | 53.8 ms / 55.5 ms | 63.3 ms / 104 ms |
-| `ls (1 workspace)` | 1.3 ms / 1.4 ms | 6.4 ms / 12.6 ms |
-| `ls (5 workspaces)` | 1.6 ms / 2.0 ms | 26.6 ms / 42.1 ms |
-| `drop` | 13.0 ms / 15.0 ms | 10.7 ms / 12.5 ms |
-
-- Phases on `linux` (p50): `new`: preflight 6.0 ms, materialize 3.2 ms, manifest 11.3 ms, state 8.6 ms; `merge (one file)`: scan 0.1 ms, plan 0.9 ms, apply 33.8 ms; `ls (5 workspaces)`: scan 0.2 ms.
-- Phases on `copy` (p50): `new`: preflight 0.2 ms, materialize 5.30 s, manifest 11.4 ms, state 8.5 ms; `merge (one file)`: scan 9.4 ms, plan 0.9 ms, apply 34.7 ms; `ls (5 workspaces)`: scan 25.2 ms.
-
-- Disk after one fork on `linux`: forkspace's own allocation 0.1 MiB; volume free space changed by 0.1 MiB (noisy).
-- Project writes while `new` forked it on `linux` (20 writes over 41.8 ms): p99 0.1 ms, max 0.1 ms; idle p99 0.2 ms, max 0.2 ms.
-- Disk after one fork on `copy`: forkspace's own allocation 4.3 MiB; volume free space changed by 36.4 MiB (noisy).
-- Project writes while `new` forked it on `copy` (2063 writes over 4.47 s): p99 0.4 ms, max 10.2 ms; idle p99 0.1 ms, max 123 ms.
+- Disk after one fork on `linux`: forkspace's own allocation 435.3 MiB; volume free space changed by 433.4 MiB (noisy).
+- Project writes while `new` forked it on `linux` (100 writes over 231 ms): p99 0.3 ms, max 0.5 ms; idle p99 22.4 ms, max 22.4 ms.
 
 
-### Linux 7.0.0-38-generic, ext4: synthetic-10000 (2026-10-13)
+### Linux 7.0.0-43-generic, ext4: synthetic-1000 (2026-11-17)
 
-forkspace 0.1.0; Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz, 16 CPUs, 31 GiB RAM. Corpus: 10,053 entries, 39.4 MiB allocated. 3 runs per backend after 1 warm-up, a fresh `FORKSPACE_HOME` each run; times are wall-clock for the whole command, p50 / p95.
+forkspace 0.2.0; Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz, 16 CPUs, 31 GiB RAM. Corpus: 1,053 entries, 4.1 MiB allocated. 5 runs per backend after 1 warm-up, a fresh `FORKSPACE_HOME` each run; times are wall-clock for the whole command, p50 / p95.
 
 | Command | `linux` | `copy` |
 | :-- | --: | --: |
-| `new` | 865 ms / 1.07 s | 1.16 s / 1.44 s |
-| `diff --stat (clean)` | 1.3 ms / 1.5 ms | 19.3 ms / 22.0 ms |
-| `diff (one edit)` | 1.2 ms / 1.2 ms | 19.0 ms / 19.8 ms |
-| `merge --dry-run` | 19.9 ms / 23.4 ms | 40.3 ms / 43.3 ms |
-| `merge (one file)` | 82.0 ms / 125 ms | 103 ms / 174 ms |
-| `ls (1 workspace)` | 21.1 ms / 22.9 ms | 50.2 ms / 76.9 ms |
-| `ls (5 workspaces)` | 43.4 ms / 44.5 ms | 178 ms / 181 ms |
-| `drop` | 54.2 ms / 55.6 ms | 67.2 ms / 80.8 ms |
+| `new` | 28.8 ms / 30.1 ms | 39.1 ms / 42.9 ms |
+| `diff --stat (clean)` | 1.2 ms / 1.4 ms | 2.0 ms / 3.1 ms |
+| `diff (one edit)` | 1.2 ms / 1.2 ms | 2.0 ms / 3.0 ms |
+| `merge --dry-run` | 5.7 ms / 6.9 ms | 4.3 ms / 4.9 ms |
+| `merge (one file)` | 15.3 ms / 19.1 ms | 15.0 ms / 15.7 ms |
+| `ls (1 workspace)` | 4.1 ms / 4.3 ms | 5.8 ms / 6.1 ms |
+| `ls (5 workspaces)` | 5.7 ms / 5.7 ms | 11.9 ms / 12.0 ms |
+| `drop` | 15.0 ms / 15.3 ms | 13.0 ms / 13.6 ms |
 
-- Phases on `linux` (p50): `new`: preflight 5.8 ms, freeze 779 ms, materialize 3.2 ms, manifest 41.5 ms, state 8.3 ms; `merge (one file)`: scan 0.0 ms, plan 7.4 ms, apply 44.6 ms; `ls (5 workspaces)`: scan 0.2 ms.
-- Phases on `copy` (p50): `new`: preflight 0.2 ms, materialize 952 ms, manifest 36.0 ms, ancestor 65.1 ms, state 12.4 ms; `merge (one file)`: scan 18.1 ms, plan 7.8 ms, apply 43.3 ms; `ls (5 workspaces)`: scan 91.9 ms.
+- Phases on `linux` (p50): `new`: preflight 0.2 ms, freeze 16.2 ms, materialize 2.8 ms, manifest 1.2 ms, state 2.5 ms; `merge (one file)`: scan 0.0 ms, plan 0.2 ms, apply 5.5 ms; `ls (5 workspaces)`: scan 0.1 ms.
+- Phases on `copy` (p50): `new`: preflight 0.2 ms, materialize 20.8 ms, manifest 3.0 ms, ancestor 7.0 ms, state 2.9 ms; `merge (one file)`: scan 0.8 ms, plan 0.1 ms, apply 4.9 ms; `ls (5 workspaces)`: scan 3.5 ms.
 
-- Disk after one fork on `linux`: forkspace's own allocation 40.5 MiB; volume free space changed by 40.5 MiB (noisy).
-- Project writes while `new` forked it on `linux` (341 writes over 851 ms): p99 9.6 ms, max 31.6 ms; idle p99 0.2 ms, max 0.4 ms.
-- Disk after one fork on `copy`: forkspace's own allocation 48.3 MiB; volume free space changed by 49.4 MiB (noisy).
-- Project writes while `new` forked it on `copy` (353 writes over 946 ms): p99 18.1 ms, max 50.9 ms; idle p99 0.7 ms, max 0.8 ms.
+- Disk after one fork on `linux`: forkspace's own allocation 4.3 MiB; volume free space changed by 4.3 MiB (noisy).
+- Project writes while `new` forked it on `linux` (14 writes over 28.0 ms): p99 0.1 ms, max 0.1 ms; idle p99 0.2 ms, max 0.2 ms.
+- Disk after one fork on `copy`: forkspace's own allocation 5.0 MiB; volume free space changed by 5.0 MiB (noisy).
+- Project writes while `new` forked it on `copy` (18 writes over 39.0 ms): p99 0.4 ms, max 0.4 ms; idle p99 0.1 ms, max 0.1 ms.
+
+
+### Linux 7.0.0-43-generic, ext4: synthetic-10000 (2026-11-17)
+
+forkspace 0.2.0; Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz, 16 CPUs, 31 GiB RAM. Corpus: 10,053 entries, 39.4 MiB allocated. 3 runs per backend after 1 warm-up, a fresh `FORKSPACE_HOME` each run; times are wall-clock for the whole command, p50 / p95.
+
+| Command | `linux` | `copy` |
+| :-- | --: | --: |
+| `new` | 131 ms / 133 ms | 266 ms / 269 ms |
+| `diff --stat (clean)` | 1.4 ms / 1.5 ms | 3.7 ms / 4.0 ms |
+| `diff (one edit)` | 1.3 ms / 1.4 ms | 4.0 ms / 4.0 ms |
+| `merge --dry-run` | 5.7 ms / 7.3 ms | 6.6 ms / 7.1 ms |
+| `merge (one file)` | 20.7 ms / 24.5 ms | 18.4 ms / 18.4 ms |
+| `ls (1 workspace)` | 4.3 ms / 4.6 ms | 11.9 ms / 13.2 ms |
+| `ls (5 workspaces)` | 5.8 ms / 5.9 ms | 41.6 ms / 43.5 ms |
+| `drop` | 15.1 ms / 15.2 ms | 13.3 ms / 13.6 ms |
+
+- Phases on `linux` (p50): `new`: preflight 0.2 ms, freeze 116 ms, materialize 2.9 ms, manifest 1.3 ms, state 2.6 ms; `merge (one file)`: scan 0.0 ms, plan 0.6 ms, apply 7.6 ms; `ls (5 workspaces)`: scan 0.2 ms.
+- Phases on `copy` (p50): `new`: preflight 0.2 ms, materialize 171 ms, manifest 6.6 ms, ancestor 66.6 ms, state 3.6 ms; `merge (one file)`: scan 2.7 ms, plan 0.3 ms, apply 5.3 ms; `ls (5 workspaces)`: scan 11.7 ms.
+
+- Disk after one fork on `linux`: forkspace's own allocation 40.8 MiB; volume free space changed by 40.2 MiB (noisy).
+- Project writes while `new` forked it on `linux` (61 writes over 134 ms): p99 0.2 ms, max 0.2 ms; idle p99 0.3 ms, max 0.3 ms.
+- Disk after one fork on `copy`: forkspace's own allocation 48.0 MiB; volume free space changed by 48.0 MiB (noisy).
+- Project writes while `new` forked it on `copy` (121 writes over 268 ms): p99 0.6 ms, max 2.7 ms; idle p99 0.1 ms, max 0.1 ms.
 
 <!-- bench:end -->
 

@@ -439,7 +439,10 @@ pub struct RestoreArgs {
     #[arg(long, conflicts_with = "id", help = "Finish an interrupted restore")]
     pub resume: bool,
 
-    #[arg(long, help = "Skip dependency installation when a lockfile changes")]
+    #[arg(
+        long,
+        help = "Skip dependency installation when the restore changes package.json, a lockfile or package-manager settings"
+    )]
     pub no_install: bool,
 }
 

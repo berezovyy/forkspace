@@ -7,6 +7,11 @@ that heading into the version and date, and the section becomes the GitHub relea
 
 ## Unreleased
 
+Upgrading: workspaces made by 0.1.0 keep working. Workspaces created, pulled or merged by this
+version use a binary manifest and `pull` deltas that 0.1.0 cannot read, so drop them before
+going back to 0.1.0. `forkspace enter -- command` now exits with the command's status, and
+`merge`/`pull`/`merge --undo` run the package manager only when dependency files change.
+
 - `merge`, `pull` and `merge --undo` run the package manager only when they change
   `package.json`, a lockfile or package-manager settings. Before, every merge into a
   JavaScript project ran `npm install` (37 s for a one-line edit in a Next.js app); `restore`
