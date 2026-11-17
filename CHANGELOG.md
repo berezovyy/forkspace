@@ -5,7 +5,7 @@ Notable changes to forkspace. Versions follow [Semantic Versioning](https://semv
 fixes. Write the notes for the next release under `## Unreleased`; `scripts/release.sh` turns
 that heading into the version and date, and the section becomes the GitHub release notes.
 
-## Unreleased
+## 0.2.0 - 2026-11-17
 
 Upgrading: workspaces made by 0.1.0 keep working. Workspaces created, pulled or merged by this
 version use a binary manifest and `pull` deltas that 0.1.0 cannot read, so drop them before
