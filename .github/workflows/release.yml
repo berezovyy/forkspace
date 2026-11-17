@@ -21,8 +21,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: aarch64-apple-darwin, os: macos-latest }
-          - { target: x86_64-apple-darwin, os: macos-latest }
+          # Pinned labels rather than macos-latest, whose arm64 pool is often out of capacity;
+          # the x86_64 build runs natively on Intel.
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-apple-darwin, os: macos-15-intel }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
     env:
@@ -39,8 +41,6 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target "$TARGET"
       - name: Check the version
-        # The macOS runner is Apple Silicon; it cannot run the x86_64 build without Rosetta.
-        if: matrix.target != 'x86_64-apple-darwin'
         run: test "$(target/$TARGET/release/forkspace --version)" = "forkspace ${TAG#v}"
       - name: Package
         run: |
