@@ -124,7 +124,9 @@ pub(crate) trait ForkPrimitive: Send + Sync + 'static {
     /// it produced. Per-file copies stamp every entry with a fresh ctime, so by default the
     /// baseline is placed after the copy and after every ctime it produced.
     fn fork_time_ns(&self, _started_ns: u128, stats: &ForkStats) -> u128 {
-        now_unix_ns().max(stats.max_ctime_ns).saturating_add(1)
+        // Every ctime the copy produced is at most the reading, and every later write is
+        // after it (see `ctime_clock_ns`).
+        crate::util::fs::ctime_clock_ns().max(stats.max_ctime_ns)
     }
 
     /// Whether the fork manifest is built by a background worker instead of inline.

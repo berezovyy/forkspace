@@ -6,9 +6,12 @@
 mod common;
 
 use std::fs;
+#[cfg(target_os = "macos")]
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 use common::cli::{stderr, stdout, write, Env};
 use forkspace::changes::manifest::{self, Builder, ManifestStatus};

@@ -10,7 +10,6 @@ use forkspace::changes::collect_clone_changes;
 use forkspace::changes::manifest::{self, ManifestStatus};
 use forkspace::error::ForkspaceError;
 use forkspace::sync::{merge, plan};
-use forkspace::util::now_unix_ns;
 use forkspace::workspace::Workspace;
 use serial_test::serial;
 
@@ -36,7 +35,7 @@ fn workspace(base: &Path, view: &Path, name: &str) -> Workspace {
     };
     workspace.view_path = view.to_path_buf();
     std::thread::sleep(std::time::Duration::from_millis(2));
-    workspace.fork_time_ns = now_unix_ns();
+    workspace.fork_time_ns = forkspace::util::fs::ctime_clock_ns();
     workspace.manifest_status = ManifestStatus::Ready;
     manifest::build(name, view, workspace.fork_time_ns).unwrap();
     workspace

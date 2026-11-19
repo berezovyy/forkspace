@@ -10,7 +10,6 @@ use forkspace::changes::collect_clone_changes;
 use forkspace::changes::manifest::{self, ManifestStatus};
 use forkspace::error::ForkspaceError;
 use forkspace::sync::pull;
-use forkspace::util::now_unix_ns;
 use forkspace::workspace::Workspace;
 use serial_test::serial;
 
@@ -28,15 +27,32 @@ fn write_pair(base: &Path, view: &Path, path: &str, bytes: &[u8]) {
         .unwrap();
 }
 
+/// Wait out one tick of the clock Linux stamps ctimes from (1–10 ms behind the fine clock), so
+/// a write before this call is never mistaken for one made after it.
+fn tick() {
+    std::thread::sleep(std::time::Duration::from_millis(15));
+}
+
 fn workspace(base: &Path, view: &Path, name: &str) -> Workspace {
     let mut ws = Workspace::new(name, base.to_path_buf(), None);
-    ws.backend_kind = BackendKind::MacClone;
-    ws.backend_state = BackendState::MacClone {
-        unknown_fields: serde_json::Map::new(),
-    };
+    // A snapshot backend this build has: pull dispatches to it when the base changed while
+    // the pull read it.
+    if cfg!(target_os = "macos") {
+        ws.backend_kind = BackendKind::MacClone;
+        ws.backend_state = BackendState::MacClone {
+            unknown_fields: serde_json::Map::new(),
+        };
+    } else {
+        ws.backend_kind = BackendKind::PlainCopy;
+        ws.backend_state = BackendState::CowDir {
+            reflinked_files: 0,
+            copied_files: 0,
+            unknown_fields: serde_json::Map::new(),
+        };
+    }
     ws.view_path = view.to_path_buf();
-    std::thread::sleep(std::time::Duration::from_millis(2));
-    ws.fork_time_ns = now_unix_ns();
+    tick();
+    ws.fork_time_ns = forkspace::util::fs::ctime_clock_ns();
     ws.manifest_status = ManifestStatus::Ready;
     ws.manifest_generation = 1;
     manifest::build(name, view, ws.fork_time_ns).unwrap();
@@ -44,6 +60,7 @@ fn workspace(base: &Path, view: &Path, name: &str) -> Workspace {
 }
 
 fn build_plan(ws: &Workspace, theirs: bool) -> forkspace::error::Result<pull::PullPlan> {
+    tick();
     pull::build_from_changes(
         ws,
         pull::base_changes(ws)?,
@@ -64,7 +81,7 @@ fn clean_fast_forward_rebaselines_files_deletes_modes_and_symlinks() {
     std::os::unix::fs::symlink("edit", base.path().join("link")).unwrap();
     std::os::unix::fs::symlink("edit", view.path().join("link")).unwrap();
     let mut ws = workspace(base.path(), view.path(), "pull-clean");
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    tick();
     fs::write(base.path().join("edit"), b"new\n").unwrap();
     fs::write(base.path().join("add"), b"added\n").unwrap();
     fs::remove_file(base.path().join("delete")).unwrap();
@@ -111,7 +128,7 @@ fn disjoint_edits_preserve_ours_and_conflicts_refuse_atomically() {
     write_pair(base.path(), view.path(), "a", b"old-a\n");
     write_pair(base.path(), view.path(), "b", b"old-b\n");
     let mut ws = workspace(base.path(), view.path(), "pull-disjoint");
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    tick();
     fs::write(base.path().join("a"), b"base-a\n").unwrap();
     fs::write(view.path().join("b"), b"ours-b\n").unwrap();
 
@@ -127,7 +144,7 @@ fn disjoint_edits_preserve_ours_and_conflicts_refuse_atomically() {
     assert_eq!(remaining[0].path, Path::new("b"));
 
     // Binary content cannot be merged line by line, so it stays a whole-file conflict.
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    tick();
     fs::write(base.path().join("a"), b"base-again\0\n").unwrap();
     fs::write(view.path().join("a"), b"ours-a\0\n").unwrap();
     let before = fs::read(view.path().join("a")).unwrap();
@@ -150,7 +167,7 @@ fn open_journal_blocks_stale_ancestor_operations_and_resume_converges() {
     let view = tempfile::tempdir().unwrap();
     write_pair(base.path(), view.path(), "a", b"old\n");
     let mut ws = workspace(base.path(), view.path(), "pull-resume");
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    tick();
     fs::write(base.path().join("a"), b"new\n").unwrap();
     let plan = build_plan(&ws, false).unwrap();
     let journal = pull::start(&ws, &plan).unwrap();
@@ -176,7 +193,7 @@ fn conflict_kind_matrix_refuses_without_partial_application() {
         let view = tempfile::tempdir().unwrap();
         prepare(base.path(), view.path());
         let ws = workspace(base.path(), view.path(), name);
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        tick();
         mutate(base.path(), view.path());
         let before = tree_facts(view.path());
         assert!(matches!(
@@ -242,7 +259,7 @@ fn base_deleted_directory_keeps_files_the_workspace_added_inside() {
         write_pair(base.path(), view.path(), "gone/old.txt", b"old\n");
         let name = format!("pull-kept-dir-{theirs}");
         let mut ws = workspace(base.path(), view.path(), &name);
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        tick();
         fs::write(view.path().join("dir/new.txt"), b"ours\n").unwrap();
         fs::write(view.path().join("dir/sub/new2.txt"), b"ours too\n").unwrap();
         if theirs {
@@ -299,7 +316,7 @@ fn base_replacing_a_directory_conflicts_with_workspace_additions_inside() {
     write_pair(base.path(), view.path(), "dir/keep.txt", b"keep\n");
     write_pair(base.path(), view.path(), "dir/sub/k2.txt", b"k2\n");
     let ws = workspace(base.path(), view.path(), "pull-dir-to-file");
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    tick();
     fs::write(view.path().join("dir/new.txt"), b"ours\n").unwrap();
     fs::write(view.path().join("dir/sub/new.txt"), b"ours\n").unwrap();
     fs::remove_dir_all(base.path().join("dir")).unwrap();
@@ -397,7 +414,7 @@ fn convergent_edit_is_a_noop_but_still_rebaselines() {
     let view = tempfile::tempdir().unwrap();
     write_pair(base.path(), view.path(), "same", b"old\n");
     let mut ws = workspace(base.path(), view.path(), "pull-convergent");
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    tick();
     fs::write(base.path().join("same"), b"same-new\n").unwrap();
     fs::write(view.path().join("same"), b"same-new\n").unwrap();
     let plan = build_plan(&ws, false).unwrap();
@@ -585,6 +602,7 @@ fn child_pull_uses_its_immediate_parent_and_propagates_one_level_at_a_time() {
         },
     )
     .unwrap();
+    tick();
     fs::write(parent.view_path.join("file"), b"parent-1\n").unwrap();
     pull_via_state("pull-child");
     assert_eq!(
@@ -662,6 +680,7 @@ fn forkspace_command(home: &Path, args: &[&str]) -> std::process::Output {
 }
 
 fn pull_via_state(name: &str) {
+    tick();
     forkspace::state::State::with_state(|state| {
         let mut workspace = state.require_workspace(name)?.clone();
         let plan = pull::build(&workspace, false)?;
@@ -726,7 +745,7 @@ fn dirty_rows_are_workspace_writes_not_base_changes() {
     write_pair(base.path(), view.path(), "b.bin", b"bin\0ary0");
     let ws = workspace(base.path(), view.path(), "pull-dirty");
     forkspace::sync::ancestor::record(&ws.name, base.path()).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    tick();
     fs::write(view.path().join("a.txt"), b"v1 agent\n").unwrap();
     fs::write(view.path().join("b.bin"), b"bin\0ary1 agent").unwrap();
     fs::write(view.path().join("new.txt"), b"agent created\n").unwrap();
@@ -749,7 +768,7 @@ fn a_base_file_touched_without_changing_bytes_is_not_a_base_change() {
     write_pair(base.path(), view.path(), "src/old.ts", b"one\n");
     let ws = workspace(base.path(), view.path(), "pull-touch");
     forkspace::sync::ancestor::record(&ws.name, base.path()).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    tick();
     fs::write(view.path().join("logo.bin"), b"\x89PNG\0agent").unwrap();
     fs::remove_file(view.path().join("src/old.ts")).unwrap();
     // A checkout round trip, a rebase, `touch`: same bytes, new mtime.
@@ -776,7 +795,7 @@ fn a_base_rewrite_that_keeps_size_and_mtime_is_a_base_change() {
     write_pair(base.path(), view.path(), "x", b"one\ntwo\nthree\n");
     let ws = workspace(base.path(), view.path(), "pull-same-size");
     forkspace::sync::ancestor::record(&ws.name, base.path()).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    tick();
     // `rsync -a`, `touch -r`, an in-place rewrite: same size, mtime put back.
     let target = base.path().join("x");
     let mtime = fs::metadata(&target).unwrap().modified().unwrap();
@@ -799,7 +818,7 @@ fn a_dirty_row_is_no_base_change_even_without_a_fork_time_copy() {
     let view = tempfile::tempdir().unwrap();
     write_pair(base.path(), view.path(), "a.txt", b"v0\n");
     let ws = workspace(base.path(), view.path(), "pull-dirty-no-copy");
-    std::thread::sleep(std::time::Duration::from_millis(2));
+    tick();
     fs::write(view.path().join("a.txt"), b"v1 agent\n").unwrap();
     rebuild_manifest_late(&ws, view.path());
     fs::write(base.path().join("c.txt"), b"base\n").unwrap();

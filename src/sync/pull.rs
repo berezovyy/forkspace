@@ -28,7 +28,7 @@ use crate::sync::undo::Identity;
 use crate::sync::{display_paths, is_transferable, order_respellings, render_plan};
 use crate::util::fs::{ctime_ns, mode_bits, mtime_ns, same_contents};
 use crate::util::walk::Entry;
-use crate::util::{now_rfc3339, now_unix_ns, IoContext, WalkDirExt};
+use crate::util::{now_rfc3339, IoContext, WalkDirExt};
 use crate::workspace::Workspace;
 
 /// The base-side changes a pull would copy into a workspace.
@@ -836,7 +836,7 @@ pub fn finish(workspace: &mut Workspace, path: &Path) -> Result<Vec<PathBuf>> {
             workspace.base.clone()
         }
     };
-    let fork_time_ns = now_unix_ns();
+    let fork_time_ns = crate::util::fs::ctime_clock_ns();
     // A frozen ancestor carries its manifest; anything else is walked.
     let cache = frozen::manifest_cache(&ancestor);
     let copied = matches!(&workspace.backend_state, BackendState::Overlay(layers) if layers.lower.is_some())
@@ -857,7 +857,7 @@ pub fn finish(workspace: &mut Workspace, path: &Path) -> Result<Vec<PathBuf>> {
 /// deferred, recorded as the view has it instead (see [`settle_late_changes`]).
 fn finish_snapshot(workspace: &mut Workspace, journal: &OperationJournal) -> Result<Vec<PathBuf>> {
     let staging = ancestor::stage(&workspace.name, &workspace.base)?;
-    let fork_time_ns = now_unix_ns();
+    let fork_time_ns = crate::util::fs::ctime_clock_ns();
     let settled = manifest::rows_of_tree(&workspace.base, fork_time_ns).and_then(|mut rows| {
         let left = settle_late_changes(workspace, journal, &staging, &mut rows, fork_time_ns)?;
         Ok((rows, left))

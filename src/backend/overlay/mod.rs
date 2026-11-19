@@ -255,7 +255,7 @@ impl WorkspaceBackend for OverlayBackend {
         } else {
             Some(trace::time("freeze", || freeze_base(req))?)
         };
-        let fork_time_ns = crate::util::now_unix_ns();
+        let fork_time_ns = crate::util::fs::ctime_clock_ns();
         let mut layers = OverlayState::at(&root);
         layers.lower = frozen.as_ref().map(|frozen| frozen.tree.clone());
         let lower = layers.lower.clone().unwrap_or_else(|| req.base.clone());

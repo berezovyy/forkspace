@@ -123,27 +123,55 @@ pub fn ctime_ns(metadata: &fs::Metadata) -> i128 {
     i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec())
 }
 
-/// A clock reading, in nanoseconds since the epoch, that every entry written after this call
-/// has a later ctime than. Linux stamps inode times from its coarse clock, up to a tick
-/// (1–10 ms) behind the clock a process normally reads, so a write right after a fine reading
-/// can carry an earlier ctime; the coarse clock itself, less a nanosecond, is never ahead of a
-/// later stamp. APFS stamps from the fine clock: a ctime was never earlier than the clock read
-/// just before the write (n = 2,000, 2026-11-19).
+/// A clock reading, in nanoseconds since the epoch, that separates writes by ctime: every
+/// entry written after this call has a later ctime, and every entry written before it a ctime
+/// no later than the reading.
+///
+/// Linux stamps inode times from its coarse clock, which lags the fine clock by up to a tick
+/// (1–10 ms), or, since 6.13 on most local filesystems, from the fine clock when the previous
+/// stamp was read ("multigrain" timestamps). So neither clock alone separates the two: a
+/// write right after a fine reading can carry an earlier coarse stamp, and a write just
+/// before a coarse reading a later fine one. The call reads the fine clock, then waits until
+/// the coarse clock has passed that reading (about a tick) and returns the coarse reading
+/// less a nanosecond: an earlier write is stamped at most the fine reading, a later one at
+/// least the coarse reading, by either clock (0 of 1,500 writes either way on tmpfs and ext4,
+/// kernel 7.0, 2026-11-19). APFS stamps from the fine clock: a ctime was never earlier than
+/// the clock read just before the write (n = 2,000, 2026-11-19).
 pub fn ctime_clock_ns() -> u128 {
     #[cfg(target_os = "linux")]
     {
-        let mut now = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        };
-        // SAFETY: `now` is a valid out-pointer for clock_gettime.
-        if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME_COARSE, &mut now) } == 0 {
-            let seconds = u128::try_from(now.tv_sec).unwrap_or(0);
-            let nanos = u128::try_from(now.tv_nsec).unwrap_or(0);
-            return (seconds * 1_000_000_000 + nanos).saturating_sub(1);
+        let fine = crate::util::now_unix_ns();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(50);
+        loop {
+            match coarse_clock_ns() {
+                Some(coarse) if coarse > fine => return coarse - 1,
+                Some(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                }
+                // A coarse clock that is missing or does not move: the fine reading is the
+                // best bound left.
+                _ => return fine,
+            }
         }
     }
+    #[allow(unreachable_code)]
     crate::util::now_unix_ns()
+}
+
+/// The coarse realtime clock Linux stamps inode times from.
+#[cfg(target_os = "linux")]
+fn coarse_clock_ns() -> Option<u128> {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `now` is a valid out-pointer for clock_gettime.
+    if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME_COARSE, &mut now) } != 0 {
+        return None;
+    }
+    let seconds = u128::try_from(now.tv_sec).ok()?;
+    let nanos = u128::try_from(now.tv_nsec).ok()?;
+    Some(seconds * 1_000_000_000 + nanos)
 }
 
 /// Permission bits (including setuid/setgid/sticky).
