@@ -26,6 +26,7 @@ _forkspace() {
         'limit:Show or change a workspace'"'"'s memory and CPU limits'
         'gc:Show what disk forkspace could give back, and reclaim it'
         'upgrade:Upgrade forkspace to the latest release'
+        'update:Upgrade forkspace to the latest release'
     )
 
     _arguments -C \
@@ -185,7 +186,7 @@ _forkspace() {
                         '--no-install[Skip dependency installation]' \
                         '--help[Show help]'
                     ;;
-                upgrade)
+                upgrade|update)
                     _arguments \
                         '1:version:' \
                         '--check[Only report whether a newer release exists]' \

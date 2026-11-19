@@ -76,9 +76,13 @@ fn output(command: &mut Command) -> Output {
 }
 
 fn upgrade(exe: &Path, releases: &Path, args: &[&str]) -> Output {
+    run_as("upgrade", exe, releases, args)
+}
+
+fn run_as(command: &str, exe: &Path, releases: &Path, args: &[&str]) -> Output {
     output(
         Command::new(exe)
-            .arg("upgrade")
+            .arg(command)
             .args(args)
             .env(
                 "FORKSPACE_RELEASES_URL",
@@ -109,6 +113,24 @@ fn upgrade_replaces_the_binary_with_a_verified_release() {
     assert_eq!(version_of(&exe), "forkspace 9.9.9");
     let leftovers: Vec<_> = fs::read_dir(exe.parent().unwrap()).unwrap().collect();
     assert_eq!(leftovers.len(), 1, "staging file left beside the binary");
+}
+
+#[test]
+fn update_is_another_name_for_upgrade() {
+    let root = tempfile::tempdir().unwrap();
+    let releases = root.path().join("releases");
+    publish(&releases, "9.9.9", None);
+    let exe = installed_copy(root.path());
+
+    let help = |command: &str| run_as(command, &exe, &releases, &["--help"]).stdout;
+    assert_eq!(help("update"), help("upgrade"));
+    let output = run_as("update", &exe, &releases, &["9.9.9"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(version_of(&exe), "forkspace 9.9.9");
 }
 
 #[test]

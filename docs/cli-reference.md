@@ -183,7 +183,7 @@ of interrupted commands. Workspaces with changes are listed and kept.
 
 ### `forkspace upgrade [version]`
 
-Replace the running binary with the latest release, or with `version` (newer or older). The
+`forkspace update` is the same command. Replace the running binary with the latest release, or with `version` (newer or older). The
 download is checked against the release's SHA-256 checksum and moved into place in one step.
 A Cargo install is upgraded with `cargo install`, and so is a platform the release has no
 binary for, when Cargo is on `PATH`; a Homebrew install is left to `brew upgrade`. `--check`

@@ -181,7 +181,7 @@ forkspace diff step-2 --cumulative
 | `limit`   | Cap a workspace's memory and CPU (Linux)                                    |
 | `drop`    | Remove workspaces (`--kill`, `--all`, `--glob`, `--force`)                  |
 | `gc`      | Show and reclaim disk forkspace no longer needs                             |
-| `upgrade` | Install the latest release, or a given version (`--check`)                  |
+| `upgrade` | Install the latest release, or a given version (`--check`); also `update`   |
 
 Every command has `--help`; `ls`, `diff`, `compare`, `pull` and `checkpoints` also print
 `--json`. The full reference is in [docs/cli-reference.md](docs/cli-reference.md), and the rest

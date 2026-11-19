@@ -306,7 +306,10 @@ fn handwritten_zsh_completions_match_visible_cli_commands() {
     let visible: std::collections::BTreeSet<_> = forkspace::cli::Cli::command()
         .get_subcommands()
         .filter(|command| !command.is_hide_set())
-        .map(|command| command.get_name().to_string())
+        .flat_map(|command| {
+            std::iter::once(command.get_name().to_string())
+                .chain(command.get_visible_aliases().map(str::to_string))
+        })
         .collect();
     assert_eq!(completed, visible);
 }

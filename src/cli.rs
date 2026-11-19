@@ -69,6 +69,7 @@ pub enum Commands {
     Gc(GcArgs),
 
     /// Upgrade forkspace to the latest release (or to a given version)
+    #[command(visible_alias = "update")]
     Upgrade(UpgradeArgs),
 
     /// Generate shell completions
