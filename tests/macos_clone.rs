@@ -1734,4 +1734,55 @@ S(('127.0.0.1',int(os.environ['PORT'])),H).serve_forever()
             );
         }
     }
+
+    /// A clone keeps the BSD flags of what it cloned: a user-immutable file in the project
+    /// must not leave the dropped workspace in the trash for good.
+    #[test]
+    #[serial]
+    fn dropping_a_workspace_with_an_immutable_file_empties_the_trash() {
+        let (home, base) = setup();
+        fs::write(base.path().join("locked.txt"), "locked\n").unwrap();
+        fs::write(base.path().join("free.txt"), "free\n").unwrap();
+        let chflags = |flags: &str| {
+            assert!(Command::new("chflags")
+                .arg(flags)
+                .arg(base.path().join("locked.txt"))
+                .status()
+                .unwrap()
+                .success());
+        };
+        chflags("uchg");
+        let created = forkspace::workspace::create(
+            base.path().to_path_buf(),
+            "immutable",
+            forkspace::workspace::CreateOptions::default(),
+        );
+        let view = created
+            .as_ref()
+            .ok()
+            .map(|workspace| workspace.view_path.clone());
+        let dropped =
+            State::with_state(|state| forkspace::workspace::remove::remove(state, "immutable"));
+        let trash = home.path().join("trash");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            // Every state load starts the trash removals.
+            let _ = State::load();
+            let left = fs::read_dir(&trash)
+                .map(|entries| entries.count())
+                .unwrap_or(0);
+            if left == 0 || Instant::now() > deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        let left = fs::read_dir(&trash)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        chflags("nouchg");
+        created.unwrap();
+        dropped.unwrap();
+        assert!(!view.unwrap().exists());
+        assert_eq!(left, 0, "the dropped workspace stayed in the trash");
+    }
 }

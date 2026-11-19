@@ -339,7 +339,7 @@ pub fn trash(path: &Path, label: &str) -> Result {
     if fs::create_dir_all(&trash_root).is_ok() && fs::rename(path, &destination).is_ok() {
         return Ok(());
     }
-    match fs::remove_dir_all(path) {
+    match remove_in_place(path) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
             Err(error).io_context(|| format!("remove {}", path.display()))
         }
@@ -364,10 +364,8 @@ pub fn start_trash_removals() {
             continue;
         };
         let descriptor = lock.as_raw_fd();
-        let mut command = Command::new("rm");
+        let mut command = removal_command(&path);
         command
-            .args(["-rf", "--"])
-            .arg(path)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -384,6 +382,48 @@ pub fn start_trash_removals() {
         let _ = command.spawn();
     }
     remove_stale_locks(&locks);
+}
+
+/// The command that deletes the trashed directory `path`. On macOS, an APFS clone keeps the
+/// BSD flags of what it cloned, and `rm` cannot delete a user-immutable (`uchg`) or
+/// append-only (`uappnd`) file, which would leave the directory in the trash for every later
+/// sweep to fail on: when `rm` fails, those flags are cleared and `rm` runs again.
+fn removal_command(path: &Path) -> Command {
+    if cfg!(target_os = "macos") {
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                r#"rm -rf -- "$1" 2>/dev/null || { chflags -R nouchg,nouappnd -- "$1"; rm -rf -- "$1"; }"#,
+                "sh",
+            ])
+            .arg(path);
+        command
+    } else {
+        let mut command = Command::new("rm");
+        command.args(["-rf", "--"]).arg(path);
+        command
+    }
+}
+
+/// Remove `path` in place, clearing user-immutable flags (macOS) if a first attempt is refused.
+fn remove_in_place(path: &Path) -> std::io::Result<()> {
+    match fs::remove_dir_all(path) {
+        Err(error)
+            if cfg!(target_os = "macos")
+                && error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            let _ = Command::new("chflags")
+                .args(["-R", "nouchg,nouappnd", "--"])
+                .arg(path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            fs::remove_dir_all(path)
+        }
+        result => result,
+    }
 }
 
 /// Lock files whose trash directory is gone and that no `rm` holds.
