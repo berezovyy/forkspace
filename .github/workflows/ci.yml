@@ -1,7 +1,8 @@
 name: ci
 
 on:
-  # Automatic CI is temporarily paused. Run manually from the Actions tab.
+  push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
