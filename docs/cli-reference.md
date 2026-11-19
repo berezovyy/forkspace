@@ -190,6 +190,40 @@ binary for, when Cargo is on `PATH`; a Homebrew install is left to `brew upgrade
 only reports whether a newer release exists. Needs `curl` and `tar`. Existing workspaces keep
 working: state written by an older version is migrated when it is next read.
 
+### `forkspace skill`
+
+Print the bundled agent skill: instructions, in the `SKILL.md` format, for coding agents
+that drive forkspace (which command to use, reading `--json`, asking before `merge` and
+`drop`). It matches the installed version.
+
+### `forkspace hook <event>`
+
+Run as a Claude Code hook, so the worktrees Claude Code makes (`claude --worktree`, subagents
+with `isolation: worktree`, background sessions) are forkspace workspaces, with
+`node_modules` and `.env` already inside. `forkspace hook claude-settings` prints the
+`settings.json` entries:
+
+```json
+{
+  "hooks": {
+    "WorktreeCreate": [{"hooks": [{"type": "command", "command": "forkspace hook worktree-create"}]}],
+    "WorktreeRemove": [{"hooks": [{"type": "command", "command": "forkspace hook worktree-remove"}]}]
+  }
+}
+```
+
+- `worktree-create` reads the hook's JSON on stdin, forks the project Claude Code runs in (its
+  Git top level) into a workspace named after the worktree, on a new branch
+  `worktree-<name>` when the branch is free, and prints the workspace's path. A name that
+  already has a workspace of the same project opens that workspace again.
+- `worktree-remove` drops the workspace at `worktree_path`. A workspace with changes a merge
+  would bring over, or with new commits, is kept and the hook fails, so Claude Code keeps it
+  too; `--discard` drops it anyway.
+
+With the hook, Claude Code skips `.worktreeinclude` (not needed: ignored files are already in
+the workspace) and does not remove the worktrees of subagents; `forkspace ls` and
+`forkspace drop` manage them.
+
 ### `forkspace completions <shell>`
 
 Print a completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell`. The zsh script

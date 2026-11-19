@@ -8,6 +8,7 @@ pub mod diff;
 pub mod drop;
 pub(crate) mod enter;
 pub(crate) mod gc;
+pub mod hook;
 pub mod land;
 pub(crate) mod limit;
 pub mod ls;
@@ -15,6 +16,7 @@ pub(crate) mod merge;
 pub mod new;
 pub(crate) mod pull;
 pub(crate) mod run;
+pub mod skill;
 pub(crate) mod switch;
 pub mod upgrade;
 
@@ -48,6 +50,8 @@ pub fn dispatch(cli: Cli) -> Result {
         Commands::Limit(args) => limit::exec(args),
         Commands::Gc(args) => gc::exec(args),
         Commands::Upgrade(args) => upgrade::exec(args),
+        Commands::Skill => skill::exec(),
+        Commands::Hook(args) => hook::exec(args),
         Commands::ProxyDaemon(args) => crate::process::proxy::run_proxy(args.port),
     }
 }

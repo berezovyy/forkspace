@@ -27,6 +27,8 @@ _forkspace() {
         'gc:Show what disk forkspace could give back, and reclaim it'
         'upgrade:Upgrade forkspace to the latest release'
         'update:Upgrade forkspace to the latest release'
+        'skill:Print instructions for coding agents that use forkspace'
+        'hook:Run as a Claude Code hook'
     )
 
     _arguments -C \
@@ -190,6 +192,15 @@ _forkspace() {
                     _arguments \
                         '1:version:' \
                         '--check[Only report whether a newer release exists]' \
+                        '--help[Show help]'
+                    ;;
+                skill)
+                    _arguments '--help[Show help]'
+                    ;;
+                hook)
+                    _arguments \
+                        '1:event:(worktree-create worktree-remove claude-settings)' \
+                        '--discard[Drop the workspace even when it has unmerged work]' \
                         '--help[Show help]'
                     ;;
             esac

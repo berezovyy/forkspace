@@ -121,6 +121,10 @@ forkspace merge agent-a                     # keep one
 forkspace drop --all                        # discard the rest
 ```
 
+`forkspace skill` prints instructions an agent can follow to use forkspace safely, and
+`forkspace hook claude-settings` prints the Claude Code hooks that make its own worktrees
+(`claude --worktree`, subagents with `isolation: worktree`) forkspace workspaces.
+
 ### Dev servers side by side
 
 <p align="center">
@@ -182,6 +186,8 @@ forkspace diff step-2 --cumulative
 | `drop`    | Remove workspaces (`--kill`, `--all`, `--glob`, `--force`)                  |
 | `gc`      | Show and reclaim disk forkspace no longer needs                             |
 | `upgrade` | Install the latest release, or a given version (`--check`); also `update`   |
+| `skill`   | Print instructions for coding agents that use forkspace                     |
+| `hook`    | Make Claude Code's worktrees forkspace workspaces (`hook claude-settings`)  |
 
 Every command has `--help`; `ls`, `diff`, `compare`, `pull` and `checkpoints` also print
 `--json`. The full reference is in [docs/cli-reference.md](docs/cli-reference.md), and the rest

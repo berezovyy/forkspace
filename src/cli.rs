@@ -72,6 +72,12 @@ pub enum Commands {
     #[command(visible_alias = "update")]
     Upgrade(UpgradeArgs),
 
+    /// Print instructions for coding agents that use forkspace
+    Skill,
+
+    /// Run as a Claude Code hook, so its worktrees are forkspace workspaces
+    Hook(HookArgs),
+
     /// Generate shell completions
     #[command(hide = true)]
     Completions(CompletionsArgs),
@@ -485,6 +491,28 @@ pub struct LandArgs {
         help = "Land under a different branch name"
     )]
     pub as_branch: Option<String>,
+}
+
+#[derive(Args)]
+pub struct HookArgs {
+    #[command(subcommand)]
+    pub event: HookEvent,
+}
+
+#[derive(Subcommand)]
+pub enum HookEvent {
+    /// WorktreeCreate: fork the project and print the workspace's path
+    WorktreeCreate,
+    /// WorktreeRemove: drop the workspace, keeping one with unmerged work
+    WorktreeRemove {
+        #[arg(
+            long,
+            help = "Drop the workspace even when it has unmerged changes or commits"
+        )]
+        discard: bool,
+    },
+    /// Print the settings.json hooks that enable the two hooks above
+    ClaudeSettings,
 }
 
 #[derive(Args)]
