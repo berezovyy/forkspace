@@ -751,12 +751,11 @@ mod macos {
         })
         .unwrap();
 
+        // A build in progress: its builder (this test process) is alive.
         State::with_state(|state| {
-            state
-                .workspaces
-                .get_mut("manifest")
-                .unwrap()
-                .manifest_status = ManifestStatus::Building;
+            let workspace = state.workspaces.get_mut("manifest").unwrap();
+            workspace.manifest_status = ManifestStatus::Building;
+            workspace.manifest_builder = Some(manifest::Builder::of(std::process::id()));
             Ok(())
         })
         .unwrap();
@@ -793,22 +792,22 @@ mod macos {
             .unwrap();
         assert!(String::from_utf8_lossy(&output.stdout).contains("4 files"));
 
+        // A manifest damaged after the workspace was written to is built again from the view,
+        // the base and the fork-time copy (STATE-03): the same changes are counted afterwards.
         fs::write(manifest::manifest_path("manifest"), b"truncated\n").unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
             .arg("ls")
             .output()
             .unwrap();
-        assert!(String::from_utf8_lossy(&output.stdout).contains("degraded"));
-        assert_eq!(
-            State::load()
-                .unwrap()
-                .workspaces
-                .get("manifest")
-                .unwrap()
-                .manifest_status,
-            ManifestStatus::Degraded
-        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("  -"));
+        wait_for_manifest("manifest");
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["ls"])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&output.stdout).contains("3 files"));
 
         commands::drop::exec(DropArgs {
             name: Some("manifest".into()),
@@ -855,6 +854,106 @@ mod macos {
         assert!(paths.iter().any(|path| path == &long));
     }
 
+    /// The batch 112 export, end to end: a file written while the background manifest walk has
+    /// not reached it yet gets a dirty row, and `merge --patch` must still carry its edit (from
+    /// the fork-time copy). With no fork-time version at all it must exit 5, print nothing, and
+    /// leave the workspace in place under `--drop`.
+    #[test]
+    #[serial]
+    fn merge_patch_carries_files_written_before_the_manifest_walk() {
+        let (home, base) = setup();
+        fs::write(base.path().join("early.rs"), "fn early() {}\n").unwrap();
+        fs::write(base.path().join("late.rs"), "fn late() {}\n").unwrap();
+        // A worker that starts late, so the edit below lands before the walk.
+        let slow_worker = home.path().join("slow-worker");
+        fs::write(
+            &slow_worker,
+            format!(
+                "#!/bin/sh\nsleep 1\nexec '{}' \"$@\"\n",
+                env!("CARGO_BIN_EXE_forkspace")
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(
+            &slow_worker,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        let forked = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .env("FORKSPACE_INTERNAL_MANIFEST_EXE", &slow_worker)
+            .args([
+                "new",
+                "early-patch",
+                "--from",
+                base.path().to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            forked.status.success(),
+            "{}",
+            String::from_utf8_lossy(&forked.stderr)
+        );
+        let view = State::load().unwrap().workspaces["early-patch"]
+            .view_path
+            .clone();
+        fs::write(view.join("early.rs"), "fn early() { edited() }\n").unwrap();
+        wait_for_manifest("early-patch");
+        thread::sleep(Duration::from_millis(2));
+        fs::write(view.join("late.rs"), "fn late() { edited() }\n").unwrap();
+        let dirty: Vec<_> = manifest::read("early-patch")
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.dirty)
+            .map(|row| row.path)
+            .collect();
+        assert_eq!(
+            dirty,
+            vec!["early.rs".to_string()],
+            "the early edit should leave a dirty row"
+        );
+
+        let patch = |extra: &[&str]| {
+            Command::new(env!("CARGO_BIN_EXE_forkspace"))
+                .env("FORKSPACE_HOME", home.path())
+                .args(["merge", "--patch", "early-patch"])
+                .args(extra)
+                .output()
+                .unwrap()
+        };
+        let output = patch(&[]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(text.contains("+fn early() { edited() }"), "{text}");
+        assert!(text.contains("+fn late() { edited() }"), "{text}");
+        assert!(!text.contains("unavailable"), "{text}");
+
+        fs::remove_file(forkspace::sync::ancestor::dir("early-patch").join("early.rs")).unwrap();
+        let output = patch(&["--drop"]);
+        assert_eq!(
+            output.status.code(),
+            Some(5),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("early.rs"));
+        assert!(State::load()
+            .unwrap()
+            .workspaces
+            .contains_key("early-patch"));
+        assert!(view.join("early.rs").exists());
+    }
+
     #[test]
     #[serial]
     fn diff_reports_pending_deletions_and_base_advanced_full_content() {
@@ -869,12 +968,11 @@ mod macos {
         fs::remove_file(workspace.view_path.join("deleted")).unwrap();
         fs::write(base.path().join("modified"), b"base advanced\n").unwrap();
 
+        // A build in progress: its builder (this test process) is alive.
         State::with_state(|state| {
-            state
-                .workspaces
-                .get_mut("diff-state")
-                .unwrap()
-                .manifest_status = ManifestStatus::Building;
+            let workspace = state.workspaces.get_mut("diff-state").unwrap();
+            workspace.manifest_status = ManifestStatus::Building;
+            workspace.manifest_builder = Some(manifest::Builder::of(std::process::id()));
             Ok(())
         })
         .unwrap();
@@ -911,7 +1009,24 @@ mod macos {
             .output()
             .unwrap();
         assert!(output.status.success());
-        assert!(String::from_utf8_lossy(&output.stdout).contains("base advanced"));
+        // The base advanced, so the workspace's own change is shown against its fork-time copy,
+        // not against the base's newer content.
+        let full = common_strip_ansi(&String::from_utf8_lossy(&output.stdout));
+        assert!(full.contains("-old\n+workspace\n"), "{full}");
+        assert!(!full.contains("base advanced"), "{full}");
+    }
+
+    fn common_strip_ansi(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                chars.by_ref().find(|&c| c == 'm');
+            } else {
+                out.push(c);
+            }
+        }
+        out
     }
 
     #[test]

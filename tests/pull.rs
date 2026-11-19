@@ -231,6 +231,166 @@ fn conflict_kind_matrix_refuses_without_partial_application() {
 
 #[test]
 #[serial]
+fn base_deleted_directory_keeps_files_the_workspace_added_inside() {
+    // DATA-01: deleting the view's directory recursively lost the workspace's additions.
+    let _home = common::setup_test_env();
+    for theirs in [false, true] {
+        let base = tempfile::tempdir().unwrap();
+        let view = tempfile::tempdir().unwrap();
+        write_pair(base.path(), view.path(), "dir/keep.txt", b"keep\n");
+        write_pair(base.path(), view.path(), "dir/sub/k2.txt", b"k2\n");
+        write_pair(base.path(), view.path(), "gone/old.txt", b"old\n");
+        let name = format!("pull-kept-dir-{theirs}");
+        let mut ws = workspace(base.path(), view.path(), &name);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        fs::write(view.path().join("dir/new.txt"), b"ours\n").unwrap();
+        fs::write(view.path().join("dir/sub/new2.txt"), b"ours too\n").unwrap();
+        if theirs {
+            // A conflict taken toward the base still must not take the additions with it.
+            fs::write(view.path().join("dir/keep.txt"), b"ours edit\n").unwrap();
+        }
+        fs::remove_dir_all(base.path().join("dir")).unwrap();
+        fs::remove_dir_all(base.path().join("gone")).unwrap();
+
+        let plan = build_plan(&ws, theirs).unwrap();
+        let planned: Vec<_> = plan.changes.iter().map(|c| c.path.clone()).collect();
+        assert!(!planned.contains(&"dir".into()), "{planned:?}");
+        assert!(!planned.contains(&"dir/sub".into()), "{planned:?}");
+        assert!(planned.contains(&"gone".into()), "{planned:?}");
+        assert_eq!(plan.kept, [Path::new("dir"), Path::new("dir/sub")]);
+        assert!(pull::render(&plan).contains("kept for workspace changes: dir, dir/sub"));
+        let journal = pull::start(&ws, &plan).unwrap();
+        pull::finish(&mut ws, &journal).unwrap();
+        pull::complete(&journal).unwrap();
+
+        assert_eq!(
+            fs::read(view.path().join("dir/new.txt")).unwrap(),
+            b"ours\n"
+        );
+        assert_eq!(
+            fs::read(view.path().join("dir/sub/new2.txt")).unwrap(),
+            b"ours too\n"
+        );
+        assert!(!view.path().join("dir/keep.txt").exists());
+        assert!(!view.path().join("dir/sub/k2.txt").exists());
+        assert!(!view.path().join("gone").exists());
+        let mut remaining: Vec<_> = collect_clone_changes(&ws, true, false)
+            .unwrap()
+            .into_iter()
+            .filter(|change| change.kind == forkspace::changes::ChangeKind::Added)
+            .map(|change| change.path)
+            .collect();
+        remaining.sort();
+        assert!(remaining.contains(&"dir/new.txt".into()), "{remaining:?}");
+        assert!(
+            remaining.contains(&"dir/sub/new2.txt".into()),
+            "{remaining:?}"
+        );
+    }
+}
+
+#[test]
+#[serial]
+fn base_replacing_a_directory_conflicts_with_workspace_additions_inside() {
+    // DATA-01's sibling: a directory the base turned into a file was swapped out whole.
+    let _home = common::setup_test_env();
+    let base = tempfile::tempdir().unwrap();
+    let view = tempfile::tempdir().unwrap();
+    write_pair(base.path(), view.path(), "dir/keep.txt", b"keep\n");
+    write_pair(base.path(), view.path(), "dir/sub/k2.txt", b"k2\n");
+    let ws = workspace(base.path(), view.path(), "pull-dir-to-file");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    fs::write(view.path().join("dir/new.txt"), b"ours\n").unwrap();
+    fs::write(view.path().join("dir/sub/new.txt"), b"ours\n").unwrap();
+    fs::remove_dir_all(base.path().join("dir")).unwrap();
+    fs::write(base.path().join("dir"), b"now a file\n").unwrap();
+    let before = tree_facts(view.path());
+
+    match build_plan(&ws, false) {
+        Err(ForkspaceError::PullConflict { paths }) => assert_eq!(paths, ["dir"]),
+        other => panic!("expected a pull conflict, got {other:?}"),
+    }
+    assert_eq!(tree_facts(view.path()), before);
+    // `--theirs` takes the base version, as for any other conflict, and says so.
+    let plan = build_plan(&ws, true).unwrap();
+    assert_eq!(plan.conflicts, [Path::new("dir")]);
+    assert!(plan.kept.is_empty(), "{:?}", plan.kept);
+}
+
+#[test]
+#[serial]
+fn journal_lookup_matches_the_exact_workspace_name() {
+    // DATA-02: an open journal of `a-b` matched `a` by file-name prefix, so `a` was blocked
+    // and `restore a --resume` applied `a-b`'s steps.
+    use forkspace::changes::{ChangeKind, FileChange};
+    use forkspace::sync::journal::{self, OperationJournal, OperationKind, OperationPhase};
+
+    let _home = common::setup_test_env();
+    let source = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    fs::write(source.path().join("f"), b"a-b's file\n").unwrap();
+    for op in [
+        OperationKind::Merge,
+        OperationKind::Pull,
+        OperationKind::Restore,
+    ] {
+        let path = journal::path(op, "a-b", 7);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let open = OperationJournal {
+            op,
+            workspace: "a-b".to_string(),
+            source: source.path().to_path_buf(),
+            target: target.path().to_path_buf(),
+            changes: vec![FileChange::new("f".into(), ChangeKind::Added)],
+            next: 0,
+            phase: OperationPhase::Applying,
+            fork_time_ns: 7,
+            merged: Vec::new(),
+            undo: None,
+            guard: None,
+            held: Vec::new(),
+            installed: Vec::new(),
+            base_delta: Vec::new(),
+            earlier: Vec::new(),
+            deferred: Vec::new(),
+        };
+        journal::save(&path, &open).unwrap();
+        assert_eq!(journal::find_open(op, "a").unwrap(), None, "{op:?}");
+        assert_eq!(journal::find_open(op, "a-b").unwrap(), Some(path), "{op:?}");
+    }
+    // A name that ends like a fork time is still compared whole.
+    assert_eq!(
+        journal::find_open(OperationKind::Pull, "a-b-7").unwrap(),
+        None
+    );
+    // The file name and the recorded owner must both say `a`: each check alone stops a
+    // journal whose other half names `a-b`.
+    let merge_ab = journal::path(OperationKind::Merge, "a-b", 7);
+    let mut misnamed = journal::load(&merge_ab).unwrap();
+    misnamed.workspace = "a".to_string();
+    journal::save(&merge_ab, &misnamed).unwrap();
+    assert_eq!(journal::find_open(OperationKind::Merge, "a").unwrap(), None);
+    misnamed.workspace = "a-b".to_string();
+    journal::save(&merge_ab, &misnamed).unwrap();
+    let copied = journal::path(OperationKind::Pull, "a", 8);
+    fs::copy(journal::path(OperationKind::Pull, "a-b", 7), &copied).unwrap();
+    assert_eq!(journal::find_open(OperationKind::Pull, "a").unwrap(), None);
+    fs::remove_file(copied).unwrap();
+    forkspace::workspace::guard::ensure_idle("a").unwrap();
+    assert!(forkspace::workspace::guard::ensure_idle("a-b").is_err());
+
+    let mut a = Workspace::new("a", source.path().to_path_buf(), None);
+    a.view_path = target.path().to_path_buf();
+    assert!(!forkspace::sync::checkpoint::resume(&a).unwrap());
+    assert!(pull::resume_apply(&a).is_err());
+    assert!(
+        !target.path().join("f").exists(),
+        "applied another workspace's journal"
+    );
+}
+
+#[test]
+#[serial]
 fn convergent_edit_is_a_noop_but_still_rebaselines() {
     let _home = common::setup_test_env();
     let base = tempfile::tempdir().unwrap();
@@ -541,4 +701,110 @@ fn tree_facts(root: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
     }
     facts.sort();
     facts
+}
+
+/// Rebuild the manifest of `ws` after the view was written, as the background walk does
+/// when the workspace writes before it gets there: those rows are dirty.
+fn rebuild_manifest_late(ws: &Workspace, view: &Path) {
+    manifest::build(&ws.name, view, ws.fork_time_ns).unwrap();
+}
+
+fn paths(changes: &[forkspace::changes::FileChange]) -> Vec<String> {
+    changes
+        .iter()
+        .map(|change| change.path.display().to_string())
+        .collect()
+}
+
+#[test]
+#[serial]
+fn dirty_rows_are_workspace_writes_not_base_changes() {
+    let _home = common::setup_test_env();
+    let base = tempfile::tempdir().unwrap();
+    let view = tempfile::tempdir().unwrap();
+    write_pair(base.path(), view.path(), "a.txt", b"v0\n");
+    write_pair(base.path(), view.path(), "b.bin", b"bin\0ary0");
+    let ws = workspace(base.path(), view.path(), "pull-dirty");
+    forkspace::sync::ancestor::record(&ws.name, base.path()).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    fs::write(view.path().join("a.txt"), b"v1 agent\n").unwrap();
+    fs::write(view.path().join("b.bin"), b"bin\0ary1 agent").unwrap();
+    fs::write(view.path().join("new.txt"), b"agent created\n").unwrap();
+    rebuild_manifest_late(&ws, view.path());
+    fs::write(base.path().join("c.txt"), b"base\n").unwrap();
+
+    assert_eq!(paths(&pull::base_changes(&ws).unwrap()), ["c.txt"]);
+    let plan = build_plan(&ws, false).unwrap();
+    assert_eq!(paths(&plan.changes), ["c.txt"]);
+    assert!(plan.conflicts.is_empty() && plan.auto_merged.is_empty());
+}
+
+#[test]
+#[serial]
+fn a_base_file_touched_without_changing_bytes_is_not_a_base_change() {
+    let _home = common::setup_test_env();
+    let base = tempfile::tempdir().unwrap();
+    let view = tempfile::tempdir().unwrap();
+    write_pair(base.path(), view.path(), "logo.bin", b"\x89PNG\0fork");
+    write_pair(base.path(), view.path(), "src/old.ts", b"one\n");
+    let ws = workspace(base.path(), view.path(), "pull-touch");
+    forkspace::sync::ancestor::record(&ws.name, base.path()).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    fs::write(view.path().join("logo.bin"), b"\x89PNG\0agent").unwrap();
+    fs::remove_file(view.path().join("src/old.ts")).unwrap();
+    // A checkout round trip, a rebase, `touch`: same bytes, new mtime.
+    for path in ["logo.bin", "src/old.ts"] {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(base.path().join(path))
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()))
+            .unwrap();
+    }
+
+    assert!(pull::base_changes(&ws).unwrap().is_empty());
+    let plan = build_plan(&ws, false).unwrap();
+    assert!(plan.changes.is_empty() && plan.conflicts.is_empty());
+}
+
+#[test]
+#[serial]
+fn a_base_rewrite_that_keeps_size_and_mtime_is_a_base_change() {
+    let _home = common::setup_test_env();
+    let base = tempfile::tempdir().unwrap();
+    let view = tempfile::tempdir().unwrap();
+    write_pair(base.path(), view.path(), "x", b"one\ntwo\nthree\n");
+    let ws = workspace(base.path(), view.path(), "pull-same-size");
+    forkspace::sync::ancestor::record(&ws.name, base.path()).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    // `rsync -a`, `touch -r`, an in-place rewrite: same size, mtime put back.
+    let target = base.path().join("x");
+    let mtime = fs::metadata(&target).unwrap().modified().unwrap();
+    fs::write(&target, b"one\ntwo\nTHREE\n").unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&target)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(mtime))
+        .unwrap();
+
+    assert_eq!(paths(&pull::base_changes(&ws).unwrap()), ["x"]);
+}
+
+#[test]
+#[serial]
+fn a_dirty_row_is_no_base_change_even_without_a_fork_time_copy() {
+    let _home = common::setup_test_env();
+    let base = tempfile::tempdir().unwrap();
+    let view = tempfile::tempdir().unwrap();
+    write_pair(base.path(), view.path(), "a.txt", b"v0\n");
+    let ws = workspace(base.path(), view.path(), "pull-dirty-no-copy");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    fs::write(view.path().join("a.txt"), b"v1 agent\n").unwrap();
+    rebuild_manifest_late(&ws, view.path());
+    fs::write(base.path().join("c.txt"), b"base\n").unwrap();
+
+    // The base never wrote a.txt after the fork, so its row (recorded from the view) says
+    // nothing about the base.
+    assert_eq!(paths(&pull::base_changes(&ws).unwrap()), ["c.txt"]);
 }

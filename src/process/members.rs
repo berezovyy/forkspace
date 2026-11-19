@@ -244,6 +244,16 @@ fn inside(path: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|root| path.starts_with(root))
 }
 
+/// Whether this process or one of its ancestors (the shell or agent that ran it) uses
+/// `workspace`: works in it or has files open there. [`find`] leaves them out so that `drop`
+/// works from inside a workspace; `gc`, which nobody asked to remove that workspace, keeps it.
+pub fn used_by_own_lineage(workspace: &Workspace) -> bool {
+    let roots = roots(workspace);
+    own_lineage()
+        .into_iter()
+        .any(|pid| os::usage(pid, &roots, true).is_some())
+}
+
 /// This process and its ancestors: never reported, so `drop` run from a shell inside the
 /// workspace does not count or stop that shell.
 fn own_lineage() -> HashSet<u32> {

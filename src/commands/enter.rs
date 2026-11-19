@@ -52,13 +52,30 @@ pub fn exec(args: EnterArgs) -> Result {
     // test` fails when the tests do; cleanup below still happens first.
     let failed = (!status.success()).then(|| exit_code(status));
 
+    let mut unmerged = false;
     if args.merge_on_exit {
-        let outcome = resolve_changes_on_exit(&name, backend.as_ref())?;
-        if outcome == Outcome::Removed {
-            return failed.map_or(Ok(()), |code| Err(ForkspaceError::CommandExited(code)));
+        match resolve_changes_on_exit(&name, backend.as_ref()) {
+            Ok(Outcome::Removed) => {
+                return failed.map_or(Ok(()), |code| Err(ForkspaceError::CommandExited(code)));
+            }
+            Ok(Outcome::Kept) => unmerged = true,
+            Ok(Outcome::Clean) => {}
+            Err(error) => {
+                // The merge did not complete: an ephemeral workspace still holds the work.
+                if args.ephemeral {
+                    eprintln!("kept ephemeral workspace '{name}': its changes were not merged");
+                }
+                return Err(error);
+            }
         }
     }
-    if args.ephemeral {
+    if args.ephemeral && unmerged {
+        // Asked to merge on exit, and the changes were not merged: dropping them would lose
+        // the session's work (MERGE-29).
+        eprintln!(
+            "kept ephemeral workspace '{name}' with its unmerged changes; merge it with `forkspace merge {name}` or remove it with `forkspace drop {name}`"
+        );
+    } else if args.ephemeral {
         drop_workspace(&name)?;
         println!("ephemeral workspace removed");
     }
@@ -185,6 +202,9 @@ fn report_exit(name: &str, status: ExitStatus) {
 
 #[derive(PartialEq, Eq)]
 enum Outcome {
+    /// Nothing to merge.
+    Clean,
+    /// Changes left in the workspace, unmerged.
     Kept,
     Removed,
 }
@@ -196,7 +216,7 @@ fn resolve_changes_on_exit(name: &str, backend: &dyn WorkspaceBackend) -> Result
     let workspace = state.require_workspace(name)?;
     if backend.changes(workspace, false, false)?.is_empty() {
         println!("clean — no changes to merge");
-        return Ok(Outcome::Kept);
+        return Ok(Outcome::Clean);
     }
 
     println!("{}", plan::render(&plan::build(workspace, true)?));

@@ -12,6 +12,50 @@ pub fn forkspace_home() -> PathBuf {
     }
 }
 
+/// Every entry forkspace keeps directly in `FORKSPACE_HOME`. An overlay workspace's root is
+/// `FORKSPACE_HOME/<name>` too ([`overlay_root`]), so none of these is a workspace name.
+pub const STORE_ENTRIES: &[&str] = &[
+    "state.json",
+    "state.lock",
+    "workspaces",
+    "fuse-overlayfs-probe",
+    "frozen",
+    "ancestors",
+    "checkpoints",
+    "undo",
+    "trash",
+    "trash-locks",
+    "journal",
+    "manifests",
+    "logs",
+    "proxy.log",
+    "proxy.err",
+];
+
+/// Whether a workspace called `name` would map onto forkspace's own files (SEC-02): a store
+/// entry or one of its temporary siblings (`state.json.tmp`), compared without ASCII case for
+/// case-insensitive volumes, or a hidden name, the namespace of forkspace's temporary and
+/// staging files (`.<name>.jsonl.tmp-<pid>`, `.<name>.tmp-<pid>`).
+pub fn is_reserved_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with('.')
+        || STORE_ENTRIES.iter().any(|entry| {
+            name.strip_prefix(entry)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+        })
+}
+
+/// Whether `path` is `FORKSPACE_HOME` itself or one of its reserved entries, which no
+/// workspace operation may delete or move away.
+pub fn is_store_path(path: &std::path::Path) -> bool {
+    let home = forkspace_home();
+    path == home
+        || (path.parent() == Some(home.as_path())
+            && path
+                .file_name()
+                .is_some_and(|name| is_reserved_name(&name.to_string_lossy())))
+}
+
 /// The workspace registry.
 pub fn state_file() -> PathBuf {
     forkspace_home().join("state.json")
@@ -85,4 +129,35 @@ pub fn manifest_dir() -> PathBuf {
 /// Dev-server stdout/stderr logs for workspace `name`.
 pub fn log_dir(name: &str) -> PathBuf {
     forkspace_home().join("logs").join(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_store_location_is_a_reserved_name() {
+        let home = forkspace_home();
+        for path in [
+            state_file(),
+            state_lock(),
+            snapshot_root(),
+            fuse_probe_cache(),
+            frozen_root(),
+            ancestor_root(),
+            checkpoint_root(),
+            undo_root(),
+            trash_dir(),
+            trash_lock_dir(),
+            journal_dir(),
+            manifest_dir(),
+            log_dir("x").parent().unwrap().to_path_buf(),
+        ] {
+            let entry = path.strip_prefix(&home).unwrap().to_str().unwrap();
+            assert!(is_reserved_name(entry), "{entry} is not reserved");
+        }
+        for name in ["workspaces-2", "my.trash", "logs2", "a", "frozenx"] {
+            assert!(!is_reserved_name(name), "{name}");
+        }
+    }
 }

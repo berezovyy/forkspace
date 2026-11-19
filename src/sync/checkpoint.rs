@@ -18,7 +18,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::backend::{select_backend, BackendState};
+use walkdir::WalkDir;
+
+use crate::backend::select_backend;
+use crate::changes::filter::ChangeFilter;
+use crate::changes::manifest::{self, ManifestKind, ManifestStatus};
 use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::paths;
@@ -170,56 +174,88 @@ pub fn restore(workspace: &Workspace, id: u64) -> Result<Restored> {
     let _ = fs::remove_dir_all(&staging);
 
     let view = &workspace.view_path;
-    let mut steps = Vec::new();
-    let mut changes = Vec::new();
     let mut unrestorable = Vec::new();
-    let wanted: BTreeMap<&Path, ChangeKind> = checkpoint
+    // The checkpoint's own entries first: they win over anything derived below.
+    let mut wants: BTreeMap<PathBuf, Want> = checkpoint
         .entries
         .iter()
-        .map(|entry| (entry.path.as_path(), entry.kind))
+        .map(|entry| {
+            let source = saved.join(&entry.path);
+            let want = if entry.kind == ChangeKind::Deleted {
+                Want::Delete
+            } else if is_real_dir(&source) {
+                Want::Dir
+            } else {
+                Want::Entry(source)
+            };
+            (entry.path.clone(), want)
+        })
         .collect();
 
-    for (path, kind) in &wanted {
-        let current = view.join(path);
-        if *kind == ChangeKind::Deleted {
-            if fs::symlink_metadata(&current).is_ok() {
-                changes.push(FileChange::new(path.to_path_buf(), ChangeKind::Deleted));
-            }
-            continue;
-        }
-        let source = saved.join(path);
-        if fs::symlink_metadata(&source).is_ok_and(|metadata| metadata.is_dir()) {
-            fs::create_dir_all(&current).io_context(|| format!("create {}", current.display()))?;
-            continue;
-        }
-        if !same_entry(&source, &current) {
-            stage(&source, &staging.join(path))?;
-            steps.push(step(path, &current));
-            changes.push(FileChange::new(path.to_path_buf(), ChangeKind::Modified));
-        }
-    }
-
+    // Where the checkpoint has a file, a symlink or nothing, it has nothing below: a change
+    // there now goes with that entry, never back to the fork's version (CKPT-11).
+    let leaves: Vec<PathBuf> = wants
+        .iter()
+        .filter(|(_, want)| !matches!(want, Want::Dir))
+        .map(|(path, _)| path.clone())
+        .collect();
+    let under_leaf = |path: &Path| {
+        path.ancestors()
+            .skip(1)
+            .any(|parent| leaves.iter().any(|leaf| leaf == parent))
+    };
     let backend = select_backend(Some(workspace.backend_kind))?;
     for change in backend.changes(workspace, checkpoint.all, false)? {
-        if wanted.contains_key(change.path.as_path()) {
+        if wants.contains_key(&change.path) || under_leaf(&change.path) {
             continue;
         }
-        let current = view.join(&change.path);
         match change.kind {
             ChangeKind::Added => {
-                changes.push(FileChange::new(change.path.clone(), ChangeKind::Deleted));
+                wants.insert(change.path, Want::Delete);
             }
             ChangeKind::Modified | ChangeKind::Deleted => {
-                match fork_time_version(workspace, &change.path) {
-                    Some(original) => {
-                        stage(&original, &staging.join(&change.path))?;
-                        steps.push(step(&change.path, &current));
-                        changes.push(FileChange::new(change.path.clone(), ChangeKind::Modified));
-                    }
-                    None => unrestorable.push(change.path.clone()),
-                }
+                put_back_fork_version(
+                    workspace,
+                    &change.path,
+                    checkpoint.all,
+                    &mut wants,
+                    &mut unrestorable,
+                );
             }
         }
+    }
+    need_directories_above_writes(view, &mut wants);
+
+    let mut steps = Vec::new();
+    let mut changes = Vec::new();
+    for (path, want) in &wants {
+        let current = view_entry(view, path);
+        let current = current.as_deref();
+        match want {
+            Want::Delete => {
+                if current.is_some_and(|current| fs::symlink_metadata(current).is_ok()) {
+                    changes.push(FileChange::new(path.clone(), ChangeKind::Deleted));
+                }
+                continue;
+            }
+            Want::Dir if current.is_some_and(is_real_dir) => continue,
+            Want::Dir => {
+                let staged = staging.join(path);
+                fs::create_dir_all(&staged)
+                    .io_context(|| format!("create {}", staged.display()))?;
+            }
+            Want::Entry(source) if current.is_some_and(|current| same_entry(source, current)) => {
+                continue
+            }
+            Want::Entry(source) => {
+                stage(source, &staging.join(path))?;
+            }
+        }
+        steps.push(MergedStep {
+            path: path.clone(),
+            expected: current.and_then(Fingerprint::of),
+        });
+        changes.push(FileChange::new(path.clone(), ChangeKind::Modified));
     }
     // Taken after staging, so retention cannot remove the checkpoint being restored first.
     let safety = create(
@@ -241,6 +277,7 @@ pub fn restore(workspace: &Workspace, id: u64) -> Result<Restored> {
             changes,
             workspace.fork_time_ns,
             steps,
+            None,
         )?;
         journal::set_phase(&path, journal::OperationPhase::Done)?;
         journal::remove(&path)?;
@@ -319,23 +356,125 @@ fn stage(source: &Path, target: &Path) -> Result<u64> {
     Ok(copied)
 }
 
-fn step(path: &Path, current: &Path) -> MergedStep {
-    MergedStep {
-        path: path.to_path_buf(),
-        expected: Fingerprint::of(current),
+/// `path` in the view, or `None` while a parent of it there is a file or symlink: the
+/// restore puts a directory in that parent's place first, so nothing is at `path` for it, and
+/// whatever a symlinked parent leads to is never looked at.
+fn view_entry(view: &Path, path: &Path) -> Option<PathBuf> {
+    let mut directory = view.to_path_buf();
+    for component in path.parent().map(Path::components).into_iter().flatten() {
+        directory.push(component);
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return None,
+            Err(_) => break,
+        }
     }
+    Some(view.join(path))
 }
 
-/// The version of `path` the workspace's changes are measured against, if known.
-fn fork_time_version(workspace: &Workspace, path: &Path) -> Option<PathBuf> {
-    match &workspace.backend_state {
-        BackendState::Overlay(layers) if layers.lower.is_some() => {
-            let original = workspace.ancestor_file(path);
-            fs::symlink_metadata(&original)
-                .is_ok_and(|metadata| !metadata.is_dir())
-                .then_some(original)
+/// What a restore puts at one path.
+enum Want {
+    /// A directory: created, or put where a file or symlink is now.
+    Dir,
+    /// This saved entry: the checkpoint's version, or the fork-time one.
+    Entry(PathBuf),
+    Delete,
+}
+
+fn is_real_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
+}
+
+/// Plan to put `path` back as it was at fork: a file or symlink as it was, a directory with
+/// everything the fork-time copy holds inside it (CKPT-09). What the checkpoint itself saves
+/// at a path stays first. Paths whose fork-time version is unknown go to `unrestorable`.
+fn put_back_fork_version(
+    workspace: &Workspace,
+    path: &Path,
+    all: bool,
+    wants: &mut BTreeMap<PathBuf, Want>,
+    unrestorable: &mut Vec<PathBuf>,
+) {
+    let Some(original) = ancestor::entry(workspace, path) else {
+        unrestorable.push(path.to_path_buf());
+        return;
+    };
+    if !is_real_dir(&original) {
+        wants.insert(path.to_path_buf(), Want::Entry(original));
+        return;
+    }
+    if is_real_dir(&workspace.view_path.join(path)) {
+        // Only the directory's own mode changed, which a restore does not put back.
+        unrestorable.push(path.to_path_buf());
+        return;
+    }
+    wants.insert(path.to_path_buf(), Want::Dir);
+    for entry in WalkDir::new(&original).min_depth(1).follow_links(false) {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let Ok(inner) = entry.path().strip_prefix(&original) else {
+            continue;
+        };
+        let want = if entry.file_type().is_dir() {
+            Want::Dir
+        } else {
+            Want::Entry(entry.path().to_path_buf())
+        };
+        wants.entry(path.join(inner)).or_insert(want);
+    }
+    unrestorable.extend(missing_from_fork_copy(workspace, path, &original, all));
+}
+
+/// The entries the fork-time manifest has below directory `path` that its fork-time copy
+/// (`original`) lacks, such as symlinks and large files where the copy keeps regular files
+/// only: a restored directory comes back without them.
+fn missing_from_fork_copy(
+    workspace: &Workspace,
+    path: &Path,
+    original: &Path,
+    all: bool,
+) -> Vec<PathBuf> {
+    if workspace.manifest_status != ManifestStatus::Ready {
+        return Vec::new();
+    }
+    let Ok(manifest) = manifest::Manifest::open(&workspace.name) else {
+        return Vec::new();
+    };
+    let filter = ChangeFilter::build(&workspace.view_path);
+    manifest
+        .under(&manifest::encode_path(path))
+        .filter(|row| row.kind != ManifestKind::Dir && !row.dirty)
+        .filter_map(|row| manifest::decode_path(row.path).ok())
+        .filter(|relative| all || filter.is_visible(relative, false))
+        .filter(|relative| {
+            relative
+                .strip_prefix(path)
+                .is_ok_and(|inner| fs::symlink_metadata(original.join(inner)).is_err())
+        })
+        .collect()
+}
+
+/// A path the restore writes needs real directories above it: the checkpoint was taken with
+/// them there. A file or symlink in the way now (CKPT-10), or an entry planned for deletion, is
+/// replaced by a directory first.
+fn need_directories_above_writes(view: &Path, wants: &mut BTreeMap<PathBuf, Want>) {
+    let writes: Vec<PathBuf> = wants
+        .iter()
+        .filter(|(_, want)| !matches!(want, Want::Delete))
+        .map(|(path, _)| path.clone())
+        .collect();
+    for path in writes {
+        for parent in path.ancestors().skip(1) {
+            if parent.as_os_str().is_empty() {
+                break;
+            }
+            let blocked = !matches!(wants.get(parent), None | Some(Want::Dir))
+                || fs::symlink_metadata(view.join(parent)).is_ok_and(|metadata| !metadata.is_dir());
+            if blocked {
+                wants.insert(parent.to_path_buf(), Want::Dir);
+            }
         }
-        _ => ancestor::file(workspace, path),
     }
 }
 

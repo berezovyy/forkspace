@@ -29,6 +29,7 @@ use crate::util::walk::{Entry, Kind};
 use crate::util::{IoContext, WalkDirExt};
 use crate::workspace::Workspace;
 
+pub(crate) use worker::can_spawn;
 pub use worker::{run_worker_from_env, spawn};
 
 /// Lifecycle of a workspace's fork manifest, persisted in `state.json`.
@@ -41,6 +42,35 @@ pub enum ManifestStatus {
     Ready,
     /// The manifest was lost after post-fork writes, so deletions can no longer be tracked.
     Degraded,
+}
+
+/// The process building a workspace's manifest in the background. A `building` status whose
+/// builder is gone is restarted (STATE-02): by the next command on macOS, and by any command
+/// that needs the manifest everywhere.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Builder {
+    pub pid: u32,
+    /// Guards against PID reuse; see [`crate::process::watch`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
+    #[serde(flatten)]
+    pub unknown_fields: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Builder {
+    /// The running process `pid`.
+    pub fn of(pid: u32) -> Self {
+        Self {
+            pid,
+            identity: crate::process::watch::identity(pid),
+            unknown_fields: serde_json::Map::new(),
+        }
+    }
+
+    /// Whether this exact process (not a PID recycler) still runs.
+    pub fn is_alive(&self) -> bool {
+        crate::process::watch::is_alive(self.pid, self.identity.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,7 +244,18 @@ pub(crate) fn row_of(
 
 /// Walk `view` and durably install its manifest for workspace `name`. Returns the row count.
 pub fn build(name: &str, view: &Path, fork_time_ns: u128) -> Result<usize> {
-    build_rows(name, view, None, fork_time_ns)
+    let rows = fork_rows(view, fork_time_ns)?;
+    install_rows(name, rows)
+}
+
+/// The rows [`build`] would record for `view`, without installing them.
+pub(crate) fn rows_of_tree(view: &Path, fork_time_ns: u128) -> Result<Vec<ManifestRow>> {
+    fork_rows(view, fork_time_ns)
+}
+
+/// Durably install `rows` as the manifest of workspace `name`. Returns the row count.
+pub(crate) fn install_rows(name: &str, rows: Vec<ManifestRow>) -> Result<usize> {
+    write_file(&manifest_path(name), &temporary_path(name), rows, true)
 }
 
 /// [`build`] from entries a copy recorded while it created `view` (see
@@ -225,14 +266,11 @@ pub(crate) fn build_from_entries(
     view: &Path,
     entries: &[(PathBuf, Entry)],
 ) -> Result<usize> {
-    let path = manifest_path(name);
-    let directory = path.parent().unwrap_or_else(|| Path::new("."));
-    let temporary = directory.join(format!(".{name}.jsonl.tmp-{}", std::process::id()));
     let rows = entries
         .iter()
         .map(|(relative, entry)| row_of(relative, &view.join(relative), entry, u128::MAX))
         .collect::<Result<Vec<_>>>()?;
-    write_file(&path, &temporary, rows, true)
+    write_file(&manifest_path(name), &temporary_path(name), rows, true)
 }
 
 /// [`build`] for a manifest recorded after the workspace was handed to the user (the macOS
@@ -241,17 +279,16 @@ pub(crate) fn build_from_entries(
 /// it no longer holds are recorded from the base, as long as the base has not changed them
 /// since the fork either. Without this, such deletions would never show up in `diff`.
 pub fn build_after_fork(name: &str, view: &Path, base: &Path, fork_time_ns: u128) -> Result<usize> {
-    build_rows(name, view, Some(base), fork_time_ns)
+    let path = manifest_path(name);
+    let rows = late_rows(view, base, None, fork_time_ns)?;
+    write_file(&path, &temporary_path(name), rows, true)
 }
 
-fn build_rows(name: &str, view: &Path, base: Option<&Path>, fork_time_ns: u128) -> Result<usize> {
-    let path = manifest_path(name);
-    let directory = path.parent().unwrap_or_else(|| Path::new("."));
-    // State recovery deletes `.<name>.jsonl.tmp-<pid>` leftovers once `<pid>` has exited, so
-    // an interrupted build is cleaned up later. Keep this exact name.
-    let temporary = directory.join(format!(".{name}.jsonl.tmp-{}", std::process::id()));
-    let rows = collect_rows(view, base, fork_time_ns)?;
-    write_file(&path, &temporary, rows, true)
+/// Where this process writes workspace `name`'s manifest before installing it. State recovery
+/// deletes `.<name>.jsonl.tmp-<pid>` leftovers once `<pid>` has exited, so an interrupted build
+/// is cleaned up later. Keep this exact name.
+fn temporary_path(name: &str) -> PathBuf {
+    crate::paths::manifest_dir().join(format!(".{name}.jsonl.tmp-{}", std::process::id()))
 }
 
 /// Install `rows` as the binary manifest at `path`, written first to `temporary` in the same
@@ -260,10 +297,20 @@ fn build_rows(name: &str, view: &Path, base: Option<&Path>, fork_time_ns: u128) 
 pub(crate) fn write_file(
     path: &Path,
     temporary: &Path,
-    mut rows: Vec<ManifestRow>,
+    rows: Vec<ManifestRow>,
     durable: bool,
 ) -> Result<usize> {
-    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    let count = write_temporary(temporary, rows, durable)?;
+    fs::rename(temporary, path).io_context(|| format!("install manifest {}", path.display()))?;
+    if durable {
+        crate::util::fs::sync_dir(path.parent().unwrap_or_else(|| Path::new(".")))?;
+    }
+    Ok(count)
+}
+
+/// Write `rows` as a binary manifest to `temporary`, synced with `durable`.
+fn write_temporary(temporary: &Path, mut rows: Vec<ManifestRow>, durable: bool) -> Result<usize> {
+    let directory = temporary.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(directory)
         .io_context(|| format!("create manifest directory {}", directory.display()))?;
     let file = fs::File::create(temporary)
@@ -279,74 +326,201 @@ pub(crate) fn write_file(
         file.sync_all()
             .io_context(|| format!("sync manifest {}", temporary.display()))?;
     }
-    fs::rename(temporary, path).io_context(|| format!("install manifest {}", path.display()))?;
-    if durable {
-        crate::util::fs::sync_dir(directory)?;
-    }
     Ok(rows.len())
 }
 
-/// The rows of every entry in `view`, with base entries the view lost after the fork when
-/// `base` is given (see [`build_after_fork`]).
-fn collect_rows(view: &Path, base: Option<&Path>, fork_time_ns: u128) -> Result<Vec<ManifestRow>> {
-    let Some(base) = base else {
-        // At fork time the view is not in use yet: read it on several threads.
-        let rows = crate::util::walk::parallel(view, |relative, path, metadata| {
-            row_of(relative, path, metadata, fork_time_ns).map(Some)
-        })?;
-        return Ok(rows.into_iter().map(|(_, row)| row).collect());
-    };
+/// The rows of every entry in `view` at fork time, when nobody uses it yet: read on several
+/// threads.
+fn fork_rows(view: &Path, fork_time_ns: u128) -> Result<Vec<ManifestRow>> {
+    let rows = crate::util::walk::parallel(view, |relative, path, metadata| {
+        row_of(relative, path, metadata, fork_time_ns).map(Some)
+    })?;
+    Ok(rows.into_iter().map(|(_, row)| row).collect())
+}
+
+/// The rows of every entry in `view`, walked after the fork while it may be in use, with the
+/// entries the view lost since the fork recovered from `base` and, when given, the fork-time
+/// copy `fork_copy` (see [`build_after_fork`]). An entry deleted while the walk reads it is
+/// recovered the same way instead of failing the build.
+fn late_rows(
+    view: &Path,
+    base: &Path,
+    fork_copy: Option<&Path>,
+    fork_time_ns: u128,
+) -> Result<Vec<ManifestRow>> {
     let mut rows = Vec::new();
-    for entry in WalkDir::new(view).follow_links(false) {
-        let entry = entry.walk_context(view)?;
+    let mut walker = WalkDir::new(view).follow_links(false).into_iter();
+    while let Some(entry) = walker.next() {
+        let entry = match entry {
+            Err(error) if vanished(error.io_error()) => {
+                let lost = error.path().and_then(|path| path.strip_prefix(view).ok());
+                if let Some((parent, name)) =
+                    lost.and_then(|lost| lost.parent().zip(lost.file_name()))
+                {
+                    rows.extend(lost_entries(
+                        view,
+                        base,
+                        fork_copy,
+                        parent,
+                        Some(name),
+                        fork_time_ns,
+                    )?);
+                }
+                continue;
+            }
+            entry => entry.walk_context(view)?,
+        };
+        let relative = entry.path().strip_prefix(view).unwrap_or(Path::new(""));
         if entry.depth() > 0 {
-            rows.push(row(view, &entry, fork_time_ns)?);
+            match row(view, &entry, fork_time_ns) {
+                Ok(row) => rows.push(row),
+                Err(ForkspaceError::Io { source, .. }) if vanished(Some(&source)) => {
+                    if entry.file_type().is_dir() {
+                        walker.skip_current_dir();
+                    }
+                    if let Some((parent, name)) = relative.parent().zip(relative.file_name()) {
+                        rows.extend(lost_entries(
+                            view,
+                            base,
+                            fork_copy,
+                            parent,
+                            Some(name),
+                            fork_time_ns,
+                        )?);
+                    }
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
         }
         let changed_dir = entry.file_type().is_dir()
             && entry
                 .metadata()
                 .is_ok_and(|metadata| written_after_fork(&Entry::of(&metadata), fork_time_ns));
         if changed_dir {
-            let relative = entry.path().strip_prefix(view).unwrap_or(Path::new(""));
-            for missing in entries_missing_from_view(view, base, relative, fork_time_ns)? {
-                rows.push(row(base, &missing, fork_time_ns)?);
+            rows.extend(lost_entries(
+                view,
+                base,
+                fork_copy,
+                relative,
+                None,
+                fork_time_ns,
+            )?);
+        }
+    }
+    // An entry deleted while being read can be recorded from the view and recovered too.
+    rows.sort_by(|a, b| a.path.as_bytes().cmp(b.path.as_bytes()));
+    rows.dedup_by(|later, earlier| later.path == earlier.path);
+    Ok(rows)
+}
+
+/// Whether an I/O error says the entry is gone.
+fn vanished(error: Option<&std::io::Error>) -> bool {
+    error.is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+}
+
+/// Rows for the entries under directory `relative` (only its child `only`, when given) that
+/// the view no longer has: from `base` where the base has not changed them since the fork,
+/// with their unchanged descendants, then the files and symlinks of the fork-time copy
+/// `fork_copy` the base could not give. Recovery is best effort: an entry that cannot be read
+/// is left out rather than failing the build.
+fn lost_entries(
+    view: &Path,
+    base: &Path,
+    fork_copy: Option<&Path>,
+    relative: &Path,
+    only: Option<&std::ffi::OsStr>,
+    fork_time_ns: u128,
+) -> Result<Vec<ManifestRow>> {
+    let view_dir = view.join(relative);
+    let lost = |name: &std::ffi::OsStr| {
+        only.is_none_or(|only| only == name) && fs::symlink_metadata(view_dir.join(name)).is_err()
+    };
+    let mut rows = Vec::new();
+    let mut recovered = std::collections::HashSet::new();
+    for (root, from_copy) in [(Some(base), false), (fork_copy, true)] {
+        let Some(root) = root else {
+            continue;
+        };
+        let Ok(children) = fs::read_dir(root.join(relative)) else {
+            continue;
+        };
+        for child in children.flatten() {
+            if !lost(&child.file_name()) {
+                continue;
+            }
+            let unchanged_since_fork = |entry: &walkdir::DirEntry| {
+                from_copy
+                    || entry.metadata().is_ok_and(|metadata| {
+                        !written_after_fork(&Entry::of(&metadata), fork_time_ns)
+                    })
+            };
+            let walker = WalkDir::new(child.path())
+                .follow_links(false)
+                // A lost symlink is recorded as itself, never through its target.
+                .follow_root_links(false)
+                .into_iter()
+                .filter_entry(unchanged_since_fork);
+            for entry in walker.flatten() {
+                // The copy's directories are made by the copy, not taken from the fork.
+                if from_copy && entry.file_type().is_dir() {
+                    continue;
+                }
+                let Ok(mut row) = row(root, &entry, fork_time_ns) else {
+                    continue;
+                };
+                if from_copy {
+                    if recovered.contains(&row.path) {
+                        continue;
+                    }
+                    // The copy was taken after the fork instant; its content is the fork's.
+                    row.dirty = false;
+                } else {
+                    recovered.insert(row.path.clone());
+                }
+                rows.push(row);
             }
         }
     }
     Ok(rows)
 }
 
-/// Base entries under directory `relative` that the view no longer has and that the base has
-/// not changed since `fork_time_ns`, with their unchanged descendants.
-fn entries_missing_from_view(
-    view: &Path,
-    base: &Path,
-    relative: &Path,
-    fork_time_ns: u128,
-) -> Result<Vec<walkdir::DirEntry>> {
-    let base_dir = base.join(relative);
-    let Ok(children) = fs::read_dir(&base_dir) else {
-        return Ok(Vec::new());
-    };
-    let mut missing = Vec::new();
-    for child in children.flatten() {
-        if fs::symlink_metadata(view.join(relative).join(child.file_name())).is_ok() {
-            continue;
-        }
-        let unchanged_since_fork = |entry: &walkdir::DirEntry| {
-            entry
-                .metadata()
-                .is_ok_and(|metadata| !written_after_fork(&Entry::of(&metadata), fork_time_ns))
-        };
-        for entry in WalkDir::new(child.path())
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(unchanged_since_fork)
-        {
-            missing.push(entry.walk_context(&base_dir)?);
+/// The rows of a workspace that was pulled: its baseline is the base as the pull left it, so
+/// the view's own entries say nothing about it. The fork-time copy (taken by the pull) gives
+/// files and symlinks; the base gives the rest, where nothing wrote it since the pull, and its
+/// directories (dirty when written since). An entry known to neither has no row, which merge
+/// and pull treat as unknown rather than unchanged.
+fn pulled_rows(base: &Path, fork_copy: Option<&Path>, fork_time_ns: u128) -> Vec<ManifestRow> {
+    let mut rows = Vec::new();
+    let mut known = std::collections::HashSet::new();
+    if let Some(copy) = fork_copy {
+        let entries = WalkDir::new(copy).min_depth(1).follow_links(false);
+        for entry in entries.into_iter().flatten() {
+            if entry.file_type().is_dir() {
+                continue;
+            }
+            if let Ok(mut row) = row(copy, &entry, fork_time_ns) {
+                row.dirty = false;
+                known.insert(row.path.clone());
+                rows.push(row);
+            }
         }
     }
-    Ok(missing)
+    for entry in WalkDir::new(base)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .flatten()
+    {
+        let Ok(row) = row(base, &entry, fork_time_ns) else {
+            continue;
+        };
+        if known.contains(&row.path) || (row.dirty && row.kind != ManifestKind::Dir) {
+            continue;
+        }
+        rows.push(row);
+    }
+    rows
 }
 
 /// First bytes of a binary manifest: magic, row count, and a checksum of everything after the
@@ -809,7 +983,7 @@ pub fn change_count(workspace: &Workspace, include_ignored: bool) -> Result<Chan
     }
 
     let Ok(rows) = read(&workspace.name) else {
-        return recover_unreadable(workspace);
+        return recover_unreadable(workspace, include_ignored);
     };
     let mut baseline = BTreeMap::new();
     for row in rows {
@@ -840,23 +1014,243 @@ pub fn change_count(workspace: &Workspace, include_ignored: bool) -> Result<Chan
     Ok(ChangeCount::Ready(added_or_modified + deleted))
 }
 
-/// A `Ready` manifest that cannot be read. If the view has been written since the fork, the
-/// fork-time baseline is gone for good and tracking degrades; otherwise the view still *is*
-/// the baseline, so the manifest is rebuilt in the background.
-fn recover_unreadable(workspace: &Workspace) -> Result<ChangeCount> {
-    if has_post_fork_writes(workspace)? {
+/// A `Ready` manifest that cannot be read: build it again (see [`rebuildable`]), in the
+/// background on macOS, else right here; otherwise tracking degrades.
+fn recover_unreadable(workspace: &Workspace, include_ignored: bool) -> Result<ChangeCount> {
+    if !rebuildable(workspace)? {
         let _ = mark(&workspace.name, ManifestStatus::Degraded);
         return Ok(ChangeCount::Degraded);
     }
-    let _ = mark(&workspace.name, ManifestStatus::Building);
-    let _ = remove(&workspace.name);
-    let _ = spawn(
+    if can_spawn() {
+        let _ = State::with_state(|state| {
+            remove(&workspace.name)?;
+            start_background(state, &workspace.name)
+        });
+        return Ok(ChangeCount::Pending);
+    }
+    if rebuild_now(workspace).unwrap_or(false) && Manifest::open(&workspace.name).is_ok() {
+        let mut rebuilt = workspace.clone();
+        rebuilt.manifest_status = ManifestStatus::Ready;
+        rebuilt.manifest_builder = None;
+        return change_count(&rebuilt, include_ignored);
+    }
+    Ok(ChangeCount::Pending)
+}
+
+/// Whether `workspace`'s manifest can be built again now, close to what the fork recorded:
+/// a fresh walk of the view marks what was written since the fork dirty and recovers what
+/// it lost from the base and the fork-time copy, which is what a slow background build does
+/// anyway. After a pull the view says nothing about the baseline, so the fork-time copy must
+/// exist. Without one, a lost manifest of a view written since the fork has lost entries
+/// nothing can recover; a build that never finished is done as the background build would.
+fn rebuildable(workspace: &Workspace) -> Result<bool> {
+    if !workspace.backend_kind.stacking_is_snapshot() || !workspace.view_path.is_dir() {
+        return Ok(false);
+    }
+    if crate::sync::ancestor::has_copy(workspace) {
+        return Ok(true);
+    }
+    if was_pulled(workspace) {
+        return Ok(false);
+    }
+    Ok(workspace.manifest_status == ManifestStatus::Building || !has_post_fork_writes(workspace)?)
+}
+
+/// Whether `workspace`'s baseline is a pulled base rather than its fork.
+fn was_pulled(workspace: &Workspace) -> bool {
+    workspace.last_pull.is_some() || workspace.manifest_generation > 1
+}
+
+/// Whether `workspace` needs its manifest built again before a command can use it: a
+/// `building` status nobody is building any more, a `degraded` one, or a `ready` one whose
+/// file is missing or damaged.
+pub fn needs_rebuild(workspace: &Workspace) -> bool {
+    if !workspace.backend_kind.stacking_is_snapshot() || !workspace.view_path.is_dir() {
+        return false;
+    }
+    match workspace.manifest_status {
+        ManifestStatus::Absent => false,
+        ManifestStatus::Building => !build_in_progress(workspace),
+        ManifestStatus::Degraded => true,
+        ManifestStatus::Ready => Manifest::open(&workspace.name).is_err(),
+    }
+}
+
+/// Whether a live process is still building `workspace`'s manifest.
+pub fn build_in_progress(workspace: &Workspace) -> bool {
+    workspace.manifest_status == ManifestStatus::Building
+        && workspace
+            .manifest_builder
+            .as_ref()
+            .is_some_and(Builder::is_alive)
+}
+
+/// Whether `workspace` waits on a background build whose process is gone, which the next
+/// command restarts (see `State::reconcile_runtime`).
+pub(crate) fn build_stalled(workspace: &Workspace) -> bool {
+    workspace.manifest_status == ManifestStatus::Building
+        && workspace.backend_kind.stacking_is_snapshot()
+        && !build_in_progress(workspace)
+        && workspace.view_path.is_dir()
+}
+
+/// Start a background build of workspace `name`'s manifest and record its process, with the
+/// state lock held (`state` is saved by the caller).
+pub(crate) fn start_background(state: &mut State, name: &str) -> Result {
+    let workspace = state.require_workspace_mut(name)?;
+    let builder = spawn(
         workspace.name.clone(),
         workspace.view_path.clone(),
         workspace.base.clone(),
         workspace.fork_time_ns,
-    );
-    Ok(ChangeCount::Pending)
+    )?;
+    workspace.manifest_status = ManifestStatus::Building;
+    workspace.manifest_builder = Some(builder);
+    Ok(())
+}
+
+/// A manifest built for a workspace and written next to its final place, not installed yet.
+pub(crate) struct Staged {
+    name: String,
+    fork_time_ns: u128,
+    temporary: PathBuf,
+}
+
+/// Build `workspace`'s manifest again from what is on disk (see [`rebuildable`]) and write it
+/// beside its final place, for [`install`].
+pub(crate) fn stage(workspace: &Workspace) -> Result<Staged> {
+    let fork_copy = crate::sync::ancestor::has_copy(workspace)
+        .then(|| crate::sync::ancestor::dir(&workspace.name));
+    let rows = if was_pulled(workspace) {
+        pulled_rows(
+            &workspace.base,
+            fork_copy.as_deref(),
+            workspace.fork_time_ns,
+        )
+    } else {
+        late_rows(
+            &workspace.view_path,
+            &workspace.base,
+            fork_copy.as_deref(),
+            workspace.fork_time_ns,
+        )?
+    };
+    let temporary = temporary_path(&workspace.name);
+    if let Err(error) = write_temporary(&temporary, rows, true) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    Ok(Staged {
+        name: workspace.name.clone(),
+        fork_time_ns: workspace.fork_time_ns,
+        temporary,
+    })
+}
+
+/// Install `staged` as its workspace's manifest and mark it ready, with the state lock held,
+/// if the workspace still waits for it: the same fork (not a newer workspace of that name, or
+/// one a pull moved on) and no usable manifest yet. Otherwise it is discarded. Returns whether
+/// it was installed.
+pub(crate) fn install(state: &mut State, staged: Staged) -> Result<bool> {
+    let wanted = state.workspaces.get(&staged.name).is_some_and(|workspace| {
+        workspace.fork_time_ns == staged.fork_time_ns
+            && match workspace.manifest_status {
+                ManifestStatus::Absent => false,
+                ManifestStatus::Building | ManifestStatus::Degraded => true,
+                ManifestStatus::Ready => Manifest::open(&staged.name).is_err(),
+            }
+    });
+    if !wanted {
+        let _ = fs::remove_file(&staged.temporary);
+        return Ok(false);
+    }
+    let path = manifest_path(&staged.name);
+    let installed = fs::rename(&staged.temporary, &path)
+        .io_context(|| format!("install manifest {}", path.display()))
+        .and_then(|()| crate::util::fs::sync_dir(path.parent().unwrap_or(Path::new("."))));
+    if let Err(error) = installed {
+        let _ = fs::remove_file(&staged.temporary);
+        return Err(error);
+    }
+    let workspace = state.require_workspace_mut(&staged.name)?;
+    workspace.manifest_status = ManifestStatus::Ready;
+    workspace.manifest_builder = None;
+    Ok(true)
+}
+
+/// Build `workspace`'s manifest in this process and install it, taking the state lock.
+fn rebuild_now(workspace: &Workspace) -> Result<bool> {
+    let staged = stage(workspace)?;
+    let temporary = staged.temporary.clone();
+    State::with_state(|state| install(state, staged)).inspect_err(|_| {
+        let _ = fs::remove_file(&temporary);
+    })
+}
+
+/// Make workspace `name`'s manifest usable for a command that needs it (merge, pull, diff,
+/// restore), with the state lock held: a build whose process is gone, a degraded status, or
+/// a lost manifest is built again here, so a workspace never stays unusable when its
+/// baseline can be recovered (STATE-02, STATE-03, STATE-11). A build still running is left
+/// to finish; a workspace that cannot be rebuilt stays degraded, for the caller to refuse.
+pub fn settle(state: &mut State, name: &str) -> Result {
+    let Some(workspace) = state.workspaces.get(name).cloned() else {
+        return Ok(());
+    };
+    if !needs_rebuild(&workspace) {
+        return Ok(());
+    }
+    // An older forkspace that cannot read this manifest marks it degraded (UPG-01).
+    if workspace.manifest_status == ManifestStatus::Degraded && Manifest::open(name).is_ok() {
+        let workspace = state.require_workspace_mut(name)?;
+        workspace.manifest_status = ManifestStatus::Ready;
+        workspace.manifest_builder = None;
+        return Ok(());
+    }
+    if !rebuildable(&workspace)? {
+        return Ok(());
+    }
+    eprintln!("rebuilding the fork manifest of '{name}'");
+    let staged = stage(&workspace).map_err(|error| {
+        ForkspaceError::StateFailed(format!(
+            "could not rebuild the fork manifest of '{name}': {error}"
+        ))
+    })?;
+    install(state, staged)?;
+    Ok(())
+}
+
+/// Build workspace `name`'s manifest in this process, for a fork whose background builder
+/// could not start.
+pub(crate) fn build_here(name: &str) -> Result {
+    let Some(workspace) = State::peek()?.workspaces.get(name).cloned() else {
+        return Ok(());
+    };
+    rebuild_now(&workspace).map(|_| ())
+}
+
+/// [`settle`] for a caller that does not hold the state lock; the lock is taken only when
+/// something needs doing. With `wait`, a build still running is waited for first, as long as
+/// its process lives.
+pub fn settle_now(name: &str, wait: bool) -> Result {
+    let mut told = false;
+    let needed = loop {
+        let state = State::peek()?;
+        let Some(workspace) = state.workspaces.get(name) else {
+            return Ok(());
+        };
+        if !(wait && build_in_progress(workspace)) {
+            break needs_rebuild(workspace);
+        }
+        if !told {
+            eprintln!("waiting for the fork manifest of '{name}' to be built");
+            told = true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    if needed {
+        State::with_state(|state| settle(state, name))?;
+    }
+    Ok(())
 }
 
 /// Manifest rows describing the view as it is now, keyed by decoded path.

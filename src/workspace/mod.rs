@@ -95,6 +95,9 @@ pub struct Workspace {
     pub manifest_status: ManifestStatus,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub manifest_generation: u64,
+    /// The process building the manifest while it is `building`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_builder: Option<crate::changes::manifest::Builder>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_pull: Option<String>,
     /// The backend fell back to a slower path (e.g. a full copy) or lost change tracking.
@@ -165,6 +168,7 @@ impl Workspace {
             backend_state: view.backend_state,
             manifest_status: view.manifest_status,
             manifest_generation: 1,
+            manifest_builder: None,
             last_pull: None,
             git_head_at_fork: None,
             unresolved_conflicts: Vec::new(),

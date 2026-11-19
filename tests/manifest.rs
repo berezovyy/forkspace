@@ -197,9 +197,12 @@ fn ready_manifest_counts_changes_and_respects_ignore_files() {
     );
 }
 
+/// A damaged manifest of a view nobody wrote to since the fork is built again: in the
+/// background where builders run (macOS), right away elsewhere (STATE-03: Linux used to mark
+/// it `building` and start nothing).
 #[test]
 #[serial]
-fn corrupt_manifest_before_writes_returns_to_building() {
+fn corrupt_manifest_before_writes_is_rebuilt() {
     let _home = common::setup_test_env();
     let view = tempfile::tempdir().unwrap();
     fs::write(view.path().join("file"), b"base").unwrap();
@@ -207,6 +210,12 @@ fn corrupt_manifest_before_writes_returns_to_building() {
     let mut workspace =
         forkspace::workspace::Workspace::new("rebuild", view.path().to_path_buf(), None);
     workspace.view_path = view.path().to_path_buf();
+    workspace.backend_kind = forkspace::backend::BackendKind::PlainCopy;
+    workspace.backend_state = forkspace::backend::BackendState::CowDir {
+        reflinked_files: 0,
+        copied_files: 1,
+        unknown_fields: serde_json::Map::new(),
+    };
     std::thread::sleep(std::time::Duration::from_millis(2));
     workspace.fork_time_ns = now_unix_ns();
     workspace.manifest_status = ManifestStatus::Ready;
@@ -215,18 +224,56 @@ fn corrupt_manifest_before_writes_returns_to_building() {
     state.save().unwrap();
     fs::write(manifest::manifest_path("rebuild"), b"truncated").unwrap();
 
-    assert_eq!(
-        manifest::change_count(&workspace, false).unwrap(),
-        ChangeCount::Pending
-    );
-    assert_eq!(
-        State::load()
-            .unwrap()
-            .workspaces
-            .get("rebuild")
-            .unwrap()
-            .manifest_status,
-        ManifestStatus::Building
+    let count = manifest::change_count(&workspace, false).unwrap();
+    if cfg!(target_os = "macos") {
+        assert_eq!(count, ChangeCount::Pending);
+    } else {
+        assert_eq!(count, ChangeCount::Ready(0));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while State::load().unwrap().workspaces["rebuild"].manifest_status != ManifestStatus::Ready {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the manifest was not rebuilt"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let rows = manifest::read("rebuild").unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].dirty);
+}
+
+/// A lost symlink is recorded as itself: the walk that recovers it from the base never
+/// follows it, so a dangling one does not fail the build (STATE-11) and one to a directory
+/// does not record that directory's entries under the link's name.
+#[test]
+#[serial]
+fn late_manifest_records_a_lost_symlink_itself_not_its_target() {
+    let _home = common::setup_test_env();
+    let base = tempfile::tempdir().unwrap();
+    let view = tempfile::tempdir().unwrap();
+    for root in [base.path(), view.path()] {
+        std::fs::create_dir_all(root.join("real")).unwrap();
+        std::fs::write(root.join("real/file"), "real\n").unwrap();
+        std::os::unix::fs::symlink("real", root.join("dir-link")).unwrap();
+        std::os::unix::fs::symlink("missing", root.join("dangling")).unwrap();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let fork_time_ns = now_unix_ns();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::remove_file(view.path().join("dir-link")).unwrap();
+    std::fs::remove_file(view.path().join("dangling")).unwrap();
+
+    manifest::build_after_fork("links", view.path(), base.path(), fork_time_ns).unwrap();
+    let rows = manifest::read("links").unwrap();
+    for name in ["dir-link", "dangling"] {
+        let row = rows.iter().find(|row| row.path == name).unwrap();
+        assert_eq!(row.kind, ManifestKind::Symlink, "{name}");
+        assert!(!row.dirty, "{name}");
+    }
+    assert!(
+        !rows.iter().any(|row| row.path.starts_with("dir-link/")),
+        "{rows:?}"
     );
 }
 

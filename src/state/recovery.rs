@@ -37,6 +37,7 @@ impl State {
         let mut changed = journal::sweep_terminal()?;
         changed |= self.trash_abandoned_creates(&trash_root);
         changed |= self.forget_interrupted_drops(&trash_root);
+        changed |= self.restart_stalled_builds();
         changed |= self.trash_unused_frozen_copies();
         self.settle_frozen_copies();
         changed |= self.remove_orphan_manifests();
@@ -56,7 +57,8 @@ impl State {
                 retained.push(pending);
                 continue;
             }
-            if !pending.path.exists() {
+            // A create recorded before names were checked can name a store (SEC-02).
+            if !pending.path.exists() || paths::is_store_path(&pending.path) {
                 changed = true;
                 continue;
             }
@@ -76,6 +78,27 @@ impl State {
             }
         }
         self.pending_creates = retained;
+        changed
+    }
+
+    /// A manifest left `building` by a builder that died (killed, crashed, or from a forkspace
+    /// that gave up waiting for the workspace record) is built again in the background, so it
+    /// never stays `building` for good (STATE-02). Only where builders can run (macOS);
+    /// elsewhere a command that needs the manifest builds it itself (`manifest::settle`).
+    fn restart_stalled_builds(&mut self) -> bool {
+        if !manifest::can_spawn() {
+            return false;
+        }
+        let stalled: Vec<String> = self
+            .workspaces
+            .values()
+            .filter(|workspace| manifest::build_stalled(workspace))
+            .map(|workspace| workspace.name.clone())
+            .collect();
+        let mut changed = false;
+        for name in stalled {
+            changed |= manifest::start_background(self, &name).is_ok();
+        }
         changed
     }
 

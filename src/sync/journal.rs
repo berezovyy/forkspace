@@ -14,12 +14,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use walkdir::WalkDir;
 
 use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::paths;
-use crate::sync::undo;
-use crate::util::fs::{rename_exchange, rename_noreplace, same_contents, FlaggedRename};
+use crate::sync::undo::{self, Identity};
+use crate::util::fs::{
+    ctime_ns, exchanges_directories, rename_exchange, rename_noreplace, same_contents,
+    FlaggedRename,
+};
 use crate::util::{ensure_parent_dir, IoContext};
 
 /// Upper bound on journal files inspected by one opportunistic sweep.
@@ -81,6 +85,113 @@ impl Fingerprint {
     }
 }
 
+/// What a step's target held when the operation was planned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TargetState {
+    Absent,
+    /// A directory; its entries are compared on their own.
+    Dir,
+    /// A file or symlink, by size and modification time.
+    Entry {
+        size: u64,
+        mtime_ns: i128,
+    },
+}
+
+impl TargetState {
+    pub fn of(path: &Path) -> Self {
+        match fs::symlink_metadata(path) {
+            Err(_) => Self::Absent,
+            Ok(metadata) if metadata.is_dir() => Self::Dir,
+            Ok(metadata) => Self::Entry {
+                size: metadata.len(),
+                mtime_ns: crate::util::fs::mtime_ns(&metadata),
+            },
+        }
+    }
+}
+
+/// One target as the plan saw it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlannedTarget {
+    #[serde(with = "crate::changes::path_serde")]
+    pub path: PathBuf,
+    pub state: TargetState,
+}
+
+/// What the targets of an operation's steps held when it was planned. A step whose target
+/// changed since (a base edit during a merge, a write by the agent during a pull, an edit made
+/// while the operation was interrupted) leaves the newer entry alone and records its path as
+/// held, instead of replacing or deleting it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StepGuard {
+    /// When the targets were captured: an entry with a later ctime was written since.
+    pub planned_ns: u128,
+    pub targets: Vec<PlannedTarget>,
+    /// For a pull: when the plan started reading the base. A base entry with a later ctime
+    /// may have changed after the plan read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_ns: Option<u128>,
+}
+
+impl StepGuard {
+    /// Capture the targets under `root` of `paths`. Call this before anything reads the
+    /// contents the plan is built from, so a write after that read is always caught.
+    pub fn capture<'a>(root: &Path, paths: impl IntoIterator<Item = &'a Path>) -> Self {
+        let planned_ns = crate::util::fs::ctime_clock_ns();
+        let targets = paths
+            .into_iter()
+            .map(|path| PlannedTarget {
+                path: path.to_path_buf(),
+                state: TargetState::of(&root.join(path)),
+            })
+            .collect();
+        Self {
+            planned_ns,
+            targets,
+            base_ns: None,
+        }
+    }
+
+    /// Whether the plan saw an entry at `relative`.
+    fn planned_entry(&self, relative: &Path) -> bool {
+        self.targets
+            .iter()
+            .any(|planned| planned.path == relative && planned.state != TargetState::Absent)
+    }
+
+    /// Whether `target` (`relative` in the tree) is no longer what the plan saw: another
+    /// kind, size or mtime, or a file or symlink written after planning (a rewrite that keeps
+    /// size and mtime, as `rsync -a` and `touch -r` do, still moves its ctime).
+    fn changed_since_planning(&self, relative: &Path, target: &Path) -> bool {
+        let now = TargetState::of(target);
+        let planned = self
+            .targets
+            .iter()
+            .find(|planned| planned.path == relative)
+            .map(|planned| planned.state);
+        if planned.is_some_and(|planned| planned != now) {
+            return true;
+        }
+        matches!(now, TargetState::Entry { .. }) && written_after(target, self.planned_ns)
+    }
+}
+
+/// Whether `path` has a ctime after `instant_ns`.
+fn written_after(path: &Path, instant_ns: u128) -> bool {
+    fs::symlink_metadata(path)
+        .is_ok_and(|metadata| ctime_ns(&metadata) > i128::try_from(instant_ns).unwrap_or(i128::MAX))
+}
+
+/// What one step did.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Step {
+    Done,
+    /// The target changed since planning; these entries were left as they are.
+    Held(Vec<PathBuf>),
+}
+
 /// A step installing a staged entry (a line-level merge, or a checkpoint's saved version)
 /// rather than the source entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +201,55 @@ pub struct MergedStep {
     /// The target the entry was staged against (`None`: no entry there); anything else there
     /// is a newer edit.
     pub expected: Option<Fingerprint>,
+}
+
+/// A base change as a pull planned it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BaseChange {
+    #[serde(with = "crate::changes::path_serde")]
+    pub path: PathBuf,
+    pub kind: ChangeKind,
+}
+
+/// What a pull did about one base change it planned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Outcome {
+    /// No step: both sides agreed, the workspace keeps the path, or a step not applied yet.
+    Unstepped,
+    /// Left for the next pull: it conflicts with the workspace, found by a catch-up round.
+    Deferred,
+    /// Left alone: the workspace changed it while the pull ran.
+    Held,
+    /// A line-level merge of both sides was installed.
+    Merged,
+    /// The view's entry was deleted (or replaced by the deletion of a parent).
+    Deleted,
+    /// The base's entry was installed; the view's entry was this one right after.
+    Installed(Identity),
+}
+
+/// A base change an earlier round of the same pull planned, with what came of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pulled {
+    #[serde(with = "crate::changes::path_serde")]
+    pub path: PathBuf,
+    pub kind: ChangeKind,
+    pub outcome: Outcome,
+}
+
+/// What a pull journal records beyond its steps, so a catch-up round knows what the pull
+/// already planned and did (see `sync::pull::history`).
+#[derive(Debug, Clone, Default)]
+pub struct PullRecord {
+    /// Every base change this round planned, including those without a step.
+    pub base_delta: Vec<BaseChange>,
+    /// What earlier rounds planned and did.
+    pub earlier: Vec<Pulled>,
+    /// Base changes this round leaves for the next pull.
+    pub deferred: Vec<PathBuf>,
+    /// Paths earlier rounds held.
+    pub held: Vec<PathBuf>,
 }
 
 /// The durable record of one merge or pull.
@@ -112,6 +272,35 @@ pub struct OperationJournal {
     /// or deletes (see [`crate::sync::undo`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub undo: Option<PathBuf>,
+    /// The plan-time state of each target. Journals written before it existed, and restore
+    /// journals, check nothing but the containment of each path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard: Option<StepGuard>,
+    /// Entries left alone because they changed after planning (see [`StepGuard`]).
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        with = "crate::changes::path_serde::vec"
+    )]
+    pub held: Vec<PathBuf>,
+    /// What each step installed, by step index, so undo (or a pull catching up with a base
+    /// that moved) can tell it from a later edit. `None` for deletions, held steps and steps
+    /// not applied yet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub installed: Vec<Option<Identity>>,
+    /// For a pull: every base change this round planned (see [`PullRecord`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub base_delta: Vec<BaseChange>,
+    /// For a pull: what its earlier rounds planned and did.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub earlier: Vec<Pulled>,
+    /// For a pull: base changes this round leaves for the next pull.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        with = "crate::changes::path_serde::vec"
+    )]
+    pub deferred: Vec<PathBuf>,
 }
 
 impl OperationJournal {
@@ -134,6 +323,12 @@ impl OperationJournal {
             fork_time_ns,
             merged: Vec::new(),
             undo: None,
+            guard: None,
+            held: Vec::new(),
+            installed: Vec::new(),
+            base_delta: Vec::new(),
+            earlier: Vec::new(),
+            deferred: Vec::new(),
         }
     }
 }
@@ -162,7 +357,9 @@ pub fn load(path: &Path) -> Result<OperationJournal> {
         })
 }
 
-/// Record a new operation and apply all of its steps.
+/// Record a new operation and apply all of its steps. With a `guard`, a step leaves a target
+/// that changed since planning alone (see [`StepGuard`]); [`held`] lists those afterwards.
+#[allow(clippy::too_many_arguments)]
 pub fn start(
     op: OperationKind,
     workspace: &str,
@@ -171,10 +368,71 @@ pub fn start(
     changes: Vec<FileChange>,
     fork_time_ns: u128,
     merged: Vec<MergedStep>,
+    guard: Option<StepGuard>,
+) -> Result<PathBuf> {
+    begin(
+        op,
+        workspace,
+        source,
+        target,
+        changes,
+        fork_time_ns,
+        merged,
+        guard,
+        PullRecord::default(),
+    )
+}
+
+/// [`start`] for one round of a pull, with what the pull planned and did so far.
+#[allow(clippy::too_many_arguments)]
+pub fn start_pull(
+    workspace: &str,
+    source: PathBuf,
+    target: PathBuf,
+    changes: Vec<FileChange>,
+    fork_time_ns: u128,
+    merged: Vec<MergedStep>,
+    guard: StepGuard,
+    record: PullRecord,
+) -> Result<PathBuf> {
+    begin(
+        OperationKind::Pull,
+        workspace,
+        source,
+        target,
+        changes,
+        fork_time_ns,
+        merged,
+        Some(guard),
+        record,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn begin(
+    op: OperationKind,
+    workspace: &str,
+    source: PathBuf,
+    target: PathBuf,
+    changes: Vec<FileChange>,
+    fork_time_ns: u128,
+    merged: Vec<MergedStep>,
+    guard: Option<StepGuard>,
+    record: PullRecord,
 ) -> Result<PathBuf> {
     let path = path(op, workspace, fork_time_ns);
+    let changes = if op == OperationKind::Restore {
+        changes
+    } else {
+        without_covered(&source, changes, &merged)
+    };
     let mut journal = OperationJournal::new(op, workspace, source, target, changes, fork_time_ns);
     journal.merged = merged;
+    journal.guard = guard;
+    journal.base_delta = record.base_delta;
+    journal.earlier = record.earlier;
+    journal.deferred = record.deferred;
+    journal.held = record.held;
     // Resuming treats a planned and an applying journal alike, so the first save already says
     // `Applying` and [`apply_remaining`] does not write it a second time.
     journal.phase = OperationPhase::Applying;
@@ -194,6 +452,7 @@ pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
         save(path, &journal)?;
     }
     let mut saved = std::time::Instant::now();
+    let mut unsaved = false;
     let staging = staging_dir(path);
     let undo = journal.undo.clone();
     // Fault-injection tests slow each step so they can kill the process mid-apply.
@@ -201,38 +460,71 @@ pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
         .ok()
         .and_then(|ms| ms.parse().ok())
         .map(std::time::Duration::from_millis);
+    if journal.installed.len() < journal.changes.len() {
+        journal.installed.resize(journal.changes.len(), None);
+    }
     while journal.next < journal.changes.len() {
         if let Some(delay) = step_delay {
             std::thread::sleep(delay);
         }
         let change = &journal.changes[journal.next];
-        match journal.merged.iter().find(|step| step.path == change.path) {
-            Some(step) => apply_merged(
-                &staging,
-                &journal.target,
-                step,
-                journal.next,
-                journal.op,
-                undo.as_deref(),
-            )?,
-            None => apply_change(
-                &journal.source,
-                &journal.target,
-                change,
-                journal.next,
-                journal.op.as_str(),
-                undo.as_deref(),
-            )?,
+        // A step that already ran (before a crash, since the last save) installed this; an
+        // entry there now that is not it was written since.
+        let step = if let Some(installed) = journal.installed[journal.next] {
+            if Identity::of(&journal.target.join(&change.path)) == Some(installed) {
+                Step::Done
+            } else {
+                Step::Held(vec![change.path.clone()])
+            }
+        } else {
+            match journal.merged.iter().find(|step| step.path == change.path) {
+                Some(step) => apply_merged(
+                    &staging,
+                    &journal.target,
+                    step,
+                    journal.next,
+                    journal.op,
+                    undo.as_deref(),
+                )?,
+                None => apply_change(
+                    &journal.source,
+                    &journal.target,
+                    change,
+                    journal.next,
+                    journal.op.as_str(),
+                    undo.as_deref(),
+                    journal.guard.as_ref(),
+                )?,
+            }
+        };
+        match step {
+            Step::Done if change.kind != ChangeKind::Deleted => {
+                journal.installed[journal.next] = Identity::of(&journal.target.join(&change.path));
+            }
+            Step::Done => {}
+            Step::Held(paths) => {
+                for path in paths {
+                    if !journal.held.contains(&path) {
+                        journal.held.push(path);
+                    }
+                }
+            }
         }
         journal.next += 1;
+        unsaved = true;
         if saved.elapsed() >= SAVE_INTERVAL {
             save(path, &journal)?;
             saved = std::time::Instant::now();
+            unsaved = false;
         }
     }
-    // Not saved: every step is safe to apply twice, so a crash before the caller records the
-    // next phase only makes a resume repeat the steps since the last save.
     journal.phase = OperationPhase::Applied;
+    // What the last steps held and installed is read after this returns (to report the held
+    // paths, to make the merge undoable, to catch a pull up with its base). A crash before
+    // this save only makes a resume repeat those steps, which converges.
+    if unsaved {
+        save(path, &journal)?;
+    }
     Ok(journal)
 }
 
@@ -245,10 +537,170 @@ pub fn set_phase(path: &Path, phase: OperationPhase) -> Result {
 
 /// Make the merge journaled at `path` undoable, once everything it changes is in place.
 pub fn finish_undo(path: &Path) -> Result {
-    match load(path)?.undo {
-        Some(dir) => undo::finish(&dir),
+    let journal = load(path)?;
+    match &journal.undo {
+        Some(dir) => undo::finish(dir, &journal.installed, &journal.held),
         None => Ok(()),
     }
+}
+
+/// The entries the operation journaled at `path` left alone because they changed after it
+/// was planned.
+pub fn held(path: &Path) -> Result<Vec<PathBuf>> {
+    let mut held = load(path)?.held;
+    held.sort();
+    Ok(held)
+}
+
+/// Drop every step that a step on one of its ancestors already covers: the deletion of a
+/// directory, or its replacement by a file or symlink (a staged merge is a file) removes the
+/// whole tree in one rename, kept whole by undo. Applied one by one after that step, the
+/// entries' own steps would act through whatever the step installed there, such as a symlink
+/// to a directory outside the tree (FS-01).
+fn without_covered(
+    source: &Path,
+    changes: Vec<FileChange>,
+    merged: &[MergedStep],
+) -> Vec<FileChange> {
+    let covering: std::collections::BTreeSet<PathBuf> = changes
+        .iter()
+        .filter(|change| {
+            change.kind == ChangeKind::Deleted
+                || merged.iter().any(|step| step.path == change.path)
+                || fs::symlink_metadata(source.join(&change.path))
+                    .is_ok_and(|metadata| !metadata.is_dir())
+        })
+        .map(|change| change.path.clone())
+        .collect();
+    if covering.is_empty() {
+        return changes;
+    }
+    changes
+        .into_iter()
+        .filter(|change| {
+            !change
+                .path
+                .ancestors()
+                .skip(1)
+                .any(|ancestor| covering.contains(ancestor))
+        })
+        .collect()
+}
+
+/// The first ancestor of `relative` under `root` that is not a real directory (a symlink,
+/// or a file), if any. Acting on `root/relative` would then reach outside the tree, or into
+/// nothing. Missing ancestors are fine: they are created as directories.
+fn escaping_parent(root: &Path, relative: &Path) -> Option<PathBuf> {
+    let mut directory = root.to_path_buf();
+    let parent = relative.parent()?;
+    for component in parent.components() {
+        directory.push(component);
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Some(directory),
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+/// A step that cannot run because a parent of its path is no longer a directory of the tree:
+/// held when the operation is guarded, else an error.
+fn refuse_escape(relative: &Path, parent: &Path, guarded: bool) -> Result<Step> {
+    if guarded {
+        return Ok(Step::Held(vec![relative.to_path_buf()]));
+    }
+    Err(ForkspaceError::InvalidArgument(format!(
+        "refusing to write {}: {} is no longer a directory",
+        relative.display(),
+        parent.display()
+    )))
+}
+
+/// Whether `target` already holds what the step installs (or, for a deletion, is gone): a
+/// step that ran before a crash.
+fn already_applied(source: &Path, target: &Path, kind: ChangeKind) -> bool {
+    if kind == ChangeKind::Deleted {
+        return fs::symlink_metadata(target).is_err();
+    }
+    match fs::symlink_metadata(source) {
+        Ok(metadata) if metadata.is_dir() => {
+            fs::symlink_metadata(target).is_ok_and(|metadata| metadata.is_dir())
+        }
+        Ok(_) => same_entry(source, target),
+        Err(_) => false,
+    }
+}
+
+/// The entries under directory `root` (`relative` in the tree) written after `instant_ns`, as
+/// tree paths: files and symlinks, and directories, whose ctime also moves when one is moved
+/// in whole or has an entry added or removed. A directory moved in keeps its children's
+/// ctimes (PULL-19), so a newer directory counts with everything inside it.
+fn written_since(root: &Path, relative: &Path, instant_ns: u128) -> Vec<PathBuf> {
+    let mut newer = Vec::new();
+    let mut walker = WalkDir::new(root)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter();
+    while let Some(entry) = walker.next() {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if !written_after(entry.path(), instant_ns) {
+            continue;
+        }
+        if entry.file_type().is_dir() {
+            walker.skip_current_dir();
+        }
+        if let Ok(inner) = entry.path().strip_prefix(root) {
+            newer.push(relative.join(inner));
+        }
+    }
+    newer
+}
+
+/// Empty directory `root` (`relative` in the tree) of everything but the entries written
+/// after `instant_ns` (see [`written_since`]; a newer directory stays whole) and the
+/// directories holding them; with an undo record, what goes is kept there.
+fn remove_all_but_newer(
+    root: &Path,
+    relative: &Path,
+    instant_ns: u128,
+    keep: Option<(&Path, &Path)>,
+) -> Result {
+    // Parents before children, newer directories not descended into; acted on children first.
+    let mut entries = Vec::new();
+    let mut walker = WalkDir::new(root)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter();
+    while let Some(entry) = walker.next() {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if written_after(entry.path(), instant_ns) {
+            if entry.file_type().is_dir() {
+                walker.skip_current_dir();
+            }
+            continue;
+        }
+        entries.push(entry);
+    }
+    for entry in entries.iter().rev() {
+        if entry.file_type().is_dir() {
+            // Not empty: it holds a newer entry.
+            let _ = fs::remove_dir(entry.path());
+            continue;
+        }
+        match keep {
+            Some((dir, _)) => {
+                let inner = entry.path().strip_prefix(root).unwrap_or(entry.path());
+                undo::keep(dir, &relative.join(inner), entry.path())?;
+            }
+            None => remove_existing(entry.path())?,
+        }
+    }
+    Ok(())
 }
 
 /// Delete a completed journal and its staged merges.
@@ -263,7 +715,6 @@ pub fn find_open(op: OperationKind, workspace: &str) -> Result<Option<PathBuf>> 
     let Ok(entries) = fs::read_dir(&directory) else {
         return Ok(None);
     };
-    let prefix = format!("{}-{workspace}-", op.as_str());
     for entry in entries {
         let path = entry
             .io_context(|| format!("read journal directory {}", directory.display()))?
@@ -271,7 +722,7 @@ pub fn find_open(op: OperationKind, workspace: &str) -> Result<Option<PathBuf>> 
         let matches = path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".json"));
+            .is_some_and(|name| names_journal_of(name, op, workspace));
         if !matches {
             continue;
         }
@@ -281,11 +732,27 @@ pub fn find_open(op: OperationKind, workspace: &str) -> Result<Option<PathBuf>> 
         .map_err(|error| {
             ForkspaceError::StateCorrupted(format!("invalid {} journal: {error}", op.as_str()))
         })?;
-        if !is_terminal(&value) {
+        // The file name is the lookup key; the recorded owner has the last word.
+        let owner = value.get("workspace").and_then(|value| value.as_str());
+        if owner == Some(workspace) && !is_terminal(&value) {
             return Ok(Some(path));
         }
     }
     Ok(None)
+}
+
+/// Whether `name` is exactly the file name [`path`] gives a journal of `op` for `workspace`:
+/// `<op>-<workspace>-<fork_time_ns>.json`. A prefix match would also take `a-b`'s journal
+/// for `a` (DATA-02).
+fn names_journal_of(name: &str, op: OperationKind, workspace: &str) -> bool {
+    name.strip_prefix(op.as_str())
+        .and_then(|rest| rest.strip_prefix('-'))
+        .and_then(|rest| rest.strip_prefix(workspace))
+        .and_then(|rest| rest.strip_prefix('-'))
+        .and_then(|rest| rest.strip_suffix(".json"))
+        .is_some_and(|fork_time| {
+            !fork_time.is_empty() && fork_time.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 /// Remove terminal journals and stray temp files. Returns whether anything was removed.
@@ -342,6 +809,11 @@ fn is_terminal(value: &serde_json::Value) -> bool {
 
 /// Apply one step: delete the target, or stage the source entry beside it and rename it into
 /// place so the target is never observed half-written.
+///
+/// Nothing is done through a parent that is no longer a directory of the tree (a symlink put
+/// in its place could point anywhere). With a `guard`, a target that changed since planning
+/// is left as it is and reported as held, as is a newer entry inside a directory the step
+/// deletes or replaces.
 pub(crate) fn apply_change(
     source_root: &Path,
     target_root: &Path,
@@ -349,32 +821,133 @@ pub(crate) fn apply_change(
     index: usize,
     operation: &str,
     undo: Option<&Path>,
-) -> Result {
-    let source = source_root.join(&change.path);
-    let target = target_root.join(&change.path);
-    let keep = undo.map(|dir| (dir, change.path.as_path()));
-    if change.kind == ChangeKind::Deleted {
-        return match keep {
-            Some((dir, relative)) => undo::keep(dir, relative, &target),
-            None => remove_existing(&target),
-        };
+    guard: Option<&StepGuard>,
+) -> Result<Step> {
+    let relative = change.path.as_path();
+    let source = source_root.join(relative);
+    let target = target_root.join(relative);
+    let keep = undo.map(|dir| (dir, relative));
+    if let Some(parent) = escaping_parent(target_root, relative) {
+        // A deletion has nothing left to remove inside the tree.
+        if change.kind == ChangeKind::Deleted {
+            return Ok(Step::Done);
+        }
+        return refuse_escape(relative, &parent, guard.is_some());
     }
+    if change.kind != ChangeKind::Deleted {
+        if let Some(parent) = escaping_parent(source_root, relative) {
+            return refuse_escape(relative, &parent, guard.is_some());
+        }
+    }
+    // An addition over an entry the plan saw there (`pull --theirs`, `merge --overwrite-base`
+    // on a path both sides added) replaces it like a modification. Any other addition checks
+    // atomically when it installs (`install_new`); so does one whose target is gone, such as a
+    // respelling whose deletion ran first.
+    let replaces_planned = change.kind == ChangeKind::Added
+        && guard.is_some_and(|guard| guard.planned_entry(relative))
+        && fs::symlink_metadata(&target).is_ok();
+    let added = change.kind == ChangeKind::Added && !replaces_planned;
+    if let Some(guard) = guard {
+        if !added && guard.changed_since_planning(relative, &target) {
+            if already_applied(&source, &target, change.kind) {
+                return Ok(Step::Done);
+            }
+            return Ok(Step::Held(vec![relative.to_path_buf()]));
+        }
+    }
+    let planned_ns = guard.map(|guard| guard.planned_ns);
+    if change.kind == ChangeKind::Deleted {
+        return delete_entry(&target, relative, keep, planned_ns);
+    }
+    let vanished =
+        |target: &Path| source_vanished(target, relative, added, operation, keep, planned_ns);
+    let metadata = match fs::symlink_metadata(&source) {
+        Ok(metadata) => metadata,
+        Err(error) if guard.is_some() && error.kind() == std::io::ErrorKind::NotFound => {
+            return vanished(&target);
+        }
+        Err(error) => {
+            return Err(ForkspaceError::Io {
+                context: format!("inspect {}", source.display()),
+                source: error,
+            })
+        }
+    };
     ensure_parent_dir(&target)?;
-    let metadata =
-        fs::symlink_metadata(&source).io_context(|| format!("inspect {}", source.display()))?;
     if metadata.is_dir() {
-        return install_dir(&source, &metadata, &target, keep);
+        return install_dir(&source, &metadata, &target, keep).map(|()| Step::Done);
     }
     let temporary = target.with_extension(format!("forkspace-{operation}-{index}.tmp"));
-    stage_entry(&source, &metadata, &temporary)?;
+    if let Err(error) = stage_entry(&source, &metadata, &temporary) {
+        if guard.is_some() && fs::symlink_metadata(&source).is_err() {
+            remove_existing(&temporary)?;
+            return vanished(&target);
+        }
+        return Err(error);
+    }
     let existing = fs::symlink_metadata(&target).ok();
     if existing.as_ref().is_some_and(fs::Metadata::is_dir) {
-        return replace_directory(&temporary, &target, keep);
+        if added && guard.is_some() {
+            // A directory appeared where the plan expected nothing.
+            remove_existing(&temporary)?;
+            return Ok(Step::Held(vec![relative.to_path_buf()]));
+        }
+        return replace_directory(&temporary, &target, relative, keep, planned_ns);
     }
-    if change.kind == ChangeKind::Added {
-        return install_new(&temporary, &target, change, operation);
+    if added {
+        return install_new(&temporary, &target, change, operation, guard.is_some());
     }
-    install_over(&temporary, &target, keep)
+    install_over(&temporary, &target, keep).map(|()| Step::Done)
+}
+
+/// A guarded step whose source entry is gone since planning. For a pull the base deleted it:
+/// a base deletion, applied like one to the entry the plan saw (PULL-22); an addition has
+/// nothing to delete, and an entry that appeared there since is the workspace's. For a merge
+/// the workspace deleted it after the plan read it: the base is left alone and the path held.
+fn source_vanished(
+    target: &Path,
+    relative: &Path,
+    added: bool,
+    operation: &str,
+    keep: Option<(&Path, &Path)>,
+    planned_ns: Option<u128>,
+) -> Result<Step> {
+    if operation != "pull" {
+        return Ok(Step::Held(vec![relative.to_path_buf()]));
+    }
+    if added {
+        return Ok(if fs::symlink_metadata(target).is_ok() {
+            Step::Held(vec![relative.to_path_buf()])
+        } else {
+            Step::Done
+        });
+    }
+    delete_entry(target, relative, keep, planned_ns)
+}
+
+/// Delete `target`, keeping it in the undo record when there is one. A directory with
+/// entries written after `planned_ns` keeps those (and the directories holding them).
+fn delete_entry(
+    target: &Path,
+    relative: &Path,
+    keep: Option<(&Path, &Path)>,
+    planned_ns: Option<u128>,
+) -> Result<Step> {
+    let Ok(metadata) = fs::symlink_metadata(target) else {
+        return Ok(Step::Done);
+    };
+    if let Some(planned_ns) = planned_ns.filter(|_| metadata.is_dir()) {
+        let newer = written_since(target, relative, planned_ns);
+        if !newer.is_empty() {
+            remove_all_but_newer(target, relative, planned_ns, keep)?;
+            return Ok(Step::Held(newer));
+        }
+    }
+    match keep {
+        Some((dir, relative)) => undo::keep(dir, relative, target)?,
+        None => remove_existing(target)?,
+    }
+    Ok(Step::Done)
 }
 
 /// Install the staged merge of `step` over its target, provided the target is still the one
@@ -387,31 +960,83 @@ fn apply_merged(
     index: usize,
     op: OperationKind,
     undo: Option<&Path>,
-) -> Result {
+) -> Result<Step> {
     let staged = staging.join(&step.path);
     let target = target_root.join(&step.path);
+    // A merge or pull keeps a newer entry and reports it; a restore fails.
+    let holds = op != OperationKind::Restore;
+    if let Some(parent) = escaping_parent(target_root, &step.path) {
+        return refuse_escape(&step.path, &parent, holds);
+    }
+    let is_dir = |path: &Path| fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir());
+    if is_dir(&staged) && is_dir(&target) {
+        // Already a directory: put there by this step before a crash, or never changed.
+        return Ok(Step::Done);
+    }
     let unchanged = Fingerprint::of(&target) == step.expected;
     if !unchanged && !same_entry(&staged, &target) {
-        let paths = vec![step.path.display().to_string()];
-        return Err(match op {
-            OperationKind::Pull => ForkspaceError::PullConflict { paths },
-            OperationKind::Merge => ForkspaceError::MergeConflict { paths },
-            OperationKind::Restore => ForkspaceError::InvalidArgument(format!(
-                "{} changed while restoring; rerun the restore with --resume",
-                step.path.display()
-            )),
-        });
+        if holds {
+            return Ok(Step::Held(vec![step.path.clone()]));
+        }
+        return Err(ForkspaceError::InvalidArgument(format!(
+            "{} changed while restoring; rerun the restore with --resume",
+            step.path.display()
+        )));
     }
     let metadata =
         fs::symlink_metadata(&staged).io_context(|| format!("inspect {}", staged.display()))?;
     ensure_parent_dir(&target)?;
     let temporary = target.with_extension(format!("forkspace-{}-{index}.tmp", op.as_str()));
+    let keep = undo.map(|dir| (dir, step.path.as_path()));
+    if metadata.is_dir() {
+        // A directory to put back where a file or symlink is (a restore, CKPT-10): its
+        // entries are steps of their own.
+        return install_staged_dir(&metadata, &temporary, &target, keep).map(|()| Step::Done);
+    }
     stage_entry(&staged, &metadata, &temporary)?;
-    install_over(
-        &temporary,
-        &target,
-        undo.map(|dir| (dir, step.path.as_path())),
-    )
+    if fs::symlink_metadata(&target).is_ok_and(|existing| existing.is_dir()) {
+        // A file or symlink where a directory is now (FS-10): swapped whole.
+        return replace_directory_now(&temporary, &target, keep).map(|()| Step::Done);
+    }
+    install_over(&temporary, &target, keep).map(|()| Step::Done)
+}
+
+/// Make `target` a directory with the permissions in `metadata`. A file or symlink there is
+/// swapped for an empty directory made at `temporary` (kept when there is an undo record), so
+/// the path is never missing; an existing directory stays as it is.
+fn install_staged_dir(
+    metadata: &fs::Metadata,
+    temporary: &Path,
+    target: &Path,
+    keep: Option<(&Path, &Path)>,
+) -> Result {
+    match fs::symlink_metadata(target) {
+        Ok(existing) if existing.is_dir() => return Ok(()),
+        Err(_) => {
+            // Missing: nothing to swap.
+            fs::create_dir(target).io_context(|| format!("create {}", target.display()))?;
+        }
+        Ok(_) => {
+            remove_existing(temporary)?;
+            fs::create_dir(temporary).io_context(|| format!("create {}", temporary.display()))?;
+            match swap_with_directory(temporary, target)? {
+                FlaggedRename::Done => match keep {
+                    Some((dir, relative)) => undo::keep(dir, relative, temporary)?,
+                    None => remove_existing(temporary)?,
+                },
+                _ => {
+                    if let Some((dir, relative)) = keep {
+                        undo::keep_copy(dir, relative, target)?;
+                    }
+                    remove_existing(target)?;
+                    fs::rename(temporary, target)
+                        .io_context(|| format!("install {}", target.display()))?;
+                }
+            }
+        }
+    }
+    fs::set_permissions(target, metadata.permissions())
+        .io_context(|| format!("set permissions on {}", target.display()))
 }
 
 /// Rename the staged `temporary` over `target`. With an undo record, the two are swapped so
@@ -439,11 +1064,28 @@ fn install_over(temporary: &Path, target: &Path, keep: Option<(&Path, &Path)>) -
 /// Put the staged entry where a directory is. A plain rename cannot replace a directory with
 /// a non-directory, so the two are swapped atomically and the old tree is deleted from the
 /// staging name; the path is never missing. Without swap support the directory is removed
-/// first, as before.
-fn replace_directory(temporary: &Path, target: &Path, keep: Option<(&Path, &Path)>) -> Result {
-    match rename_exchange(temporary, target)
-        .io_context(|| format!("swap {} into place", target.display()))?
-    {
+/// first, as before. A directory holding entries written after `planned_ns` is not replaced:
+/// it keeps those, loses the rest, and the step is held.
+fn replace_directory(
+    temporary: &Path,
+    target: &Path,
+    relative: &Path,
+    keep: Option<(&Path, &Path)>,
+    planned_ns: Option<u128>,
+) -> Result<Step> {
+    if let Some(planned_ns) = planned_ns {
+        let newer = written_since(target, relative, planned_ns);
+        if !newer.is_empty() {
+            remove_existing(temporary)?;
+            remove_all_but_newer(target, relative, planned_ns, keep)?;
+            return Ok(Step::Held(newer));
+        }
+    }
+    replace_directory_now(temporary, target, keep).map(|()| Step::Done)
+}
+
+fn replace_directory_now(temporary: &Path, target: &Path, keep: Option<(&Path, &Path)>) -> Result {
+    match swap_with_directory(temporary, target)? {
         FlaggedRename::Done => match keep {
             Some((dir, relative)) => undo::keep(dir, relative, temporary),
             None => remove_existing(temporary),
@@ -458,23 +1100,43 @@ fn replace_directory(temporary: &Path, target: &Path, keep: Option<(&Path, &Path
     }
 }
 
+/// Swap `temporary` and `target`, one of them a directory, where the file system keeps a
+/// swapped directory usable; elsewhere (fuse-overlayfs) report the swap unsupported, so the
+/// caller removes the old entry first.
+fn swap_with_directory(temporary: &Path, target: &Path) -> Result<FlaggedRename> {
+    let parent = target.parent().unwrap_or(target);
+    if !exchanges_directories(parent) {
+        return Ok(FlaggedRename::Unsupported);
+    }
+    rename_exchange(temporary, target)
+        .io_context(|| format!("swap {} into place", target.display()))
+}
+
 /// Install an entry the plan expected to be new without clobbering one that appeared since
 /// planning. An identical entry is a step that already ran before a crash, so resuming
-/// succeeds; anything else is a conflict to resolve before `--resume`.
-fn install_new(temporary: &Path, target: &Path, change: &FileChange, operation: &str) -> Result {
+/// succeeds; anything else is held when `guarded`, else a conflict to resolve before
+/// `--resume`.
+fn install_new(
+    temporary: &Path,
+    target: &Path,
+    change: &FileChange,
+    operation: &str,
+    guarded: bool,
+) -> Result<Step> {
     let outcome = rename_noreplace(temporary, target)
         .io_context(|| format!("install {}", target.display()))?;
     match outcome {
-        FlaggedRename::Done => Ok(()),
+        FlaggedRename::Done => Ok(Step::Done),
         FlaggedRename::Unsupported => {
             if fs::symlink_metadata(target).is_err() {
-                return fs::rename(temporary, target)
-                    .io_context(|| format!("install {}", target.display()));
+                fs::rename(temporary, target)
+                    .io_context(|| format!("install {}", target.display()))?;
+                return Ok(Step::Done);
             }
-            appeared_since_planning(temporary, target, change, operation)
+            appeared_since_planning(temporary, target, change, operation, guarded)
         }
         FlaggedRename::DestinationExists => {
-            appeared_since_planning(temporary, target, change, operation)
+            appeared_since_planning(temporary, target, change, operation, guarded)
         }
     }
 }
@@ -484,11 +1146,15 @@ fn appeared_since_planning(
     target: &Path,
     change: &FileChange,
     operation: &str,
-) -> Result {
+    guarded: bool,
+) -> Result<Step> {
     let identical = same_entry(temporary, target);
     remove_existing(temporary)?;
     if identical {
-        return Ok(());
+        return Ok(Step::Done);
+    }
+    if guarded {
+        return Ok(Step::Held(vec![change.path.clone()]));
     }
     let paths = vec![change.path.display().to_string()];
     Err(if operation == "pull" {
@@ -581,7 +1247,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use super::apply_change;
+    use super::{apply_change, apply_merged, Fingerprint, MergedStep, OperationKind, Step};
     use crate::changes::{ChangeKind, FileChange};
     use crate::error::ForkspaceError;
 
@@ -596,8 +1262,16 @@ mod tests {
         fs::write(target.path().join("new.txt"), "created in base meanwhile\n").unwrap();
         let change = FileChange::new(PathBuf::from("new.txt"), ChangeKind::Added);
 
-        let error =
-            apply_change(source.path(), target.path(), &change, 0, "merge", None).unwrap_err();
+        let error = apply_change(
+            source.path(),
+            target.path(),
+            &change,
+            0,
+            "merge",
+            None,
+            None,
+        )
+        .unwrap_err();
         assert!(
             matches!(error, ForkspaceError::MergeConflict { .. }),
             "{error}"
@@ -620,7 +1294,7 @@ mod tests {
         fs::write(target.path().join("new.txt"), "same\n").unwrap();
         let change = FileChange::new(PathBuf::from("new.txt"), ChangeKind::Added);
 
-        apply_change(source.path(), target.path(), &change, 0, "pull", None).unwrap();
+        apply_change(source.path(), target.path(), &change, 0, "pull", None, None).unwrap();
         assert_eq!(fs::read_dir(target.path()).unwrap().count(), 1);
     }
 
@@ -632,7 +1306,16 @@ mod tests {
         fs::write(target.path().join("thing/nested/old"), "old\n").unwrap();
         let change = FileChange::new(PathBuf::from("thing"), ChangeKind::Modified);
 
-        apply_change(source.path(), target.path(), &change, 3, "merge", None).unwrap();
+        apply_change(
+            source.path(),
+            target.path(),
+            &change,
+            3,
+            "merge",
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(
             fs::read_to_string(target.path().join("thing")).unwrap(),
             "now a file\n"
@@ -641,6 +1324,82 @@ mod tests {
             fs::read_dir(target.path()).unwrap().count(),
             1,
             "old tree left behind"
+        );
+    }
+
+    /// A directory outside both trees, with an entry the steps must never touch.
+    fn outside() -> tempfile::TempDir {
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("x.txt"), "outside\n").unwrap();
+        outside
+    }
+
+    #[test]
+    fn a_deletion_never_reaches_through_a_symlinked_parent() {
+        let (source, target) = dirs();
+        let outside = outside();
+        std::os::unix::fs::symlink(outside.path(), target.path().join("d")).unwrap();
+        let change = FileChange::new(PathBuf::from("d/x.txt"), ChangeKind::Deleted);
+
+        let step =
+            apply_change(source.path(), target.path(), &change, 0, "pull", None, None).unwrap();
+        assert_eq!(step, Step::Done);
+        assert_eq!(
+            fs::read_to_string(outside.path().join("x.txt")).unwrap(),
+            "outside\n"
+        );
+    }
+
+    #[test]
+    fn a_write_never_goes_through_a_symlinked_parent() {
+        let (source, target) = dirs();
+        let outside = outside();
+        fs::create_dir(source.path().join("d")).unwrap();
+        fs::write(source.path().join("d/x.txt"), "new\n").unwrap();
+        std::os::unix::fs::symlink(outside.path(), target.path().join("d")).unwrap();
+        let change = FileChange::new(PathBuf::from("d/x.txt"), ChangeKind::Modified);
+
+        apply_change(
+            source.path(),
+            target.path(),
+            &change,
+            0,
+            "merge",
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            fs::read_to_string(outside.path().join("x.txt")).unwrap(),
+            "outside\n"
+        );
+    }
+
+    #[test]
+    fn a_restore_never_writes_through_a_parent_swapped_for_a_symlink() {
+        let (staging, target) = dirs();
+        let outside = outside();
+        fs::create_dir(staging.path().join("d")).unwrap();
+        fs::write(staging.path().join("d/x.txt"), "checkpointed\n").unwrap();
+        // Planned against the real directory; swapped before the step.
+        std::os::unix::fs::symlink(outside.path(), target.path().join("d")).unwrap();
+        let step = MergedStep {
+            path: PathBuf::from("d/x.txt"),
+            expected: Fingerprint::of(&target.path().join("d/x.txt")),
+        };
+
+        apply_merged(
+            staging.path(),
+            target.path(),
+            &step,
+            0,
+            OperationKind::Restore,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            fs::read_to_string(outside.path().join("x.txt")).unwrap(),
+            "outside\n"
         );
     }
 }

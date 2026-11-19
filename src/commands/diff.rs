@@ -15,6 +15,9 @@ use crate::workspace::{guard, Workspace};
 
 pub fn exec(args: DiffArgs) -> Result {
     guard::ensure_idle(&args.name)?;
+    if let Err(error) = crate::changes::manifest::settle_now(&args.name, false) {
+        eprintln!("warning: {error}");
+    }
     let state = State::load()?;
     let workspace = state.require_workspace(&args.name)?;
     guard::require_view(workspace)?;

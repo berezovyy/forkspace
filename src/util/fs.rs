@@ -123,6 +123,29 @@ pub fn ctime_ns(metadata: &fs::Metadata) -> i128 {
     i128::from(metadata.ctime()) * 1_000_000_000 + i128::from(metadata.ctime_nsec())
 }
 
+/// A clock reading, in nanoseconds since the epoch, that every entry written after this call
+/// has a later ctime than. Linux stamps inode times from its coarse clock, up to a tick
+/// (1–10 ms) behind the clock a process normally reads, so a write right after a fine reading
+/// can carry an earlier ctime; the coarse clock itself, less a nanosecond, is never ahead of a
+/// later stamp. APFS stamps from the fine clock: a ctime was never earlier than the clock read
+/// just before the write (n = 2,000, 2026-11-19).
+pub fn ctime_clock_ns() -> u128 {
+    #[cfg(target_os = "linux")]
+    {
+        let mut now = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `now` is a valid out-pointer for clock_gettime.
+        if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME_COARSE, &mut now) } == 0 {
+            let seconds = u128::try_from(now.tv_sec).unwrap_or(0);
+            let nanos = u128::try_from(now.tv_nsec).unwrap_or(0);
+            return (seconds * 1_000_000_000 + nanos).saturating_sub(1);
+        }
+    }
+    crate::util::now_unix_ns()
+}
+
 /// Permission bits (including setuid/setgid/sticky).
 pub fn mode_bits(metadata: &fs::Metadata) -> u32 {
     metadata.mode() & 0o7777
@@ -188,6 +211,33 @@ pub fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<FlaggedRename
 /// (`renameat2(RENAME_EXCHANGE)` on Linux, `renamex_np(RENAME_SWAP)` on macOS).
 pub fn rename_exchange(a: &Path, b: &Path) -> std::io::Result<FlaggedRename> {
     flagged_rename(a, b, RenameFlag::Exchange)
+}
+
+/// Whether a directory at `path` can be swapped with [`rename_exchange`] and still be used
+/// afterwards. fuse-overlayfs accepts the swap of a directory with entries in its lower layer,
+/// but the swapped directory then lists entries it cannot open, so it can no longer be
+/// removed (PULL-18). Kernel overlayfs is treated the same (not measured).
+#[cfg(target_os = "linux")]
+pub fn exchanges_directories(path: &Path) -> bool {
+    const FUSE_SUPER_MAGIC: u64 = 0x6573_5546;
+    const OVERLAYFS_SUPER_MAGIC: u64 = 0x794c_7630;
+    let Ok(name) = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) else {
+        return false;
+    };
+    let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: `name` is NUL-terminated and `stats` is a valid out-pointer for statfs.
+    if unsafe { libc::statfs(name.as_ptr(), stats.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    // SAFETY: statfs returned success, so it initialized `stats`.
+    #[allow(clippy::unnecessary_cast)]
+    let kind = unsafe { stats.assume_init() }.f_type as u64;
+    kind != FUSE_SUPER_MAGIC && kind != OVERLAYFS_SUPER_MAGIC
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn exchanges_directories(_path: &Path) -> bool {
+    true
 }
 
 #[derive(Clone, Copy)]

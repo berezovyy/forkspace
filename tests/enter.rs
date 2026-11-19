@@ -376,3 +376,50 @@ fn enter_exits_with_the_command_status() {
     assert_eq!(State::load().unwrap().workspaces.len(), 1);
     assert!(forkspace(&["drop", "status-ws"]).status.success());
 }
+
+/// MERGE-29: `--ephemeral --merge-on-exit` keeps the workspace whenever its changes were not
+/// merged (here: no terminal to ask, with and without a failing command) and says so; a
+/// clean one is still removed.
+#[test]
+#[serial]
+fn an_ephemeral_workspace_with_unmerged_changes_is_kept() {
+    let (_dir, base) = common::setup_with_project();
+    let home = std::env::var("FORKSPACE_HOME").unwrap();
+    let enter = |script: &str| {
+        Command::new(forkspace_bin())
+            .env("FORKSPACE_HOME", &home)
+            .current_dir(base.path())
+            .args(["enter", "--ephemeral", "--copy", "--merge-on-exit", "--"])
+            .args(["sh", "-c", script])
+            .output()
+            .unwrap()
+    };
+    let views = || -> Vec<PathBuf> {
+        State::load()
+            .unwrap()
+            .workspaces
+            .values()
+            .map(|workspace| workspace.view_path.clone())
+            .collect()
+    };
+
+    let kept = enter("printf 'AGENT\\n' > agent.txt");
+    assert!(kept.status.success(), "{kept:?}");
+    let stdout = String::from_utf8_lossy(&kept.stdout);
+    assert!(!stdout.contains("ephemeral workspace removed"), "{stdout}");
+    assert!(String::from_utf8_lossy(&kept.stderr).contains("kept ephemeral workspace"));
+    assert_eq!(views().len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(views()[0].join("agent.txt")).unwrap(),
+        "AGENT\n"
+    );
+
+    let failed = enter("printf 'AGENT 2\\n' > agent2.txt; exit 3");
+    assert_eq!(failed.status.code(), Some(3), "{failed:?}");
+    assert_eq!(views().len(), 2);
+
+    let clean = enter("true");
+    assert!(clean.status.success(), "{clean:?}");
+    assert!(String::from_utf8_lossy(&clean.stdout).contains("ephemeral workspace removed"));
+    assert_eq!(views().len(), 2);
+}

@@ -1,15 +1,22 @@
 //! `forkspace merge`: apply a workspace's changes to its base, or print them as a patch.
 
-use std::path::PathBuf;
+use std::collections::BTreeSet;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-use crate::changes::ChangeCounts;
+use crate::backend::select_backend;
+use crate::changes::filter::ChangeFilter;
+use crate::changes::{ChangeCounts, FileChange};
 use crate::cli::MergeArgs;
 use crate::error::Result;
 use crate::review::signals;
 use crate::state::State;
 use crate::sync::journal::{self, OperationPhase};
 use crate::sync::plan::{self, MergePlan, PlanOptions};
-use crate::sync::{install, join_paths, merge, undo};
+use crate::sync::{install, is_transferable, join_paths, merge, undo};
+use crate::util::fs::ctime_ns;
+use crate::util::{now_unix_ns, IoContext};
 use crate::workspace::{guard, Workspace};
 
 /// The outcome of the apply step: the journal still to close, what was transferred (zero
@@ -17,8 +24,17 @@ use crate::workspace::{guard, Workspace};
 /// change the installed dependencies (assumed when resuming, for the same reason).
 struct Applied {
     journal: Option<PathBuf>,
-    counts: ChangeCounts,
+    /// The planned changes; empty when resuming.
+    changes: Vec<FileChange>,
     dependencies_changed: bool,
+    planned: Planned,
+}
+
+/// What the merge saw of the workspace: the paths it transferred or left to the base's
+/// version, and when it started reading the view.
+struct Planned {
+    paths: BTreeSet<PathBuf>,
+    since_ns: u128,
 }
 
 pub fn exec(args: MergeArgs) -> Result {
@@ -26,6 +42,9 @@ pub fn exec(args: MergeArgs) -> Result {
         return undo(&args);
     }
     let name = args.name.clone().unwrap_or_default();
+    if !args.resume {
+        crate::changes::manifest::settle_now(&name, true)?;
+    }
     State::with_state(|state| {
         guard::ensure_no_interrupted_pull(&name)?;
         if !args.resume {
@@ -35,9 +54,15 @@ pub fn exec(args: MergeArgs) -> Result {
         guard::require_live_view(state, &workspace)?;
 
         if args.patch {
-            if print_patch(&name, &workspace)? && args.drop {
-                crate::workspace::remove(state, &name)?;
-                eprintln!("removed '{}'", name);
+            if args.drop {
+                ensure_patch_applies(&workspace)?;
+            }
+            if let Some(planned) = print_patch(&name, &workspace)? {
+                if args.drop {
+                    ensure_unchanged_since(&workspace, &planned)?;
+                    crate::workspace::remove(state, &name)?;
+                    eprintln!("removed '{}'", name);
+                }
             }
             return Ok(());
         }
@@ -46,7 +71,9 @@ pub fn exec(args: MergeArgs) -> Result {
             return Ok(());
         };
         run_post_merge_steps(&args, &workspace, applied.dependencies_changed)?;
+        let mut held = Vec::new();
         if let Some(path) = &applied.journal {
+            held = journal::held(path)?;
             journal::finish_undo(path)?;
             journal::set_phase(path, OperationPhase::Done)?;
             journal::remove(path)?;
@@ -56,15 +83,29 @@ pub fn exec(args: MergeArgs) -> Result {
             .require_workspace_mut(&name)?
             .unresolved_conflicts
             .clear();
-        let counts = applied.counts;
-        if counts.total() == 0 && !args.resume {
+        if applied.changes.is_empty() && !args.resume {
             println!("nothing to merge in '{}'", name);
             return Ok(());
         }
-        if args.drop {
-            crate::workspace::remove(state, &name)?;
+        // What was held was not merged (MERGE-37).
+        let counts = ChangeCounts::of(
+            applied
+                .changes
+                .iter()
+                .filter(|change| !held.contains(&change.path)),
+        );
+        if !held.is_empty() {
+            // The workspace still holds the only copy of what was not applied: never drop it.
+            if !args.resume {
+                println!(
+                    "merged {} files; left {} alone that changed while merging",
+                    counts.total(),
+                    held.len()
+                );
+            }
+            return Err(merge::held_error(&held));
         }
-        println!(
+        let summary = format!(
             "merged {} files ({} added, {} modified, {} deleted)",
             counts.total(),
             counts.added,
@@ -72,35 +113,185 @@ pub fn exec(args: MergeArgs) -> Result {
             counts.deleted
         );
         if args.drop {
+            if let Err(error) = ensure_unchanged_since(&workspace, &applied.planned) {
+                println!("{summary}");
+                return Err(error);
+            }
+            crate::workspace::remove(state, &name)?;
+        }
+        println!("{summary}");
+        if args.drop {
             println!("removed '{}'", name);
         }
         Ok(())
     })
 }
 
-/// Print the workspace's changes as a unified patch. Returns whether there was anything to print.
-fn print_patch(name: &str, workspace: &Workspace) -> Result<bool> {
+/// Refuse to drop a workspace whose view changed while it was merged or exported (MERGE-19):
+/// a transferable change the merge did not see, a file written after it started reading the
+/// view, or a change it saw that is gone. Those exist only in the workspace.
+fn ensure_unchanged_since(workspace: &Workspace, planned: &Planned) -> Result {
+    let backend = select_backend(Some(workspace.backend_kind))?;
+    let include_ignored = !workspace.backend_kind.stacking_is_snapshot();
+    let now: BTreeSet<PathBuf> = ChangeFilter::build(&workspace.base)
+        .filter_changes(backend.changes(workspace, include_ignored, false)?)
+        .into_iter()
+        .filter(|change| is_transferable(change.class))
+        .map(|change| change.path)
+        .collect();
+    let view = backend.view_path(workspace);
+    let since = i128::try_from(planned.since_ns).unwrap_or(i128::MAX);
+    // A path inside a planned one (a directory deleted or replaced whole) was seen with it.
+    let seen = |path: &Path| {
+        path.ancestors()
+            .any(|ancestor| planned.paths.contains(ancestor))
+    };
+    let written = |path: &Path| {
+        fs::symlink_metadata(view.join(path)).is_ok_and(|metadata| ctime_ns(&metadata) > since)
+    };
+    let mut changed: Vec<PathBuf> = now
+        .iter()
+        .filter(|path| !seen(path) || written(path))
+        .cloned()
+        .collect();
+    changed.extend(
+        planned
+            .paths
+            .iter()
+            .filter(|path| {
+                !now.contains(*path)
+                    && !fs::symlink_metadata(view.join(path))
+                        .is_ok_and(|metadata| metadata.is_dir())
+            })
+            .cloned(),
+    );
+    if changed.is_empty() {
+        return Ok(());
+    }
+    changed.sort();
+    changed.dedup();
+    Err(crate::error::ForkspaceError::ChangedDuring {
+        operation: "merge --drop".to_string(),
+        paths: crate::sync::display_paths(&changed),
+        remedy: "the workspace changed them while the merge ran, so the base may not have them; the workspace was kept; review them and merge again".to_string(),
+    })
+}
+
+/// Refuse `merge --patch --drop` unless the patch is sure to apply to the base as it is now:
+/// once the workspace is dropped, a patch that `git apply` refuses is the only copy of the
+/// work (MERGE-07). A direct merge's refusals refuse here too, and so does a file the base
+/// changed since the fork that a direct merge would combine line by line, since the patch
+/// carries only the workspace's side.
+fn ensure_patch_applies(workspace: &Workspace) -> Result {
+    let staged = journal::staging_dir(&journal::path(
+        journal::OperationKind::Merge,
+        &workspace.name,
+        workspace.fork_time_ns,
+    ));
+    let plan = plan::build(workspace, false);
+    let _ = std::fs::remove_dir_all(&staged);
+    let plan = plan?;
+    // A path the base already holds exactly as the workspace does is left out of the patch
+    // (MERGE-36): nothing of it can be lost.
+    let combined: Vec<PathBuf> = plan
+        .auto_merged
+        .iter()
+        .chain(&plan.kept_base)
+        .filter(|path| !already_in_base(workspace, &plan.source, path))
+        .cloned()
+        .collect();
+    if combined.is_empty() {
+        return Ok(());
+    }
+    Err(crate::error::ForkspaceError::PatchIncomplete {
+        workspace: workspace.name.clone(),
+        omitted: combined
+            .iter()
+            .map(|path| {
+                format!(
+                    "{} (the base changed it too since the fork, so `git apply` may refuse the patch and --drop would lose the change)",
+                    path.display()
+                )
+            })
+            .collect(),
+    })
+}
+
+/// Print the workspace's changes as a Git patch. Returns what it carried, if anything.
+/// Fails before printing anything when a change cannot be carried by the patch, so neither a
+/// caller nor `--drop` ever acts on a partial one.
+fn print_patch(name: &str, workspace: &Workspace) -> Result<Option<Planned>> {
+    let since_ns = now_unix_ns();
     let plan = plan::build(workspace, true)?;
     if plan.changes.is_empty() {
         println!("nothing to merge in '{name}'");
-        return Ok(false);
+        return Ok(None);
     }
-    print!("{}", merge::generate_patch(workspace, &plan.changes)?);
-    Ok(true)
+    // What the base already holds exactly as the workspace does needs no hunk; one would not
+    // apply there (MERGE-36).
+    let carried: Vec<_> = plan
+        .changes
+        .iter()
+        .filter(|change| !already_in_base(workspace, &plan.source, &change.path))
+        .cloned()
+        .collect();
+    let patch = merge::generate_patch(workspace, &plan.source, &carried)?;
+    let conflicts: Vec<PathBuf> = plan
+        .conflicts
+        .iter()
+        .filter(|path| !already_in_base(workspace, &plan.source, path))
+        .cloned()
+        .collect();
+    if !conflicts.is_empty() {
+        eprintln!(
+            "warning: the base changed since the fork for {}; the patch holds the workspace's changes against the fork-time versions, so applying it to this base may be refused there",
+            join_paths(&conflicts)
+        );
+    }
+    let mut stdout = std::io::stdout().lock();
+    stdout
+        .write_all(&patch)
+        .and_then(|()| stdout.flush())
+        .io_context(|| "write patch to stdout".to_string())?;
+    Ok(Some(Planned {
+        paths: plan.changes.into_iter().map(|change| change.path).collect(),
+        since_ns,
+    }))
+}
+
+/// Whether the base entry at `relative` is already what the workspace has at `source`: the
+/// same kind, permissions and content, or both missing.
+fn already_in_base(workspace: &Workspace, source: &Path, relative: &Path) -> bool {
+    crate::sync::pull::equivalent(&workspace.base.join(relative), &source.join(relative))
 }
 
 /// Resume an interrupted merge, or plan, review, and apply a new one.
 /// Returns `None` for a dry run, which stops after printing the plan.
 fn apply(args: &MergeArgs, workspace: &Workspace) -> Result<Option<Applied>> {
     if args.resume {
+        let path = merge::resume(workspace)?;
+        let journal = journal::load(&path)?;
+        // Paths the plan left to the base's version are not recorded: such a change counts as
+        // unseen, which keeps the workspace.
+        let planned = Planned {
+            paths: journal
+                .changes
+                .into_iter()
+                .map(|change| change.path)
+                .collect(),
+            since_ns: journal.guard.map_or(0, |guard| guard.planned_ns),
+        };
         return Ok(Some(Applied {
-            journal: Some(merge::resume(workspace)?),
-            counts: ChangeCounts::default(),
+            journal: Some(path),
+            changes: Vec::new(),
             dependencies_changed: true,
+            planned,
         }));
     }
 
     let overwrite = args.overwrite_base || args.force;
+    // Before the plan reads the view: a write after this is not in the merge.
+    let since_ns = now_unix_ns();
     let plan = plan::build_with(
         workspace,
         PlanOptions {
@@ -137,10 +328,19 @@ fn apply(args: &MergeArgs, workspace: &Workspace) -> Result<Option<Applied>> {
     };
     Ok(Some(Applied {
         journal,
-        counts: ChangeCounts::of(&plan.changes),
+        changes: plan.changes.clone(),
         dependencies_changed: install::touches_dependencies(
             plan.changes.iter().map(|change| &change.path),
         ),
+        planned: Planned {
+            paths: plan
+                .changes
+                .iter()
+                .map(|change| change.path.clone())
+                .chain(plan.kept_base.iter().cloned())
+                .collect(),
+            since_ns,
+        },
     }))
 }
 

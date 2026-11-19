@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use forkspace::backend::{BackendKind, BackendState};
@@ -141,17 +141,38 @@ fn journal_resume_converges_for_files_deletes_modes_and_symlinks() {
     let plan = plan(&workspace, false).unwrap();
     let journal = merge::execute(&plan).unwrap();
     let expected = tree_facts(base.path());
+    let rewind = || {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&journal).unwrap()).unwrap();
+        value["next"] = serde_json::json!(0);
+        fs::write(&journal, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    };
 
+    // Steps that already ran (a crash before the journal saved its progress) run again and
+    // converge on the same tree.
+    rewind();
+    merge::resume(&workspace).unwrap();
+    assert_eq!(tree_facts(base.path()), expected);
+
+    // Base edits made after a step ran are not overwritten by running it again (MERGE-20).
     fs::write(base.path().join("modified"), b"interrupted\n").unwrap();
     fs::write(base.path().join("deleted"), b"restored\n").unwrap();
     fs::remove_file(base.path().join("added")).unwrap();
-    let mut value: serde_json::Value =
-        serde_json::from_slice(&fs::read(&journal).unwrap()).unwrap();
-    value["next"] = serde_json::json!(0);
-    fs::write(&journal, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
-
+    rewind();
     merge::resume(&workspace).unwrap();
-    assert_eq!(tree_facts(base.path()), expected);
+    assert_eq!(
+        fs::read(base.path().join("modified")).unwrap(),
+        b"interrupted\n"
+    );
+    assert_eq!(
+        fs::read(base.path().join("deleted")).unwrap(),
+        b"restored\n"
+    );
+    assert!(!base.path().join("added").exists());
+    assert_eq!(
+        forkspace::sync::journal::held(&journal).unwrap(),
+        ["added", "deleted", "modified"].map(PathBuf::from).to_vec()
+    );
     forkspace::sync::journal::remove(&journal).unwrap();
 }
 
@@ -215,13 +236,21 @@ fn building_refuses_and_dirty_rows_are_ancestor_unknown_not_conflicts() {
             .collect::<String>(),
     )
     .unwrap();
-    fs::write(base.path().join("raced"), b"base moved\n").unwrap();
     fs::write(view.path().join("raced"), b"workspace moved\n").unwrap();
-    let plan = plan(&workspace, false).unwrap();
-    assert!(plan.conflicts.is_empty());
+    let untouched = plan(&workspace, false).unwrap();
+    assert!(untouched.conflicts.is_empty());
     assert_eq!(
-        plan.ancestor_unknown,
+        untouched.ancestor_unknown,
         vec![std::path::PathBuf::from("raced")]
+    );
+
+    // A dirty row says nothing about the base, so a base edit since the fork is a conflict,
+    // not something the workspace may overwrite (DATA-12).
+    fs::write(base.path().join("raced"), b"base moved\n").unwrap();
+    let error = plan(&workspace, false).unwrap_err();
+    assert!(
+        matches!(error, ForkspaceError::MergeConflict { .. }),
+        "{error:?}"
     );
 }
 

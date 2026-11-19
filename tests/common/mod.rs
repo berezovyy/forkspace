@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod cli;
+
 use std::path::Path;
 
 use forkspace::util::now_rfc3339;

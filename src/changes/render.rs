@@ -76,22 +76,24 @@ fn status_line(change: &FileChange) -> String {
     format!("{icon}  {}{detail}", change.path.display())
 }
 
-/// A colored unified diff of one change against its base, or a one-line note when the
-/// content is binary or the old side is unavailable.
+/// A colored unified diff of one change against the version it started from (see
+/// [`super::old_version`]), or a one-line note when the content is binary or that version is
+/// unknown.
 pub fn generate_unified_diff(workspace: &Workspace, change: &FileChange) -> String {
     // Overlay workspaces keep new content in the upper dir; snapshots in the view itself.
     let new_path = workspace.upper_path().map_or_else(
         |_| workspace.view_path.join(&change.path),
         |upper| upper.join(&change.path),
     );
-    let old_path = workspace.ancestor_file(&change.path);
     let display = change.path.display();
-
-    if change.kind != ChangeKind::Added {
-        if let Some(reason) = unavailable_reason(change.old_content) {
+    let old_path = match (change.kind, super::old_version(workspace, change)) {
+        (ChangeKind::Added, _) => PathBuf::new(),
+        (_, Some(path)) => path,
+        (_, None) => {
+            let reason = unavailable_reason(change.old_content);
             return format!("diff unavailable ({reason}): {display}\n");
         }
-    }
+    };
     if change.is_binary {
         let verb = match change.kind {
             ChangeKind::Added => "added",
@@ -99,6 +101,18 @@ pub fn generate_unified_diff(workspace: &Workspace, change: &FileChange) -> Stri
             ChangeKind::Deleted => "deleted",
         };
         return format!("Binary file {display} {verb}\n");
+    }
+
+    let too_large = [&old_path, &new_path].into_iter().find(|path| {
+        !path.as_os_str().is_empty() && path.is_file() && !super::content::within_text_limit(path)
+    });
+    if let Some(path) = too_large {
+        let bytes = fs::metadata(path).map_or(0, |metadata| metadata.len());
+        return format!(
+            "diff not shown (a version is {} MiB, over the {} MiB limit): {display}\n",
+            bytes >> 20,
+            super::content::MAX_TEXT_DIFF_BYTES >> 20
+        );
     }
 
     let old_label = format!("a/{display}");
@@ -143,11 +157,10 @@ pub fn generate_unified_diff(workspace: &Workspace, change: &FileChange) -> Stri
     }
 }
 
-fn unavailable_reason(old_content: OldContent) -> Option<&'static str> {
+fn unavailable_reason(old_content: OldContent) -> &'static str {
     match old_content {
-        OldContent::Available => None,
-        OldContent::BaseAdvanced => Some("base advanced"),
-        OldContent::AncestorUnknown => Some("ancestor unknown; pending manifest"),
+        OldContent::Available | OldContent::AncestorUnknown => "fork-time content unknown",
+        OldContent::BaseAdvanced => "base advanced",
     }
 }
 

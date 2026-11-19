@@ -363,3 +363,63 @@ fn test_overlay_fork_refuses_base_with_whiteout_names() {
     assert!(State::load().unwrap().workspaces.is_empty());
     assert!(!forkspace::paths::overlay_root("whiteout-ws").exists());
 }
+
+/// STATE-12: a workspace folder deleted or moved by hand. `ls` and `gc` report it and go on
+/// with the other workspaces; `drop` removes the record and the leftovers, without touching
+/// the moved folder, and the name can be used again.
+#[test]
+#[serial]
+fn a_view_folder_removed_by_hand_is_reported_and_dropped_cleanly() {
+    let home = common::setup_test_env();
+    let root = tempfile::tempdir().unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::write(project.join("a.txt"), "a\n").unwrap();
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .env("FORKSPACE_BACKEND", "copy")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    for name in ["aa", "ws", "zz"] {
+        let output = run(&["new", name, "--from", project.to_str().unwrap(), "--copy"]);
+        assert!(output.status.success(), "{output:?}");
+    }
+    let view = State::load()
+        .unwrap()
+        .require_workspace("ws")
+        .unwrap()
+        .view_path
+        .clone();
+    let moved = root.path().join("moved-away");
+    std::fs::rename(&view, &moved).unwrap();
+
+    let ls = run(&["ls"]);
+    assert!(ls.status.success(), "{ls:?}");
+    let table = String::from_utf8_lossy(&ls.stdout);
+    assert!(table.contains("aa") && table.contains("zz"), "{table}");
+    assert!(table.contains("view missing"), "{table}");
+
+    let gc = run(&["gc", "--yes"]);
+    assert!(gc.status.success(), "{gc:?}");
+    assert!(
+        String::from_utf8_lossy(&gc.stdout).contains("'ws'"),
+        "{gc:?}"
+    );
+
+    let dropped = run(&["drop", "ws"]);
+    assert!(dropped.status.success(), "{dropped:?}");
+    assert!(!State::load().unwrap().workspaces.contains_key("ws"));
+    assert_eq!(std::fs::read_to_string(moved.join("a.txt")).unwrap(), "a\n");
+    for store in ["ancestors", "checkpoints"] {
+        assert!(
+            !home.path().join(store).join("ws").exists(),
+            "{store}/ws left behind"
+        );
+    }
+    assert!(!forkspace::changes::manifest::manifest_path("ws").exists());
+    let again = run(&["new", "ws", "--from", project.to_str().unwrap(), "--copy"]);
+    assert!(again.status.success(), "{again:?}");
+}

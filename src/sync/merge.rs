@@ -30,8 +30,12 @@ pub fn merge_workspace(workspace: &Workspace) -> Result<MergeResult> {
             apply_without_journal(&plan)?;
         } else {
             let journal = execute(&plan)?;
+            let held = journal::held(&journal)?;
             journal::finish_undo(&journal)?;
             journal::remove(&journal)?;
+            if !held.is_empty() {
+                return Err(held_error(&held));
+            }
         }
     }
     Ok(MergeResult {
@@ -56,7 +60,18 @@ pub fn execute(plan: &MergePlan) -> Result<PathBuf> {
         plan.changes.clone(),
         plan.fork_time_ns,
         plan.merged_steps.clone(),
+        Some(plan.guard.clone()),
     )
+}
+
+/// The error for a merge that left `held` paths alone because the base changed them while
+/// it ran.
+pub fn held_error(held: &[PathBuf]) -> ForkspaceError {
+    ForkspaceError::ChangedDuring {
+        operation: "merge".to_string(),
+        paths: crate::sync::display_paths(held),
+        remedy: "they changed while the merge ran (in the base, or in the workspace after it was read), so the workspace's versions were not applied there; the workspace was kept; review them and merge again".to_string(),
+    }
 }
 
 /// Finish the interrupted merge journal of `workspace` and return its path.
@@ -85,22 +100,36 @@ pub fn resume(workspace: &Workspace) -> Result<PathBuf> {
 /// Apply `plan` step by step without recording a journal (workspaces without a fork manifest).
 fn apply_without_journal(plan: &MergePlan) -> Result {
     for (index, change) in plan.changes.iter().enumerate() {
-        journal::apply_change(&plan.source, &plan.target, change, index, "merge", None)?;
+        journal::apply_change(
+            &plan.source,
+            &plan.target,
+            change,
+            index,
+            "merge",
+            None,
+            None,
+        )?;
     }
     Ok(())
 }
 
-/// Concatenated unified diffs for `changes`, each ending in a newline.
-pub fn generate_patch(workspace: &Workspace, changes: &[FileChange]) -> Result<String> {
-    let mut patch = String::new();
-    for change in changes {
-        let diff = changes::generate_unified_diff(workspace, change);
-        patch.push_str(&diff);
-        if !diff.ends_with('\n') {
-            patch.push('\n');
+/// The Git patch that carries `changes` (new versions under `source`) into the base, or
+/// [`ForkspaceError::PatchIncomplete`] naming every change it cannot carry. Never a partial
+/// patch.
+pub fn generate_patch(
+    workspace: &Workspace,
+    source: &Path,
+    changes: &[FileChange],
+) -> Result<Vec<u8>> {
+    changes::patch::git_patch(workspace, source, changes).map_err(|omitted| {
+        ForkspaceError::PatchIncomplete {
+            workspace: workspace.name.clone(),
+            omitted: omitted
+                .into_iter()
+                .map(|omission| format!("{} ({})", omission.path.display(), omission.reason))
+                .collect(),
         }
-    }
-    Ok(patch)
+    })
 }
 
 /// Whether the workspace moved its Git `HEAD`, i.e. made commits a file-level merge would flatten.

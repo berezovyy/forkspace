@@ -42,6 +42,34 @@ pub fn file(workspace: &Workspace, relative: &Path) -> Option<PathBuf> {
         .then_some(path)
 }
 
+/// The fork-time version of `relative` in a snapshot workspace's fork-time copy, of any kind
+/// (file, symlink or directory), if the copy holds it. Unlike the manifest, the copy is taken
+/// before `new` returns, so it holds fork-time content even for files written before the
+/// background manifest walk reached them. A sealed overlay's is its frozen lower layer; a live
+/// overlay has none.
+pub fn entry(workspace: &Workspace, relative: &Path) -> Option<PathBuf> {
+    let path = match &workspace.backend_state {
+        BackendState::Overlay(layers) if layers.lower.is_some() => {
+            workspace.ancestor_file(relative)
+        }
+        BackendState::Overlay(_) => return None,
+        BackendState::MacClone { .. } | BackendState::CowDir { .. } => {
+            dir(&workspace.name).join(relative)
+        }
+    };
+    fs::symlink_metadata(&path).is_ok().then_some(path)
+}
+
+/// Whether `workspace` has a fork-time copy for [`entry`] to look paths up in.
+pub fn has_copy(workspace: &Workspace) -> bool {
+    match &workspace.backend_state {
+        BackendState::Overlay(layers) => layers.lower.is_some(),
+        BackendState::MacClone { .. } | BackendState::CowDir { .. } => {
+            dir(&workspace.name).is_dir()
+        }
+    }
+}
+
 /// Where the fork-time copy of snapshot workspace `name` lives.
 pub fn dir(name: &str) -> PathBuf {
     paths::ancestor_root().join(name)
@@ -50,6 +78,13 @@ pub fn dir(name: &str) -> PathBuf {
 /// Record `from` (the fresh view, or the base after a pull) as the fork-time version of
 /// snapshot workspace `name`, replacing any earlier copy.
 pub fn record(name: &str, from: &Path) -> Result {
+    let staging = stage(name, from)?;
+    install(name, &staging)
+}
+
+/// Copy `from` as the next fork-time version of snapshot workspace `name` into a staging
+/// directory, returned for [`install`]; the current copy stays until then.
+pub fn stage(name: &str, from: &Path) -> Result<PathBuf> {
     let root = paths::ancestor_root();
     ensure_private_dir(&root)?;
     crate::disk::exclude_from_backups(&root);
@@ -62,9 +97,14 @@ pub fn record(name: &str, from: &Path) -> Result {
             return Err(error);
         }
     }
+    Ok(staging)
+}
+
+/// Make the copy [`stage`] made the fork-time version of `name`, replacing any earlier one.
+pub fn install(name: &str, staging: &Path) -> Result {
     let destination = dir(name);
     remove(name)?;
-    fs::rename(&staging, &destination)
+    fs::rename(staging, &destination)
         .io_context(|| format!("install fork-time copy {}", destination.display()))
 }
 

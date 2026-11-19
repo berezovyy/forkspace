@@ -25,10 +25,27 @@ const WORKER_FORK_NS: &str = "FORKSPACE_INTERNAL_MANIFEST_FORK_NS";
 #[cfg(target_os = "macos")]
 const WORKER_EXE: &str = "FORKSPACE_INTERNAL_MANIFEST_EXE";
 
-/// Start a detached process that builds workspace `name`'s manifest from `view`, recovering
-/// entries deleted before the walk from `base` (see [`super::build_after_fork`]).
+/// Whether this process can start a background builder: on macOS, unless it is one.
+pub(crate) fn can_spawn() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var_os(WORKER_FLAG).is_none()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+/// Start a detached process that builds the manifest of workspace `name` as forked at
+/// `fork_time_ns` (see [`super::stage`]), and return it so its liveness can be recorded.
 #[cfg(target_os = "macos")]
-pub fn spawn(name: String, view: PathBuf, base: PathBuf, fork_time_ns: u128) -> Result {
+pub fn spawn(
+    name: String,
+    view: PathBuf,
+    base: PathBuf,
+    fork_time_ns: u128,
+) -> Result<super::Builder> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
 
@@ -68,10 +85,16 @@ pub fn spawn(name: String, view: PathBuf, base: PathBuf, fork_time_ns: u128) -> 
             Ok(())
         });
     }
-    command
+    let mut child = command
         .spawn()
         .io_context(|| "start background manifest builder".to_string())?;
-    Ok(())
+    let builder = super::Builder::of(child.id());
+    // Reap it if it ends while this command still runs, so a crashed builder is not taken for
+    // a live one (a zombie) by this process's later checks.
+    let _ = std::thread::Builder::new()
+        .name("manifest-builder-reaper".to_string())
+        .spawn(move || child.wait());
+    Ok(builder)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -80,7 +103,7 @@ pub fn spawn(
     _view: std::path::PathBuf,
     _base: std::path::PathBuf,
     _fork_time_ns: u128,
-) -> Result {
+) -> Result<super::Builder> {
     Err(ForkspaceError::CapabilityUnsupported {
         diagnosis: "background clone manifests are macOS-only".to_string(),
         remedy: "use the selected Linux backend".to_string(),
@@ -127,40 +150,47 @@ fn job_from_env() -> Result<(String, PathBuf, PathBuf, u128)> {
 }
 
 /// Build the manifest and record the outcome. Failures are recorded as `Degraded` rather
-/// than reported, since nobody is waiting on this process.
+/// than reported, since nobody is waiting on this process; a command that needs the manifest
+/// tries again (see [`super::settle`]). The workspace is recorded before its builder starts;
+/// a builder whose workspace is gone, belongs to another fork of that name, or no longer
+/// waits for a manifest has nothing to do.
 #[cfg(target_os = "macos")]
 fn build_in_background(
     name: &str,
-    view: &std::path::Path,
-    base: &std::path::Path,
+    _view: &std::path::Path,
+    _base: &std::path::Path,
     fork_time_ns: u128,
 ) {
-    if !wait_for_workspace(name) {
-        return;
-    }
-    let status = if super::build_after_fork(name, view, base, fork_time_ns).is_ok() {
-        super::ManifestStatus::Ready
-    } else {
-        super::ManifestStatus::Degraded
-    };
-    // The workspace was dropped while we were building: discard the orphaned manifest.
-    if !super::mark(name, status).unwrap_or(false) {
-        let _ = super::remove(name);
-    }
-}
-
-/// The forking process commits the workspace record only after spawning us, so poll for it
-/// (up to about five seconds) before building anything.
-#[cfg(target_os = "macos")]
-fn wait_for_workspace(name: &str) -> bool {
     use crate::state::State;
 
-    for _ in 0..500 {
-        match State::peek() {
-            Ok(state) if state.workspaces.contains_key(name) => break,
-            Ok(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
-            Err(_) => return false,
+    let expected = |workspace: &crate::workspace::Workspace| {
+        workspace.fork_time_ns == fork_time_ns
+            && workspace.manifest_status == super::ManifestStatus::Building
+    };
+    let Some(workspace) = State::peek().ok().and_then(|state| {
+        state
+            .workspaces
+            .get(name)
+            .filter(|ws| expected(ws))
+            .cloned()
+    }) else {
+        return;
+    };
+    match super::stage(&workspace) {
+        Ok(staged) => {
+            let temporary = staged.temporary.clone();
+            if State::with_state(|state| super::install(state, staged)).is_err() {
+                let _ = std::fs::remove_file(temporary);
+            }
+        }
+        Err(_) => {
+            let _ = State::with_state(|state| {
+                if let Some(workspace) = state.workspaces.get_mut(name).filter(|ws| expected(ws)) {
+                    workspace.manifest_status = super::ManifestStatus::Degraded;
+                    workspace.manifest_builder = None;
+                }
+                Ok(())
+            });
         }
     }
-    State::peek().is_ok_and(|state| state.workspaces.contains_key(name))
 }

@@ -58,6 +58,12 @@ pub enum ForkspaceError {
     #[error("merge conflict: base changed since fork for {paths:?}; review the paths or rerun with --overwrite-base")]
     MergeConflict { paths: Vec<String> },
 
+    #[error("cannot export a complete patch of '{workspace}', so none was printed: {}; apply these changes with `forkspace merge {workspace}` instead", omitted.join("; "))]
+    PatchIncomplete {
+        workspace: String,
+        omitted: Vec<String>,
+    },
+
     #[error("pull conflict: base and workspace both changed {paths:?}; review the paths or rerun with --theirs")]
     PullConflict { paths: Vec<String> },
 
@@ -71,6 +77,15 @@ pub enum ForkspaceError {
     ConflictMarkers {
         workspace: String,
         paths: Vec<String>,
+    },
+
+    /// A merge or pull finished, but left these paths as they were because they changed while
+    /// it ran.
+    #[error("{operation} left {paths:?} as they are: {remedy}")]
+    ChangedDuring {
+        operation: String,
+        paths: Vec<String>,
+        remedy: String,
     },
 
     // Half-applied operations that must be resumed first.
@@ -169,7 +184,9 @@ impl ForkspaceError {
             | Self::BaseMismatch { .. }
             | Self::MergeConflict { .. }
             | Self::MergeOverlap { .. }
+            | Self::PatchIncomplete { .. }
             | Self::ConflictMarkers { .. }
+            | Self::ChangedDuring { .. }
             | Self::PullConflict { .. } => 5,
             Self::CapabilityUnsupported { .. } => 6,
             Self::BackendUnavailable { .. } | Self::MountFailed(_) => 7,

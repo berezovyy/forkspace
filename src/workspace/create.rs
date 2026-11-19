@@ -9,6 +9,7 @@ use crate::backend::{
     pending_create_path, select_backend, select_backend_for_create, CreateReq, DestroyMode,
     OverlayState, WorkspaceBackend,
 };
+use crate::changes::manifest::{Builder, ManifestStatus};
 use crate::error::{ForkspaceError, Result};
 use crate::process::watch;
 use crate::state::{PendingCreate, State};
@@ -100,12 +101,27 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         })?;
         return Err(error);
     }
-    trace::time("state", || {
+    // The manifest builder starts only once the workspace is recorded, under the same lock, so
+    // it never waits for the record (STATE-02); its process is recorded so a builder that dies
+    // is restarted. Without a builder the manifest is built here instead.
+    let in_background = workspace.manifest_status == ManifestStatus::Building;
+    let build_here = trace::time("state", || {
         State::with_state(|state| {
             clear_intent(state, name);
-            state.add_workspace(workspace.clone())
+            state.add_workspace(workspace.clone())?;
+            if in_background && crate::changes::manifest::start_background(state, name).is_err() {
+                state.require_workspace_mut(name)?.manifest_builder =
+                    Some(Builder::of(std::process::id()));
+                return Ok(true);
+            }
+            Ok(false)
         })
     })?;
+    if build_here {
+        if let Err(error) = crate::changes::manifest::build_here(name) {
+            eprintln!("warning: could not record the fork manifest of '{name}' ({error}); merge and pull will try again");
+        }
+    }
     Ok(workspace)
 }
 
@@ -242,6 +258,12 @@ fn validate_name(name: &str) -> Result {
         return Err(ForkspaceError::InvalidArgument(
             "invalid workspace name; use 1-255 bytes without '/', NUL, '.' or '..'".to_string(),
         ));
+    }
+    // An overlay workspace lives at `FORKSPACE_HOME/<name>`, beside the stores (SEC-02).
+    if crate::paths::is_reserved_name(name) {
+        return Err(ForkspaceError::InvalidArgument(format!(
+            "workspace name '{name}' is reserved: forkspace uses it (or any name starting with '.') for its own files"
+        )));
     }
     Ok(())
 }

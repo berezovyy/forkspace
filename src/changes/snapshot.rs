@@ -153,11 +153,14 @@ impl CloneScan<'_> {
                 });
             }
             let row = self.row(relative);
-            // Directories are reported only when they replace a non-directory entry.
+            // Directories are reported only when they replace a non-directory entry. A dirty row
+            // was recorded after the entry changed, so its kind may already be the new one: the
+            // fork-time copy tells what the path was at fork.
             let reportable = !is_dir
-                || row
-                    .as_ref()
-                    .is_some_and(|row| row.kind != ManifestKind::Dir);
+                || row.as_ref().is_some_and(|row| {
+                    row.kind != ManifestKind::Dir
+                        || (row.dirty && self.fork_time_non_directory(relative))
+                });
             let change = (reportable && self.changed(path, metadata, row.as_ref()))
                 .then(|| self.change(relative.to_path_buf(), Some(path), row.as_ref()));
             Ok(Step::Descend(Some(Seen::Visible(change))))
@@ -188,6 +191,12 @@ impl CloneScan<'_> {
             seen,
             pruned,
         })
+    }
+
+    /// Whether the fork-time copy holds `relative` as something other than a directory.
+    fn fork_time_non_directory(&self, relative: &Path) -> bool {
+        crate::sync::ancestor::entry(self.workspace, relative)
+            .is_some_and(|copy| fs::symlink_metadata(copy).is_ok_and(|metadata| !metadata.is_dir()))
     }
 
     fn changed(&self, path: &Path, metadata: &Entry, row: Option<&ManifestRow>) -> bool {
@@ -286,7 +295,9 @@ impl CloneScan<'_> {
         };
         let old_content = match row {
             Some(row) if row.dirty => OldContent::AncestorUnknown,
-            Some(row) if base_matches(&base_path, row) => OldContent::Available,
+            Some(row) if base_matches(&base_path, row, self.workspace.fork_time_ns) => {
+                OldContent::Available
+            }
             Some(_) => OldContent::BaseAdvanced,
             None if kind == ChangeKind::Added => OldContent::Available,
             None => OldContent::AncestorUnknown,
@@ -311,27 +322,42 @@ impl CloneScan<'_> {
         if !current.is_file() {
             return change;
         }
-        match (kind, old_content) {
+        let old_path = match old_content {
+            OldContent::Available => Some(base_path),
+            OldContent::BaseAdvanced | OldContent::AncestorUnknown => {
+                crate::sync::ancestor::entry(self.workspace, &change.path)
+                    .filter(|path| path.is_file())
+            }
+        };
+        match (kind, old_path) {
             (ChangeKind::Added, _) => FileChange {
-                additions: Some(count_lines(current)),
+                additions: count_lines(current),
                 ..change
             },
-            (ChangeKind::Modified, OldContent::Available) => {
-                let (additions, deletions) = compute_line_diff(&base_path, current);
-                FileChange {
+            (ChangeKind::Modified, Some(old_path)) => match compute_line_diff(&old_path, current) {
+                Some((additions, deletions)) => FileChange {
                     additions: Some(additions),
                     deletions: Some(deletions),
                     ..change
-                }
-            }
+                },
+                None => change,
+            },
             _ => change,
         }
     }
 }
 
 /// Whether the base entry still matches the fork-time manifest row, i.e. the base still
-/// holds the ancestor content.
-fn base_matches(base_path: &Path, row: &ManifestRow) -> bool {
-    fs::symlink_metadata(base_path)
-        .is_ok_and(|metadata| row.matches(base_path, &crate::util::walk::Entry::of(&metadata)))
+/// holds the ancestor content. A directory matches on kind and mode only, as in
+/// `sync::plan::matches_ancestor`: a mac-clone manifest records the clone's directories, whose
+/// mtimes are fresh, and the entries inside are compared on their own.
+fn base_matches(base_path: &Path, row: &ManifestRow, fork_time_ns: u128) -> bool {
+    fs::symlink_metadata(base_path).is_ok_and(|metadata| {
+        let entry = crate::util::walk::Entry::of(&metadata);
+        if row.kind == ManifestKind::Dir {
+            return metadata.is_dir() && (row.mode == 0 || entry.mode == row.mode);
+        }
+        // A rewrite can keep size, mtime and mode; its ctime still moves.
+        row.matches(base_path, &entry) && !written_after_fork(&entry, fork_time_ns)
+    })
 }

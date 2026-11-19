@@ -98,6 +98,10 @@ impl Default for OverlayBackend {
 
 /// Removes the overlay-incompatible files a project lists in `.forkspaceclean` (one view-relative
 /// path per line; `#` comments) from a freshly mounted view.
+///
+/// The file comes from the project, which may be untrusted, so a line names a file only inside
+/// the view (SEC-01): an absolute line, a `..` component, or a symlink among its parent
+/// directories is skipped, and the entry itself is removed without following a symlink.
 fn apply_forkspaceclean(view: &Path) {
     let Ok(file) = fs::File::open(view.join(".forkspaceclean")) else {
         return;
@@ -111,14 +115,45 @@ fn apply_forkspaceclean(view: &Path) {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let target = view.join(line);
-        if target.exists() && fs::remove_file(target).is_ok() {
+        let Some(target) = clean_target(view, Path::new(line)) else {
+            eprintln!("forkspaceclean: skipped '{line}': not a path inside the workspace");
+            continue;
+        };
+        if fs::symlink_metadata(&target).is_ok_and(|metadata| !metadata.is_dir())
+            && fs::remove_file(target).is_ok()
+        {
             cleaned += 1;
         }
     }
     if cleaned > 0 {
         eprintln!("forkspaceclean: removed {cleaned} overlay-incompatible file(s)");
     }
+}
+
+/// Where `line` points inside `view`, if it is relative, has no `..`, and none of its parent
+/// directories is a symlink (which could lead out of the view).
+fn clean_target(view: &Path, line: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+
+    let mut target = view.to_path_buf();
+    let mut components = line
+        .components()
+        .filter(|component| *component != Component::CurDir)
+        .peekable();
+    components.peek()?;
+    while let Some(component) = components.next() {
+        let Component::Normal(name) = component else {
+            return None;
+        };
+        target.push(name);
+        let is_parent = components.peek().is_some();
+        if is_parent
+            && fs::symlink_metadata(&target).is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return None;
+        }
+    }
+    Some(target)
 }
 
 /// fuse-overlayfs reads any `.wh.<name>` entry in the lower layer as a whiteout, so a base
@@ -281,6 +316,16 @@ impl WorkspaceBackend for OverlayBackend {
             tmpfs::remove_layers(&state.upper)?;
         }
         let root = paths::overlay_root(&ws.name);
+        // A record made before names were checked can name a store directory; deleting its
+        // root would delete every workspace's data in that store (SEC-02).
+        if paths::is_store_path(&root) {
+            eprintln!(
+                "warning: not removing {}: the name '{}' is reserved for forkspace's own files; delete the workspace's upper/, work/ and merged/ there by hand",
+                root.display(),
+                ws.name
+            );
+            return Ok(());
+        }
         match fs::remove_dir_all(&root) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             result => result.io_context(|| {
@@ -392,4 +437,71 @@ fn remount(ws: &Workspace, state: &OverlayState) -> Result {
     mount_overlay(lower, &state.upper, &state.work, &state.merged)?;
     eprintln!("note: remounted workspace '{}'", ws.name);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::apply_forkspaceclean;
+
+    #[test]
+    fn forkspaceclean_only_removes_files_inside_the_view() {
+        // SEC-01: an absolute or `..` line, or one through a symlinked directory, deleted files
+        // outside the workspace at fork time.
+        let scratch = tempfile::tempdir().unwrap();
+        let view = scratch.path().join("view");
+        let outside = scratch.path().join("outside");
+        fs::create_dir_all(view.join("build")).unwrap();
+        fs::create_dir_all(view.join("real")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        for name in [
+            "absolute",
+            "dotdot",
+            "via-link",
+            "via-nested-link",
+            "via-dot-link",
+        ] {
+            fs::write(outside.join(name), b"victim\n").unwrap();
+        }
+        fs::write(view.join("build/cache.bin"), b"incompatible\n").unwrap();
+        fs::write(view.join("top.sock"), b"incompatible\n").unwrap();
+        std::os::unix::fs::symlink(&outside, view.join("escape")).unwrap();
+        std::os::unix::fs::symlink(&outside, view.join("real/escape")).unwrap();
+        std::os::unix::fs::symlink("../outside", view.join("rel")).unwrap();
+        // A symlink entry itself is removed as a link, never followed.
+        std::os::unix::fs::symlink(outside.join("absolute"), view.join("pointer")).unwrap();
+        fs::write(
+            view.join(".forkspaceclean"),
+            format!(
+                "# comment\n{}\n../outside/dotdot\nbuild/../../outside/dotdot\nescape/via-link\n\
+                 real/escape/via-nested-link\n./rel/via-dot-link\npointer\nbuild/cache.bin\n./top.sock\n",
+                outside.join("absolute").display()
+            ),
+        )
+        .unwrap();
+
+        apply_forkspaceclean(&view);
+
+        for name in [
+            "absolute",
+            "dotdot",
+            "via-link",
+            "via-nested-link",
+            "via-dot-link",
+        ] {
+            assert_eq!(
+                fs::read(outside.join(name)).unwrap(),
+                b"victim\n",
+                "{name} outside the view was deleted"
+            );
+        }
+        assert!(!view.join("build/cache.bin").exists());
+        assert!(!view.join("top.sock").exists());
+        assert!(fs::symlink_metadata(view.join("pointer")).is_err());
+        assert!(
+            view.join("escape").is_dir(),
+            "a directory symlink is not a file to clean"
+        );
+    }
 }

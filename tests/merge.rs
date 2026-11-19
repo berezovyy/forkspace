@@ -224,7 +224,8 @@ fn test_merge_patch_output() {
     fs::write(ws.upper_path().unwrap().join("new.txt"), "line1\nline2\n").unwrap();
 
     let changes = changes::collect_changes(&ws).unwrap();
-    let patch = merge::generate_patch(&ws, &changes).unwrap();
+    let patch = merge::generate_patch(&ws, ws.upper_path().unwrap(), &changes).unwrap();
+    let patch = String::from_utf8(patch).unwrap();
     assert!(patch.contains("--- /dev/null"));
     assert!(patch.contains("+++ b/new.txt"));
     assert!(patch.contains("+line1"));

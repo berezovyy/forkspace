@@ -155,11 +155,17 @@ impl State {
         write_atomic(&paths::state_file(), json.as_bytes())
     }
 
-    /// Run `f` while holding the exclusive state lock.
+    /// Run `f` while holding the exclusive state lock. A second lock from the thread that holds
+    /// it is refused: `flock` would wait on this process itself for ever.
     fn with_lock<F, R>(f: F) -> Result<R>
     where
         F: FnOnce() -> Result<R>,
     {
+        if LOCK_HELD.get() {
+            return Err(ForkspaceError::LockFailed(
+                "the state lock is already held by this command".to_string(),
+            ));
+        }
         let lock_path = paths::state_lock();
         ensure_private_dir(&paths::forkspace_home())?;
         let lock_file = fs::OpenOptions::new()
@@ -176,6 +182,8 @@ impl State {
             )));
         }
         // The lock is released when `lock_file` drops.
+        LOCK_HELD.set(true);
+        let _held = Held;
         f()
     }
 
@@ -299,6 +307,20 @@ impl State {
     /// Order `names` so children come before their parents.
     pub fn sorted_deepest_first(&self, names: &mut [String]) {
         names.sort_by_key(|name| std::cmp::Reverse(self.depth_of(name)));
+    }
+}
+
+thread_local! {
+    /// Whether this thread holds the state lock (see `State::with_lock`).
+    static LOCK_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Clears [`LOCK_HELD`] when the lock is released, also on a panic.
+struct Held;
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        LOCK_HELD.set(false);
     }
 }
 

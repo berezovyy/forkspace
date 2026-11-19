@@ -178,8 +178,10 @@ pub(crate) fn reconcile(
         }
         let ours = view.join(path);
         let theirs = workspace.base.join(path);
-        let merged = ancestor::file(workspace, path)
-            .and_then(|ancestor| merge_text(&ours, &ancestor, &theirs, policy.favor));
+        let ancestor = ancestor::file(workspace, path);
+        let merged = ancestor
+            .as_deref()
+            .and_then(|ancestor| merge_text(&ours, ancestor, &theirs, policy.favor));
         let bytes = match merged {
             Some(Merged::Clean(bytes)) => {
                 result.auto_merged.push(path.clone());
@@ -204,7 +206,11 @@ pub(crate) fn reconcile(
             continue;
         };
         let expected = Some(expected);
-        stage(&staging.join(path), &bytes, &ours)?;
+        stage(
+            &staging.join(path),
+            &bytes,
+            merged_mode(&ours, ancestor.as_deref(), &theirs),
+        )?;
         result.steps.push(MergedStep {
             path: path.clone(),
             expected,
@@ -213,14 +219,30 @@ pub(crate) fn reconcile(
     Ok(result)
 }
 
-/// Write a merge result with the workspace file's permissions.
-fn stage(staged: &Path, bytes: &[u8], ours: &Path) -> Result {
+/// The permissions of a merge result: the project's when only the project changed them since
+/// the fork, else the workspace's.
+fn merged_mode(ours: &Path, ancestor: Option<&Path>, theirs: &Path) -> Option<u32> {
+    let mode = |path: &Path| {
+        fs::metadata(path)
+            .ok()
+            .map(|metadata| metadata.mode() & 0o7777)
+    };
+    let ours = mode(ours);
+    if ancestor.and_then(mode) == ours {
+        mode(theirs).or(ours)
+    } else {
+        ours
+    }
+}
+
+/// Write a merge result with the given permissions.
+fn stage(staged: &Path, bytes: &[u8], mode: Option<u32>) -> Result {
     if let Some(parent) = staged.parent() {
         fs::create_dir_all(parent).io_context(|| format!("create {}", parent.display()))?;
     }
     fs::write(staged, bytes).io_context(|| format!("stage merge {}", staged.display()))?;
-    if let Ok(metadata) = fs::metadata(ours) {
-        fs::set_permissions(staged, fs::Permissions::from_mode(metadata.mode() & 0o7777))
+    if let Some(mode) = mode {
+        fs::set_permissions(staged, fs::Permissions::from_mode(mode))
             .io_context(|| format!("set permissions on {}", staged.display()))?;
     }
     Ok(())

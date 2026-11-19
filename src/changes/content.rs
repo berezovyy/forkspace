@@ -23,13 +23,28 @@ pub fn is_binary(path: &Path) -> bool {
     buf[..n].contains(&0)
 }
 
-/// Number of lines in a text file; unreadable or non-UTF-8 files count as empty.
-pub(super) fn count_lines(path: &Path) -> usize {
-    fs::read_to_string(path).unwrap_or_default().lines().count()
+/// Text files larger than this are not diffed line by line: a line diff holds both versions
+/// in memory several times over (DIFF-11). `diff` shows no line counts for them, `diff --full`
+/// a note, and `merge --patch` refuses them.
+pub const MAX_TEXT_DIFF_BYTES: u64 = 32 << 20;
+
+/// Whether `path` is small enough to diff line by line (see [`MAX_TEXT_DIFF_BYTES`]).
+pub(crate) fn within_text_limit(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|metadata| metadata.len() <= MAX_TEXT_DIFF_BYTES)
 }
 
-/// `(additions, deletions)` of a line diff from `old` to `new`.
-pub(super) fn compute_line_diff(old: &Path, new: &Path) -> (usize, usize) {
+/// Number of lines in a text file; unreadable or non-UTF-8 files count as empty. `None` for
+/// a file over [`MAX_TEXT_DIFF_BYTES`].
+pub(super) fn count_lines(path: &Path) -> Option<usize> {
+    within_text_limit(path).then(|| fs::read_to_string(path).unwrap_or_default().lines().count())
+}
+
+/// `(additions, deletions)` of a line diff from `old` to `new`; `None` when either is over
+/// [`MAX_TEXT_DIFF_BYTES`].
+pub(super) fn compute_line_diff(old: &Path, new: &Path) -> Option<(usize, usize)> {
+    if !within_text_limit(old) || !within_text_limit(new) {
+        return None;
+    }
     let old_content = fs::read_to_string(old).unwrap_or_default();
     let new_content = fs::read_to_string(new).unwrap_or_default();
 
@@ -42,12 +57,12 @@ pub(super) fn compute_line_diff(old: &Path, new: &Path) -> (usize, usize) {
             ChangeTag::Equal => {}
         }
     }
-    (additions, deletions)
+    Some((additions, deletions))
 }
 
 /// Whether two entries differ in type, symlink target, size, permissions, or bytes.
 /// Any error reading either side counts as a difference.
-pub(super) fn files_differ(a: &Path, b: &Path) -> bool {
+pub(crate) fn files_differ(a: &Path, b: &Path) -> bool {
     let (Ok(meta_a), Ok(meta_b)) = (fs::symlink_metadata(a), fs::symlink_metadata(b)) else {
         return true;
     };
@@ -94,7 +109,7 @@ fn added_file(rel_path: PathBuf, upper_path: &Path, need_line_counts: bool) -> F
         };
     }
     FileChange {
-        additions: Some(count_lines(upper_path)),
+        additions: count_lines(upper_path),
         ..change
     }
 }
@@ -120,7 +135,9 @@ fn modified_file(
 
     // An empty line diff can still hide a change (a chmod, or bytes that are not valid
     // UTF-8 and so read as empty), so confirm with a full comparison before dismissing it.
-    let (additions, deletions) = compute_line_diff(base_path, upper_path);
+    let Some((additions, deletions)) = compute_line_diff(base_path, upper_path) else {
+        return files_differ(base_path, upper_path).then_some(change);
+    };
     if additions == 0 && deletions == 0 && !files_differ(base_path, upper_path) {
         return None;
     }

@@ -46,3 +46,27 @@ pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<PathBuf
         .collect::<Result<Vec<_>, _>>()?;
     Ok(PathBuf::from(OsString::from_vec(bytes)))
 }
+
+/// The same encoding for a list of paths.
+pub mod vec {
+    use std::path::PathBuf;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(transparent)]
+    struct Encoded(#[serde(with = "crate::changes::path_serde")] PathBuf);
+
+    pub fn serialize<S: Serializer>(paths: &[PathBuf], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(paths.iter().map(|path| Encoded(path.clone())))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<PathBuf>, D::Error> {
+        Ok(Vec::<Encoded>::deserialize(deserializer)?
+            .into_iter()
+            .map(|encoded| encoded.0)
+            .collect())
+    }
+}

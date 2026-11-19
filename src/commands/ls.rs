@@ -100,7 +100,7 @@ fn json_entry(workspace: &Workspace, processes: usize) -> serde_json::Value {
         "degraded": workspace.degraded,
         "probe_reason": workspace.probe_reason,
         "base_missing": !workspace.base.is_dir(),
-        "view_missing": !workspace.view_path.is_dir(),
+        "view_missing": view_missing(workspace),
         "size_bytes": disk::workspace_bytes(workspace).ok(),
         "processes": processes,
         "memory_bytes": crate::process::systemd::memory_current(&workspace.name),
@@ -114,17 +114,37 @@ fn table_row(
     processes: usize,
     size: Option<u64>,
 ) -> Result<Row> {
-    let count =
-        select_backend(Some(workspace.backend_kind))?.change_count(workspace, include_ignored)?;
+    // A folder deleted or moved by hand has nothing to count; one row says so, and the rest of
+    // the table still shows (STATE-12).
+    let count = if view_missing(workspace) {
+        "view missing".to_string()
+    } else {
+        match select_backend(Some(workspace.backend_kind))?.change_count(workspace, include_ignored)
+        {
+            Ok(count) => describe_count(count),
+            Err(error) => {
+                eprintln!(
+                    "warning: cannot count the changes of '{}': {error}",
+                    workspace.name
+                );
+                "?".to_string()
+            }
+        }
+    };
     Ok([
         workspace.name.clone(),
         origin(workspace),
         workspace.branch.clone().unwrap_or_else(|| "-".to_string()),
         describe_backend(workspace),
-        describe_count(count),
+        count,
         size.map_or_else(|| "?".to_string(), disk::human),
         describe_process(workspace, processes),
     ])
+}
+
+/// Whether the workspace's folder is gone (deleted or moved by hand).
+fn view_missing(workspace: &Workspace) -> bool {
+    !workspace.view_path.is_dir()
 }
 
 /// The parent workspace's name for stacked workspaces, otherwise the base directory.

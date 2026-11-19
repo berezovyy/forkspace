@@ -52,6 +52,9 @@ pub fn list(args: CheckpointsArgs) -> Result {
 
 pub fn restore(args: RestoreArgs) -> Result {
     let name = args.name;
+    if !args.resume {
+        crate::changes::manifest::settle_now(&name, true)?;
+    }
     State::with_state(|state| {
         let workspace = state.require_workspace(&name)?.clone();
         guard::require_live_view(state, &workspace)?;

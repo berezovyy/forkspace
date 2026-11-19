@@ -329,6 +329,12 @@ fn an_interrupted_auto_merge_resumes_from_its_journal() {
             path: PathBuf::from("app.txt"),
             expected: Fingerprint::of(&target),
         }],
+        guard: None,
+        held: Vec::new(),
+        installed: Vec::new(),
+        base_delta: Vec::new(),
+        earlier: Vec::new(),
+        deferred: Vec::new(),
     };
     journal::save(&path, &journaled).unwrap();
 

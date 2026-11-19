@@ -82,6 +82,7 @@ impl From<LegacyWorkspace> for Workspace {
             }),
             manifest_status: ManifestStatus::Absent,
             manifest_generation: 0,
+            manifest_builder: None,
             last_pull: None,
             git_head_at_fork: None,
             unresolved_conflicts: Vec::new(),

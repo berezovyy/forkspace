@@ -4,16 +4,20 @@
 //! snapshots are compared against the fork manifest ([`snapshot`]). Both produce the same
 //! [`FileChange`] list, which [`render`] turns into CLI output.
 
-mod content;
+pub(crate) mod content;
+pub use content::MAX_TEXT_DIFF_BYTES;
 mod cumulative;
 pub mod filter;
 pub mod manifest;
 mod overlay;
+pub mod patch;
 pub(crate) mod path_serde;
 pub mod render;
 mod snapshot;
 
 use std::path::PathBuf;
+
+use crate::workspace::Workspace;
 
 use serde::{Deserialize, Serialize};
 
@@ -59,8 +63,20 @@ pub enum OldContent {
     Available,
     /// The base was modified after the fork, so it no longer shows the ancestor.
     BaseAdvanced,
-    /// The fork-time content was never recorded (manifest pending or entry dirty at fork).
+    /// The fork manifest does not record the fork-time content (manifest pending, or the entry
+    /// was written before the manifest walk reached it).
     AncestorUnknown,
+}
+
+/// Where the version of `change` the workspace started from can be read: the base while it
+/// still holds that version, else the snapshot's fork-time copy. `None` when neither has it.
+pub fn old_version(workspace: &Workspace, change: &FileChange) -> Option<PathBuf> {
+    match change.old_content {
+        OldContent::Available => Some(workspace.ancestor_file(&change.path)),
+        OldContent::BaseAdvanced | OldContent::AncestorUnknown => {
+            crate::sync::ancestor::entry(workspace, &change.path)
+        }
+    }
 }
 
 impl FileChange {

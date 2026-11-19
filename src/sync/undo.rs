@@ -64,7 +64,7 @@ pub struct Identity {
 }
 
 impl Identity {
-    fn of(path: &Path) -> Option<Self> {
+    pub(crate) fn of(path: &Path) -> Option<Self> {
         let metadata = fs::symlink_metadata(path).ok()?;
         Some(Self {
             size: if metadata.is_dir() { 0 } else { metadata.len() },
@@ -151,16 +151,28 @@ pub(crate) fn keep_copy(dir: &Path, relative: &Path, entry: &Path) -> Result {
 }
 
 /// Record what the merge installed and mark it undoable, then drop old undo data.
-pub fn finish(dir: &Path) -> Result {
+///
+/// `installed` holds, by step, what each step left at its path when it ran, so an edit made
+/// after that (during the rest of the merge, or while it was interrupted) counts as a change
+/// since the merge; journals written before it was recorded have it empty, and the paths are
+/// read now. A step that was `held` (left alone because the path changed after planning) and
+/// kept nothing has nothing to undo, and is dropped.
+pub fn finish(dir: &Path, installed: &[Option<Identity>], held: &[PathBuf]) -> Result {
     let mut record = load(dir)?;
-    for step in &mut record.steps {
+    for (index, step) in record.steps.iter_mut().enumerate() {
         step.installed = match step.kind {
             ChangeKind::Deleted => None,
-            ChangeKind::Added | ChangeKind::Modified => {
-                Identity::of(&record.project.join(&step.path))
-            }
+            ChangeKind::Added | ChangeKind::Modified => match installed.get(index) {
+                Some(identity) => *identity,
+                None => Identity::of(&record.project.join(&step.path)),
+            },
         };
     }
+    let kept = dir.join(KEPT);
+    record.steps.retain(|step| {
+        let was_held = held.iter().any(|path| path.starts_with(&step.path));
+        !was_held || fs::symlink_metadata(kept.join(&step.path)).is_ok()
+    });
     record.complete = true;
     save(dir, &record)?;
     prune();
@@ -253,18 +265,33 @@ fn revert(dir: &Path, project: &Path, step: &UndoStep) -> Result<Reverted> {
     let kept = dir.join(KEPT).join(&step.path);
     // Exactly this spelling: after a case-only rename the store keeps the old one.
     let has_kept = exists_exact(&dir.join(KEPT), &step.path);
+    // A parent that is no longer a directory of the project (a symlink put in its place could
+    // point anywhere) changed since the merge: nothing is done through it.
+    if escapes_project(project, &step.path) {
+        return Ok(Reverted::ChangedSince);
+    }
     let present = Identity::of(&current);
     match step.installed {
-        Some(installed) if installed.dir => {
+        Some(installed) if installed.dir && !has_kept => {
             // Directories are containers: their entries are separate steps. One the merge
             // created goes again if it is empty now.
-            if step.kind == ChangeKind::Added && !has_kept {
+            if step.kind == ChangeKind::Added {
                 let _ = fs::remove_dir(&current);
             }
             return Ok(Reverted::Nothing);
         }
+        // The merge put this directory where a file or symlink was (UNDO-02). Its entries'
+        // steps came later and are reverted first, so it is empty unless something was
+        // written into it since.
+        Some(installed) if installed.dir => {
+            if present != Some(installed) || fs::remove_dir(&current).is_err() {
+                return Ok(Reverted::ChangedSince);
+            }
+        }
         Some(installed) if present != Some(installed) => return Ok(Reverted::ChangedSince),
         Some(_) => remove_entry(&current)?,
+        // Put back with its directory, by that directory's own step.
+        None if present.is_some() && !has_kept => return Ok(Reverted::Nothing),
         None if present.is_some() => return Ok(Reverted::ChangedSince),
         None => {}
     }
@@ -279,6 +306,23 @@ fn revert(dir: &Path, project: &Path, step: &UndoStep) -> Result<Reverted> {
         remove_empty_parents(project, &current, created);
     }
     Ok(outcome)
+}
+
+/// Whether a parent of `relative` in `project` exists but is not a real directory.
+fn escapes_project(project: &Path, relative: &Path) -> bool {
+    let mut directory = project.to_path_buf();
+    let Some(parent) = relative.parent() else {
+        return false;
+    };
+    for component in parent.components() {
+        directory.push(component);
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return true,
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 /// Remove the now-empty directories between `entry` and `created` (inclusive).

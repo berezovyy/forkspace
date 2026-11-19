@@ -51,7 +51,8 @@ fn test_full_lifecycle() {
     assert_eq!(modified, 1);
     assert_eq!(deleted, 1);
 
-    let patch = merge::generate_patch(&ws, &changes).unwrap();
+    let patch = merge::generate_patch(&ws, ws.upper_path().unwrap(), &changes).unwrap();
+    let patch = String::from_utf8(patch).unwrap();
     assert!(!patch.is_empty());
     assert!(patch.contains("src/lib.rs"));
     assert!(patch.contains("src/main.rs"));

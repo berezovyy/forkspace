@@ -158,12 +158,12 @@ impl<P: ForkPrimitive> SnapshotBackend<P> {
         Self { primitive }
     }
 
-    /// Records the fork manifest, inline or in the background as the primitive prefers.
+    /// Records the fork manifest inline, or leaves it `building` for a background builder when
+    /// the primitive prefers.
     fn start_manifest(
         &self,
         name: &str,
         view: &Path,
-        base: &Path,
         fork_time_ns: u128,
         entries: Option<Recorded>,
     ) -> Result<ManifestStatus> {
@@ -173,12 +173,7 @@ impl<P: ForkPrimitive> SnapshotBackend<P> {
             return Ok(ManifestStatus::Ready);
         }
         if self.primitive.manifest_in_background() {
-            manifest::spawn(
-                name.to_string(),
-                view.to_path_buf(),
-                base.to_path_buf(),
-                fork_time_ns,
-            )?;
+            // `workspace::create` starts the builder once the workspace is recorded.
             Ok(ManifestStatus::Building)
         } else {
             manifest::build(name, view, fork_time_ns)?;
@@ -243,7 +238,7 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
         })?;
         let fork_time_ns = self.primitive.fork_time_ns(started_ns, &stats);
         let manifest = trace::time("manifest", || {
-            self.start_manifest(&req.name, &destination, &req.base, fork_time_ns, entries)
+            self.start_manifest(&req.name, &destination, fork_time_ns, entries)
         });
 
         let mut summary = self
@@ -274,8 +269,21 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
             ws.fork_time_ns,
             std::process::id()
         ));
-        fs::rename(&ws.view_path, &trash)
-            .io_context(|| format!("move workspace '{}' to trash", ws.name))
+        match fs::rename(&ws.view_path, &trash) {
+            // The folder was deleted or moved by hand: nothing left to trash (STATE-12).
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && fs::symlink_metadata(&ws.view_path).is_err() =>
+            {
+                eprintln!(
+                    "warning: the folder of '{}' was already gone ({}); removing its record",
+                    ws.name,
+                    ws.view_path.display()
+                );
+                Ok(())
+            }
+            result => result.io_context(|| format!("move workspace '{}' to trash", ws.name)),
+        }
     }
 
     fn view_path(&self, ws: &Workspace) -> PathBuf {

@@ -6,6 +6,11 @@ use crate::review::compare;
 use crate::state::State;
 
 pub fn exec(args: CompareArgs) -> Result {
+    for name in &args.names {
+        if let Err(error) = crate::changes::manifest::settle_now(name, false) {
+            eprintln!("warning: {error}");
+        }
+    }
     let state = State::load()?;
     let workspaces = args
         .names
