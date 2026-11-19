@@ -90,7 +90,8 @@ infrastructure layers. Nothing below `commands/` prints user-facing results.
 src/
 ├── main.rs, cli.rs        entry point and clap definitions
 ├── commands/              one thin handler per subcommand: validate args, call the domain, print
-├── workspace/             the Workspace record; create, remove, pre-command guards, private .git
+├── workspace/             the Workspace record; create, remove, pre-command guards, private .git,
+│                          the background Git index refresh after a fork
 ├── state/                 state.json store and flock, migrations, crash-recovery sweeps
 ├── backend/               WorkspaceBackend trait, kind selection, capability probes
 │   ├── overlay/           fuse-overlayfs: mounts, frozen copies, tmpfs layers, whiteouts

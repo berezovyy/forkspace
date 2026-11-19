@@ -2,6 +2,7 @@
 
 mod create;
 mod env;
+pub mod git_index;
 pub mod guard;
 mod private_git;
 pub mod remove;

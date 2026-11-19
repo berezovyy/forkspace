@@ -2,7 +2,8 @@
 """Benchmark forkspace's everyday commands on this host and write the results as JSON.
 
 Every run starts from a fresh FORKSPACE_HOME and a private copy of the corpus, then times:
-`new`, a clean `diff --stat`, `diff` after one edit, `merge --dry-run`, a one-file `merge`,
+`new`, the first `git status` in the new workspace, a clean `diff --stat`, `diff` after one
+edit, `merge --dry-run`, a one-file `merge`,
 `ls` with one and five workspaces, and `drop`. Each command runs with FORKSPACE_TRACE=1 so
 the per-phase timings (preflight, materialize, manifest, scan, plan, apply, ...) are kept too.
 
@@ -377,6 +378,18 @@ def one_run(binary, env, project, home, args, result):
         result["disk"] = disk_after_fork(home, free_before)
     if result is not None:
         result["kind"] = kind
+    if (view / ".git").exists():
+        # What an agent pays first in a new workspace. The fork gave every file a new inode,
+        # so without a refreshed index Git hashes every tracked file again; forkspace
+        # refreshes it in the background right after `new`. The pause stands for an
+        # agent starting up in the workspace.
+        time.sleep(1)
+        started = time.perf_counter()
+        subprocess.run(["git", "-C", str(view), "status", "--porcelain"], env=env,
+                       capture_output=True, check=True)
+        if result is not None:
+            result["samples"].setdefault("first git status (1 s after new)", []).append(
+                (time.perf_counter() - started) * 1000)
 
     timed("diff --stat (clean)", "diff", "ws1", "--stat")
     with open(view / EDIT_FILE, "a") as handle:

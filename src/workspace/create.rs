@@ -122,6 +122,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
             eprintln!("warning: could not record the fork manifest of '{name}' ({error}); merge and pull will try again");
         }
     }
+    super::git_index::start(&workspace);
     Ok(workspace)
 }
 

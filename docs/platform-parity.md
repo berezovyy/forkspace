@@ -51,6 +51,9 @@ overlay layers directly are skipped there; the overlay backend itself is Linux-o
 
 - Forks leave out Git worktrees nested in the project, `.claude/worktrees/` and what
   `.forkspaceexclude` lists (`tests/exclusions.rs`).
+- On the overlay backend, the first `git status` some seconds after `new` still costs one
+  `lstat` per tracked file through FUSE, about 120 ms for 20,000 files, once fuse-overlayfs has
+  let its attribute cache expire; the index itself is refreshed (`tests/index_refresh.rs`).
 - APFS `clonefile` materializes directory metadata, so fork cost grows with the number of
   entries even though file blocks are shared.
 - APFS cloning needs the project and `FORKSPACE_HOME/workspaces` on the same APFS volume;

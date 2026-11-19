@@ -39,6 +39,11 @@ Left-out paths never move between a workspace and its project: `merge` does not 
 into the project, `pull` does not bring them into the workspace, and `diff` does not show
 them.
 
+Right after `new`, the workspace's Git index is refreshed in the background, at low priority,
+so the first `git status` in it does not hash every tracked file again. The refresh does not
+count as a process using the workspace, and `drop` stops it. `FORKSPACE_GIT_REFRESH=0` turns
+it off.
+
 ### `forkspace enter [name] [-- command…]`
 
 Open a shell in the workspace, or run `command` there and exit with its status. Without a
@@ -219,6 +224,7 @@ Read by forkspace:
 | Variable | |
 | :-- | :-- |
 | `FORKSPACE_HOME` | Where workspaces and state live (default `~/.forkspace`, kept owner-only). |
+| `FORKSPACE_GIT_REFRESH=0` | Do not refresh a new workspace's Git index in the background. |
 | `FORKSPACE_TRACE=1` | Print each command's timed phases to stderr, e.g. `forkspace-trace: materialize 41.203ms`. [`scripts/bench.py`](../scripts/bench.py) records them. |
 | `FORKSPACE_SANDBOX=off` | Turn the write sandbox off by default. |
 | `FORKSPACE_NO_SYSTEMD=1` | *Linux.* Do not start commands in a systemd user slice per workspace (no process tracking by slice, no limits). |

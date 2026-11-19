@@ -61,7 +61,11 @@ pub fn find_all(workspaces: &[&Workspace]) -> HashMap<String, Vec<Member>> {
         .iter()
         .map(|workspace| systemd::slice_pids(&workspace.name).into_iter().collect())
         .collect();
-    let excluded = own_lineage();
+    let mut excluded = own_lineage();
+    // A new workspace's background index refresh is forkspace's own, not a user of it.
+    for workspace in workspaces.iter() {
+        excluded.extend(crate::workspace::git_index::pids(&workspace.name));
+    }
     let mut found: HashMap<String, Vec<Member>> = workspaces
         .iter()
         .map(|workspace| (workspace.name.clone(), Vec::new()))
@@ -137,7 +141,11 @@ pub fn counts<'a>(workspaces: impl IntoIterator<Item = &'a Workspace>) -> HashMa
             (workspace.name.clone(), in_slice)
         })
         .collect();
-    let excluded = own_lineage();
+    let mut excluded = own_lineage();
+    // A new workspace's background index refresh is forkspace's own, not a user of it.
+    for workspace in workspaces.iter() {
+        excluded.extend(crate::workspace::git_index::pids(&workspace.name));
+    }
     let pids: Vec<u32> = os::all_pids()
         .into_iter()
         .filter(|pid| !excluded.contains(pid))
