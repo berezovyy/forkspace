@@ -5,6 +5,51 @@ Notable changes to forkspace. Versions follow [Semantic Versioning](https://semv
 fixes. Write the notes for the next release under `## Unreleased`; `scripts/release.sh` turns
 that heading into the version and date, and the section becomes the GitHub release notes.
 
+## Unreleased
+
+Upgrading: the first fork after upgrading may make a new frozen copy of a project that has
+Git worktrees inside it, now that forks leave them out. Workspaces made by 0.2.0 keep working.
+
+- Forks leave out Git worktrees nested inside the project, such as Claude Code's
+  `.claude/worktrees/*`, and everything under `.claude/worktrees/`. A copied nested worktree
+  still pointed at the project's repository, so a commit made in it from inside a workspace
+  moved the project's own branch while `forkspace diff` reported no changes; copying them
+  also made the first fork of such a project copy every agent's checkout. A project can list
+  more paths to leave out in `.forkspaceexclude` (`.gitignore` syntax). Left-out paths
+  never move between a workspace and its project.
+- `new` refreshes the workspace's Git index in the background, so the first `git status` in
+  it no longer hashes every tracked file again (on 20,000 files: 99 → 15 ms with a copy,
+  725 → about 120 ms on the overlay backend). `FORKSPACE_GIT_REFRESH=0` turns it off.
+- `forkspace skill` prints instructions for coding agents that use forkspace.
+- `forkspace hook worktree-create` and `worktree-remove` make the worktrees Claude Code
+  creates forkspace workspaces; `forkspace hook claude-settings` prints the settings.
+- `forkspace update` is another name for `forkspace upgrade`.
+- Linux: writes made within one clock tick (about 1–4 ms) before or after a pull read the
+  project, or before a catch-up round, were mistaken for later ones. A round could then keep
+  files the pull itself had just written as if an agent had written them, leaving, for
+  example, a directory the project renamed in the workspace under its old name too. Change
+  times are now compared against a reading that separates earlier writes from later ones,
+  including on kernels with fine-grained ("multigrain") timestamps.
+- A project path too long to copy under `FORKSPACE_HOME` fails with a short message that
+  says so, instead of the whole path and "File name too long".
+- macOS: a workspace holding a user-immutable (`uchg`) file, which an APFS clone keeps from
+  the project, is deleted after `drop` instead of staying in the trash.
+- `merge --patch` writes byte-exact Git patches; a patch that would be incomplete or would not
+  apply exits 5 and prints nothing.
+- `merge` never silently overwrites project edits (files written early in a fork, same-size
+  rewrites with a restored mtime, edits made during the merge or after a crash and
+  `--resume`), and a project `chmod` survives a line merge.
+- `pull` keeps workspace files in directories the project deleted, renamed or respelled, and
+  keeps what an agent writes while the pull runs.
+- Merge, pull, restore and undo steps re-check their target, never act through a symlinked
+  directory, and handle a path that changed between file, directory and symlink; `undo` never
+  reports success without restoring.
+- Fork manifests that were lost or damaged are rebuilt, and a background builder that died is
+  restarted, so large projects no longer stay "building" forever.
+- `gc` re-checks leftovers under the lock, workspace names that collide with forkspace's own
+  files are refused, `enter --ephemeral --merge-on-exit` and `merge --drop` keep unmerged
+  work, and `diff` and `merge --patch` stream files over 32 MiB.
+
 ## 0.2.0 - 2026-11-17
 
 Upgrading: workspaces made by 0.1.0 keep working. Workspaces created, pulled or merged by this
