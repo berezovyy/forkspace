@@ -76,7 +76,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
                 clear_intent(state, name);
                 Ok(())
             })?;
-            return Err(error);
+            return Err(explain_long_path(error));
         }
     };
 
@@ -124,6 +124,26 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
     }
     super::git_index::start(&workspace);
     Ok(workspace)
+}
+
+/// A project path that fits the system's path limit where the project is can exceed it once
+/// placed under `FORKSPACE_HOME`, which may be the longer of the two. Say so, rather than
+/// print the whole path with "File name too long".
+fn explain_long_path(error: ForkspaceError) -> ForkspaceError {
+    match error {
+        ForkspaceError::Io { context, source }
+            if source.raw_os_error() == Some(libc::ENAMETOOLONG) =>
+        {
+            let home = crate::paths::forkspace_home();
+            let shown: String = context.chars().take(160).collect();
+            ForkspaceError::InvalidArgument(format!(
+                "a path in the project is too long to copy under FORKSPACE_HOME ({}, {} bytes): {shown}…; set FORKSPACE_HOME to a shorter directory, or exclude that path in .forkspaceexclude",
+                home.display(),
+                home.as_os_str().len()
+            ))
+        }
+        error => error,
+    }
 }
 
 /// Check out a new `branch` in the view and record it, before the workspace is saved, so
