@@ -11,6 +11,7 @@
 //! - [`review`]: read-only facts about changes (signals, compare).
 //! - [`process`]: process liveness and the dev-server proxy.
 //! - [`disk`]: private disk use per workspace and store, and backup exclusion.
+//! - [`exclude`]: what a fork leaves out (nested worktrees, `.forkspaceexclude`).
 //! - [`git`], [`paths`], [`util`], [`error`]: shared infrastructure.
 
 pub mod backend;
@@ -19,6 +20,7 @@ pub mod cli;
 pub mod commands;
 pub mod disk;
 pub mod error;
+pub mod exclude;
 pub mod git;
 pub mod paths;
 pub mod process;

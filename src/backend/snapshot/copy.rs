@@ -190,15 +190,21 @@ struct FileJob {
 }
 
 /// Every entry under `source`, read on several threads, in path order, with where to read it.
+/// What the project excludes from workspaces (see [`crate::exclude`]) is not visited.
 fn walk_source(source: &Path) -> Result<Vec<(PathBuf, Entry, PathBuf)>> {
+    use crate::util::walk::Step;
     let skip_sidecars = stores_xattrs_in_sidecars(source);
-    let walked = crate::util::walk::parallel(source, |relative, _, entry| {
+    let exclusions = crate::exclude::Exclusions::of(source);
+    let walked = crate::util::walk::parallel_with(source, |relative, _, entry| {
+        if exclusions.is_excluded(relative, entry.is_dir()) {
+            return Ok(Step::Prune(None));
+        }
         let sidecar = skip_sidecars
             && entry.is_file()
             && relative
                 .file_name()
                 .is_some_and(|name| name.as_encoded_bytes().starts_with(b"._"));
-        Ok((!sidecar).then_some(*entry))
+        Ok(Step::Descend((!sidecar).then_some(*entry)))
     })?;
     Ok(walked
         .into_iter()

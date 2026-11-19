@@ -577,11 +577,17 @@ pub(crate) fn freeze_delta(source: &Path, base: &Path) -> Result<Option<Delta>> 
 
     // One walk of the project: every entry's facts, and whether it differs from `base`.
     // Each entry keeps the index of its row, so nothing is looked up a second time.
-    let walked = crate::util::walk::parallel(&source, |relative, path, entry| {
+    let exclusions = crate::exclude::Exclusions::of(&source);
+    let walked = crate::util::walk::parallel_with(&source, |relative, path, entry| {
+        if exclusions.is_excluded(relative, entry.is_dir()) {
+            return Ok(crate::util::walk::Step::Prune(None));
+        }
         let index = rows.position(&manifest::encode_path(relative));
         let differs = index
             .is_none_or(|index| !same_as_row(path, entry, &rows.row(index), base_meta.started_ns));
-        Ok(Some((index, *entry, differs)))
+        Ok(crate::util::walk::Step::Descend(Some((
+            index, *entry, differs,
+        ))))
     })?;
     let mut seen = vec![false; rows.len()];
     for (_, (index, _, _)) in &walked {
@@ -791,10 +797,15 @@ fn unchanged_since(source: &Path, tree: &Path, meta: &Meta) -> Result<bool> {
     let rows = Manifest::open_file(&manifest_cache(tree)).ok();
     let differs = AtomicBool::new(false);
     let seen = AtomicU64::new(0);
-    let walked = crate::util::walk::parallel::<(), _>(source, |relative, path, current| {
+    let exclusions = crate::exclude::Exclusions::of(source);
+    let walked = crate::util::walk::parallel_with::<(), _>(source, |relative, path, current| {
+        use crate::util::walk::Step;
+        if exclusions.is_excluded(relative, current.is_dir()) {
+            return Ok(Step::Prune(None));
+        }
         seen.fetch_add(1, Ordering::Relaxed);
         if differs.load(Ordering::Relaxed) {
-            return Ok(None);
+            return Ok(Step::Prune(None));
         }
         let same = match &rows {
             Some(rows) => rows
@@ -818,7 +829,7 @@ fn unchanged_since(source: &Path, tree: &Path, meta: &Meta) -> Result<bool> {
                 "the project changed".to_string(),
             ));
         }
-        Ok(None)
+        Ok(Step::Descend(None))
     });
     if differs.load(Ordering::Relaxed) {
         return Ok(false);

@@ -49,6 +49,8 @@ overlay layers directly are skipped there; the overlay backend itself is Linux-o
 
 ## Limitations
 
+- Forks leave out Git worktrees nested in the project, `.claude/worktrees/` and what
+  `.forkspaceexclude` lists (`tests/exclusions.rs`).
 - APFS `clonefile` materializes directory metadata, so fork cost grows with the number of
   entries even though file blocks are shared.
 - APFS cloning needs the project and `FORKSPACE_HOME/workspaces` on the same APFS volume;

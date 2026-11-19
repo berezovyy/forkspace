@@ -103,6 +103,7 @@ src/
 ├── process/               spawning, per-workspace process tracking (systemd slices, /proc,
 │                          libproc), limits, the write sandbox, dev servers, ports, proxy
 ├── disk.rs                disk use per workspace and what gc can reclaim
+├── exclude.rs             what forks leave out: nested worktrees, .forkspaceexclude
 ├── git.rs                 git subprocess helpers
 ├── paths.rs               every location under FORKSPACE_HOME
 ├── util/                  fs helpers, parallel and bulk directory walks, glob, trace timings

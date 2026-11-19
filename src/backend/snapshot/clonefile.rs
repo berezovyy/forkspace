@@ -70,6 +70,24 @@ impl ForkPrimitive for ClonefilePrimitive {
             ForkspaceError::InvalidArgument("workspace path contains a NUL byte".to_string())
         })?;
         let before = sample(base);
+        // What the project leaves out of workspaces (nested worktrees, `.forkspaceexclude`):
+        // the directories above it are made, and everything beside it cloned.
+        let excluded = crate::exclude::Exclusions::of(base).present(base);
+        if !excluded.is_empty() {
+            if fs::symlink_metadata(dest).is_ok() {
+                return Err(ForkspaceError::WorkspaceExists(
+                    workspace_name(dest).into_owned(),
+                ));
+            }
+            clone_except(base, dest, Path::new(""), &excluded)?;
+            if before != sample(base) {
+                eprintln!(
+                    "warning: base changed while '{}' was being forked; retry the fork for a consistent view",
+                    workspace_name(dest)
+                );
+            }
+            return Ok(ForkStats::default());
+        }
         if unsafe { libc::clonefile(source.as_ptr(), target.as_ptr(), 0) } != 0 {
             let error = std::io::Error::last_os_error();
             if error.raw_os_error() == Some(libc::EEXIST) {
@@ -117,6 +135,59 @@ impl ForkPrimitive for ClonefilePrimitive {
                     .to_string(),
         }
     }
+}
+
+/// Clone `relative` of `base` to the same place under `dest`, leaving out the entries
+/// `excluded` names (relative to `base`, none of them inside another). A directory with
+/// nothing excluded inside is cloned whole; one above an excluded entry is made with the
+/// source's permissions and modification time, and its other entries cloned one by one.
+fn clone_except(base: &Path, dest: &Path, relative: &Path, excluded: &[PathBuf]) -> Result {
+    let source = base.join(relative);
+    let target = dest.join(relative);
+    let above_excluded = excluded
+        .iter()
+        .any(|path| path != relative && path.starts_with(relative));
+    if !above_excluded {
+        return clone_one(&source, &target);
+    }
+    let metadata =
+        fs::symlink_metadata(&source).io_context(|| format!("inspect {}", source.display()))?;
+    fs::create_dir(&target).io_context(|| format!("create {}", target.display()))?;
+    for entry in fs::read_dir(&source).io_context(|| format!("read {}", source.display()))? {
+        let entry = entry.io_context(|| format!("read {}", source.display()))?;
+        let child = relative.join(entry.file_name());
+        if excluded.contains(&child) {
+            continue;
+        }
+        clone_except(base, dest, &child, excluded)?;
+    }
+    fs::set_permissions(
+        &target,
+        std::os::unix::fs::PermissionsExt::from_mode(metadata.mode() & 0o7777),
+    )
+    .io_context(|| format!("set permissions of {}", target.display()))?;
+    if let Ok(modified) = metadata.modified() {
+        let _ = fs::File::open(&target)
+            .and_then(|dir| dir.set_times(fs::FileTimes::new().set_modified(modified)));
+    }
+    Ok(())
+}
+
+/// `CLONE_NOFOLLOW` from `<sys/clonefile.h>`: clone a symlink itself, not its target.
+const CLONE_NOFOLLOW: u32 = 0x0001;
+
+/// One `clonefile(2)` of `source` (a file, symlink or whole directory) to `target`.
+fn clone_one(source: &Path, target: &Path) -> Result {
+    let source_c = CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| ForkspaceError::InvalidArgument("path contains a NUL byte".to_string()))?;
+    let target_c = CString::new(target.as_os_str().as_bytes())
+        .map_err(|_| ForkspaceError::InvalidArgument("path contains a NUL byte".to_string()))?;
+    // SAFETY: both are valid NUL-terminated paths for the duration of the call.
+    if unsafe { libc::clonefile(source_c.as_ptr(), target_c.as_ptr(), CLONE_NOFOLLOW) } != 0 {
+        return Err(std::io::Error::last_os_error())
+            .io_context(|| format!("clone {} to {}", source.display(), target.display()));
+    }
+    Ok(())
 }
 
 const SAME_VOLUME_REMEDY: &str =

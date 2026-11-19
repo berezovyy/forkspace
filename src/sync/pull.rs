@@ -464,6 +464,16 @@ fn plan_changes(
 ) -> Result<PullPlan> {
     let theirs = mode == Mode::Plan { theirs: true };
     let round = mode == Mode::Round;
+    // What forks leave out never moves either way (nested worktrees, `.forkspaceexclude`).
+    let exclusions = crate::exclude::Exclusions::of(&workspace.base);
+    let theirs_delta: Vec<FileChange> = theirs_delta
+        .into_iter()
+        .filter(|change| !exclusions.is_excluded(&change.path, false))
+        .collect();
+    let ours_delta: Vec<FileChange> = ours_delta
+        .into_iter()
+        .filter(|change| !exclusions.is_excluded(&change.path, false))
+        .collect();
     let base_delta: Vec<BaseChange> = theirs_delta
         .iter()
         .map(|change| BaseChange {

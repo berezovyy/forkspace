@@ -29,6 +29,8 @@ pub enum ChangeClass {
 /// Ignore rules of a base directory.
 pub struct ChangeFilter {
     gitignore: Gitignore,
+    /// What forks leave out; never shown and never transferred.
+    exclusions: Option<crate::exclude::Exclusions>,
 }
 
 impl ChangeFilter {
@@ -46,7 +48,10 @@ impl ChangeFilter {
                 .build()
                 .expect("an empty gitignore builds")
         });
-        Self { gitignore }
+        Self {
+            gitignore,
+            exclusions: Some(crate::exclude::Exclusions::of(base)),
+        }
     }
 
     /// A filter with no ignore rules: it hides only runtime and internal paths, the ones that
@@ -54,6 +59,7 @@ impl ChangeFilter {
     pub fn transferable_only() -> Self {
         Self {
             gitignore: Gitignore::empty(),
+            exclusions: None,
         }
     }
 
@@ -61,6 +67,13 @@ impl ChangeFilter {
         self.gitignore
             .matched_path_or_any_parents(rel_path, is_dir)
             .is_ignore()
+    }
+
+    /// Whether forks of the base leave `rel_path` out (see [`crate::exclude`]).
+    pub fn is_excluded(&self, rel_path: &Path, is_dir: bool) -> bool {
+        self.exclusions
+            .as_ref()
+            .is_some_and(|exclusions| exclusions.is_excluded(rel_path, is_dir))
     }
 
     pub fn class(path: &Path) -> ChangeClass {
@@ -82,6 +95,9 @@ impl ChangeFilter {
     }
 
     pub fn is_visible(&self, rel_path: &Path, is_dir: bool) -> bool {
+        if self.is_excluded(rel_path, is_dir) {
+            return false;
+        }
         match Self::class(rel_path) {
             ChangeClass::Dependency => true,
             ChangeClass::Runtime | ChangeClass::Internal => false,

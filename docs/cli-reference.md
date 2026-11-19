@@ -26,6 +26,19 @@ changes for that workspace.
 | `--cpu <percent>` | *Linux.* Cap the workspace's CPU time, as a percentage of one CPU, e.g. `200%`. |
 | `--session <id>` | Record a session identifier, to group related workspaces. |
 
+A workspace holds everything in the source directory, ignored files included, except:
+
+- Git worktrees nested inside the project (such as Claude Code's `.claude/worktrees/*`). They
+  are other checkouts, and a copy would still point at the project's repository, so a commit
+  in the workspace would move the project's branches.
+- `.claude/worktrees/`, whatever it holds.
+- The paths the project's `.forkspaceexclude` lists, in `.gitignore` syntax. A `!` line can
+  take back the `.claude/worktrees/` rule; nested worktrees always stay out.
+
+Left-out paths never move between a workspace and its project: `merge` does not copy them
+into the project, `pull` does not bring them into the workspace, and `diff` does not show
+them.
+
 ### `forkspace enter [name] [-- command…]`
 
 Open a shell in the workspace, or run `command` there and exit with its status. Without a
