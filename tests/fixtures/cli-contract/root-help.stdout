@@ -5,25 +5,24 @@ Linux overlayfs, APFS clones, Linux reflinks, and a portable copy floor share on
 Usage: forkspace <COMMAND>
 
 Commands:
-  new          Copy the project you are in into a new workspace
-  drop         Throw workspaces away (and stop what runs in them)
-  enter        Open a shell (or run a command) inside a workspace
-  run          Start a process in a workspace (dev server, Electron, etc.)
-  switch       Switch the active workspace (hot-swap via proxy)
-  ls           List your workspaces: what changed, how old, what runs
-  diff         Show what changed in a workspace, or compare several
-  merge        Put a workspace's changes into your project (and keep its commits as a branch)
-  undo         Put your project back as it was before the latest merge
-  pull         Bring your project's newer changes into a workspace
-  checkpoint   Save the current state of a workspace
-  checkpoints  List a workspace's checkpoints
-  restore      Return a workspace to one of its checkpoints
-  limit        Show or change a workspace's memory and CPU limits
-  gc           Show what disk forkspace could give back, and reclaim it
-  upgrade      Upgrade forkspace to the latest release (or to a given version) [aliases: update]
-  skill        Print instructions for coding agents that use forkspace
-  hook         Run as a Claude Code hook, so its worktrees are forkspace workspaces
-  help         Print this message or the help of the given subcommand(s)
+  new      Copy the project you are in into a new workspace
+  drop     Throw workspaces away (and stop what runs in them)
+  enter    Open a shell (or run a command) inside a workspace
+  run      Start a process in a workspace (dev server, Electron, etc.)
+  switch   Switch the active workspace (hot-swap via proxy)
+  ls       List your workspaces: what changed, how old, what runs
+  diff     Show what changed in a workspace, or compare several
+  merge    Put a workspace's changes into your project (and keep its commits as a branch)
+  undo     Put your project back as it was before the latest merge
+  pull     Bring your project's newer changes into a workspace
+  save     Save a snapshot of a workspace to go back to
+  restore  Go back to a snapshot (without one, list them)
+  limit    Show or change a workspace's memory and CPU limits
+  gc       Show what disk forkspace could give back, and reclaim it
+  upgrade  Upgrade forkspace to the latest release (or to a given version) [aliases: update]
+  skill    Print instructions for coding agents that use forkspace
+  hook     Run as a Claude Code hook, so its worktrees are forkspace workspaces
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help

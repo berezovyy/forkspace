@@ -48,13 +48,10 @@ pub enum Commands {
     /// Bring your project's newer changes into a workspace
     Pull(PullArgs),
 
-    /// Save the current state of a workspace
-    Checkpoint(CheckpointArgs),
+    /// Save a snapshot of a workspace to go back to
+    Save(SaveArgs),
 
-    /// List a workspace's checkpoints
-    Checkpoints(CheckpointsArgs),
-
-    /// Return a workspace to one of its checkpoints
+    /// Go back to a snapshot (without one, list them)
     Restore(RestoreArgs),
 
     /// Show or change a workspace's memory and CPU limits
@@ -226,45 +223,30 @@ pub struct LimitArgs {
 }
 
 #[derive(Args)]
-pub struct CheckpointArgs {
-    #[arg(help = "Workspace (defaults to the one you are in)")]
-    pub name: Option<String>,
+pub struct SaveArgs {
+    #[arg(
+        value_name = "NAME",
+        help = "Workspace (defaults to the one you are in)"
+    )]
+    pub first: Option<String>,
 
-    #[arg(short, long, help = "A label to recognize the checkpoint by")]
-    pub message: Option<String>,
-
-    #[arg(long, help = "Also save ignored paths such as node_modules")]
-    pub all: bool,
-}
-
-#[derive(Args)]
-pub struct CheckpointsArgs {
-    #[arg(help = "Workspace (defaults to the one you are in)")]
-    pub name: Option<String>,
-
-    #[arg(long, help = "Output as JSON")]
-    pub json: bool,
+    #[arg(value_name = "NOTE", help = "A note to recognize the snapshot by")]
+    pub second: Option<String>,
 }
 
 #[derive(Args)]
 pub struct RestoreArgs {
-    #[arg(help = "Name of the workspace to restore")]
-    pub name: String,
+    #[arg(
+        value_name = "NAME",
+        help = "Workspace (defaults to the one you are in)"
+    )]
+    pub first: Option<String>,
 
     #[arg(
-        required_unless_present = "resume",
-        help = "Checkpoint id (see `forkspace checkpoints`)"
+        value_name = "ID",
+        help = "The snapshot to go back to (without one, list them)"
     )]
-    pub id: Option<u64>,
-
-    #[arg(long, conflicts_with = "id", help = "Finish an interrupted restore")]
-    pub resume: bool,
-
-    #[arg(
-        long,
-        help = "Skip dependency installation when the restore changes package.json, a lockfile or package-manager settings"
-    )]
-    pub no_install: bool,
+    pub second: Option<String>,
 }
 
 #[derive(Args)]

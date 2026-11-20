@@ -190,12 +190,12 @@ fn restore_puts_back_a_deleted_directory_and_symlink() {
     symlink("t", env.project().join("l")).unwrap();
     env.fork("w");
     let view = env.view("w");
-    env.ok(&["checkpoint", "w", "-m", "clean"]);
+    env.ok(&["save", "w", "clean"]);
     let saved = tree(&view);
     fs::remove_dir_all(view.join("h")).unwrap();
     fs::remove_file(view.join("l")).unwrap();
 
-    let output = env.ok(&["restore", "w", "1", "--no-install"]);
+    let output = env.ok(&["restore", "w", "1"]);
     if cfg!(target_os = "macos") {
         assert_eq!(tree(&view), saved, "{}", stderr(&output));
         assert!(
@@ -233,16 +233,16 @@ fn restore_swaps_a_directory_and_a_symlink_both_ways() {
     let view = env.view("w");
     fs::remove_dir_all(view.join("d")).unwrap();
     symlink("elsewhere", view.join("d")).unwrap();
-    env.ok(&["checkpoint", "w", "-m", "link"]);
+    env.ok(&["save", "w", "link"]);
     let as_link = tree(&view);
     fs::remove_file(view.join("d")).unwrap();
     write(&view.join("d/x.txt"), "view x\n");
     let as_dir = tree(&view);
 
     // Checkpoint 2 is the automatic one taken before this restore: the directory.
-    env.ok(&["restore", "w", "1", "--no-install"]);
+    env.ok(&["restore", "w", "1"]);
     assert_eq!(tree(&view), as_link);
-    env.ok(&["restore", "w", "2", "--no-install"]);
+    env.ok(&["restore", "w", "2"]);
     assert_eq!(tree(&view), as_dir);
 }
 
@@ -266,7 +266,7 @@ fn the_before_pull_checkpoint_restores_after_the_base_turned_a_directory_into_a_
     env.ok(&["pull", "w"]);
     assert_eq!(read(&view.join("dir")), "now a file\n");
 
-    let output = env.ok(&["restore", "w", "1", "--no-install"]);
+    let output = env.ok(&["restore", "w", "1"]);
     assert_eq!(
         read(&view.join("dir/new.txt")),
         "new\n",
@@ -366,7 +366,7 @@ fn restore_keeps_a_directory_deleted_at_the_checkpoint_deleted() {
         env.fork("w");
         let view = env.view("w");
         fs::remove_dir_all(view.join("a")).unwrap();
-        env.ok(&["checkpoint", "w", "-m", "deleted"]);
+        env.ok(&["save", "w", "deleted"]);
         let saved = tree(&view);
         match since {
             "dir with other entries" => write(&view.join("a/e/f.md"), "new\n"),
@@ -374,7 +374,7 @@ fn restore_keeps_a_directory_deleted_at_the_checkpoint_deleted() {
             _ => write(&view.join("a"), "now a file\n"),
         }
 
-        let output = env.ok(&["restore", "w", "1", "--no-install"]);
+        let output = env.ok(&["restore", "w", "1"]);
         assert_eq!(tree(&view), saved, "{since}: {}", stderr(&output));
     }
 }
@@ -549,12 +549,12 @@ fn restore_replaces_a_symlinked_directory_without_touching_its_target() {
     let view = env.view("w");
     write(&view.join("d/x.txt"), "checkpointed x\n");
     fs::remove_file(view.join("d/y.txt")).unwrap();
-    env.ok(&["checkpoint", "w", "-m", "dir"]);
+    env.ok(&["save", "w", "dir"]);
     let saved = tree(&view);
     fs::remove_dir_all(view.join("d")).unwrap();
     symlink(&outside, view.join("d")).unwrap();
 
-    let output = env.ok(&["restore", "w", "1", "--no-install"]);
+    let output = env.ok(&["restore", "w", "1"]);
     assert_eq!(tree(&view), saved, "{}", stderr(&output));
     assert_eq!(read(&outside.join("x.txt")), "SENTINEL x\n");
     assert_eq!(read(&outside.join("y.txt")), "SENTINEL y\n");

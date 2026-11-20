@@ -19,9 +19,8 @@ _forkspace() {
         'merge:Apply workspace changes back to the base directory'
         'undo:Put your project back as it was before the latest merge'
         'pull:Bring base changes into a workspace'
-        'checkpoint:Save the current state of a workspace'
-        'checkpoints:List a workspace'"'"'s checkpoints'
-        'restore:Return a workspace to one of its checkpoints'
+        'save:Save a snapshot of a workspace to go back to'
+        'restore:Go back to a snapshot (without one, list them)'
         'limit:Show or change a workspace'"'"'s memory and CPU limits'
         'gc:Show what disk forkspace could give back, and reclaim it'
         'upgrade:Upgrade forkspace to the latest release'
@@ -99,18 +98,10 @@ _forkspace() {
                         '--json[Print the pull plan as JSON]' \
                         '--help[Show help]'
                     ;;
-                checkpoint)
+                save)
                     _arguments \
                         '1:workspace:_forkspace_workspaces' \
-                        '-m=[Label]:label:' \
-                        '--message=[Label]:label:' \
-                        '--all[Also save ignored paths]' \
-                        '--help[Show help]'
-                    ;;
-                checkpoints)
-                    _arguments \
-                        '1:workspace:_forkspace_workspaces' \
-                        '--json[Output as JSON]' \
+                        '2:note:' \
                         '--help[Show help]'
                     ;;
                 gc)
@@ -129,9 +120,7 @@ _forkspace() {
                 restore)
                     _arguments \
                         '1:workspace:_forkspace_workspaces' \
-                        '2:checkpoint id:' \
-                        '--resume[Finish an interrupted restore]' \
-                        '--no-install[Skip dependency installation]' \
+                        '2:snapshot id:' \
                         '--help[Show help]'
                     ;;
                 upgrade|update)

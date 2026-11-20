@@ -129,7 +129,7 @@ pub fn exec(args: PullArgs) -> Result {
         }
         if !taken.is_empty() {
             let checkpoint = before.map_or_else(String::new, |id| {
-                format!("; yours are in checkpoint {id} (`forkspace restore {name} {id}`)")
+                format!("; yours are in snapshot {id} (`forkspace restore {name} {id}`)")
             });
             say(format!(
                 "took the project's version of {}, which cannot be merged line by line{checkpoint}",

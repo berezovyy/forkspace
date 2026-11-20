@@ -98,8 +98,8 @@ fn checkpoint_then_restore_is_exact() {
     fs::remove_file(view.join("gone.txt")).unwrap();
     fs::create_dir(view.join("src")).unwrap();
     fs::write(view.join("src/new.txt"), "new\n").unwrap();
-    let saved = env.ok(&["checkpoint", "ws", "-m", "good state"]);
-    assert!(saved.contains("saved checkpoint 1"), "{saved}");
+    let saved = env.ok(&["save", "ws", "good state"]);
+    assert!(saved.contains("saved snapshot 1"), "{saved}");
     let expected = snapshot(&view);
 
     // A bad step: rewrite, delete, add, and touch a file the checkpoint did not change.
@@ -111,7 +111,7 @@ fn checkpoint_then_restore_is_exact() {
 
     let restored = env.ok(&["restore", "ws", "1"]);
     assert!(
-        restored.contains("restored 'ws' to checkpoint 1"),
+        restored.contains("restored 'ws' to snapshot 1"),
         "{restored}"
     );
     assert_eq!(snapshot(&view), expected);
@@ -120,7 +120,7 @@ fn checkpoint_then_restore_is_exact() {
         "fork version\n"
     );
 
-    let listed = env.ok(&["checkpoints", "ws"]);
+    let listed = env.ok(&["restore", "ws"]);
     assert!(listed.contains("good state"), "{listed}");
     assert!(listed.contains("(auto) before restore to 1"), "{listed}");
 }
@@ -130,7 +130,7 @@ fn the_automatic_checkpoint_undoes_a_restore() {
     let env = Env::new();
     let view = env.view();
     fs::write(view.join("edit.txt"), "one\n").unwrap();
-    env.ok(&["checkpoint", "ws"]);
+    env.ok(&["save", "ws"]);
     fs::write(view.join("edit.txt"), "two\n").unwrap();
     let before = snapshot(&view);
     let restored = env.ok(&["restore", "ws", "1"]);
@@ -150,7 +150,7 @@ fn an_interrupted_restore_resumes() {
     fs::write(view.join("edit.txt"), "saved\n").unwrap();
     fs::create_dir(view.join("z")).unwrap();
     fs::write(view.join("z/inner.txt"), "saved\n").unwrap();
-    env.ok(&["checkpoint", "ws"]);
+    env.ok(&["save", "ws"]);
     let expected = snapshot(&view);
     fs::write(view.join("edit.txt"), "later\n").unwrap();
     fs::write(view.join("z/inner.txt"), "later\n").unwrap();
@@ -165,7 +165,7 @@ fn an_interrupted_restore_resumes() {
         "saved\n"
     );
 
-    env.ok(&["restore", "ws", "--resume"]);
+    env.ok(&["restore", "ws", "1"]);
     assert_eq!(snapshot(&view), expected);
 }
 
@@ -175,7 +175,7 @@ fn pull_takes_an_automatic_checkpoint_and_drop_removes_them_all() {
     fs::write(env.view().join("edit.txt"), "ours\n").unwrap();
     fs::write(env.root.path().join("project/keep.txt"), "base update\n").unwrap();
     env.ok(&["pull", "ws"]);
-    let listed = env.ok(&["checkpoints", "ws"]);
+    let listed = env.ok(&["restore", "ws"]);
     assert!(listed.contains("(auto) before pull"), "{listed}");
     assert!(env.home.path().join("checkpoints/ws").is_dir());
     env.ok(&["drop", "ws"]);
@@ -187,15 +187,17 @@ fn retention_keeps_twenty_manual_checkpoints() {
     let env = Env::new();
     for round in 0..22 {
         fs::write(env.view().join("edit.txt"), format!("{round}\n")).unwrap();
-        env.ok(&["checkpoint", "ws"]);
+        env.ok(&["save", "ws"]);
     }
-    let listed: serde_json::Value =
-        serde_json::from_str(&env.ok(&["checkpoints", "ws", "--json"])).unwrap();
-    let ids: Vec<u64> = listed
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|checkpoint| checkpoint["id"].as_u64().unwrap())
-        .collect();
+    let ids = listed_ids(&env.ok(&["restore", "ws"]));
     assert_eq!(ids, (3..=22).collect::<Vec<_>>());
+}
+
+/// The snapshot ids `restore <name>` lists.
+fn listed_ids(listed: &str) -> Vec<u64> {
+    listed
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.split_whitespace().next()?.parse().ok())
+        .collect()
 }

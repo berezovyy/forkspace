@@ -163,7 +163,7 @@ fn every_internal_store_is_tagged_for_backups() {
         "changed\n",
     )
     .unwrap();
-    env.ok(&["checkpoint", "ws"]);
+    env.ok(&["save", "ws"]);
     env.ok(&["merge", "ws"]);
     env.ok(&["drop", "ws"]);
     env.ok(&["ls"]);

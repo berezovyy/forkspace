@@ -44,13 +44,10 @@ fn stored_file(env: &Env, workspace: &str, id: u64, relative: &str) -> PathBuf {
 }
 
 fn latest_id(env: &Env, workspace: &str) -> u64 {
-    let listed: serde_json::Value =
-        serde_json::from_slice(&env.ok(&["checkpoints", workspace, "--json"]).stdout).unwrap();
-    listed
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|checkpoint| checkpoint["id"].as_u64().unwrap())
+    stdout(&env.ok(&["restore", workspace]))
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.split_whitespace().next()?.parse::<u64>().ok())
         .max()
         .unwrap()
 }
@@ -87,7 +84,7 @@ fn a_small_edit_is_kept_as_a_small_delta_and_restored_exactly() {
         let expected = fs::read(view.join("src/big.txt")).unwrap();
         let expected_meta = fs::metadata(view.join("src/big.txt")).unwrap();
 
-        env.ok(&["checkpoint", name, "-m", "edited"]);
+        env.ok(&["save", name, "edited"]);
         let id = latest_id(&env, name);
         let entries = record(&env, name, id)["entries"].clone();
         let big = entries
@@ -116,7 +113,7 @@ fn a_small_edit_is_kept_as_a_small_delta_and_restored_exactly() {
 
         fs::write(view.join("src/big.txt"), "overwritten\n").unwrap();
         fs::remove_file(view.join("noise.bin")).unwrap();
-        env.ok(&["restore", name, &id.to_string(), "--no-install"]);
+        env.ok(&["restore", name, &id.to_string()]);
         assert_eq!(
             fs::read(view.join("src/big.txt")).unwrap(),
             expected,
@@ -143,13 +140,13 @@ fn a_checkpoint_restores_after_pull_moved_the_fork_point() {
     let view = env.view("w");
     edit(&view);
     let expected = fs::read(view.join("src/big.txt")).unwrap();
-    env.ok(&["checkpoint", "w", "-m", "before pull"]);
+    env.ok(&["save", "w", "before pull"]);
     let id = latest_id(&env, "w");
 
     write(&env.project().join("other.txt"), "changed in the project\n");
     env.ok(&["pull", "w"]);
     fs::write(view.join("src/big.txt"), "later\n").unwrap();
-    env.ok(&["restore", "w", &id.to_string(), "--no-install"]);
+    env.ok(&["restore", "w", &id.to_string()]);
     assert_eq!(fs::read(view.join("src/big.txt")).unwrap(), expected);
 }
 
@@ -160,12 +157,12 @@ fn references_no_checkpoint_uses_are_removed() {
     write(&env.project().join("src/big.txt"), &source_text());
     env.fork_copy("w");
     edit(&env.view("w"));
-    env.ok(&["checkpoint", "w"]);
+    env.ok(&["save", "w"]);
     let refs = env.home.path().join("checkpoints/w/refs");
     let unused = refs.join("g99/forgotten.txt.zst");
     fs::create_dir_all(unused.parent().unwrap()).unwrap();
     fs::write(&unused, b"unused").unwrap();
-    env.ok(&["checkpoint", "w"]);
+    env.ok(&["save", "w"]);
 
     let used: Vec<PathBuf> = {
         let mut used: Vec<PathBuf> = fs::read_dir(env.home.path().join("checkpoints/w"))
