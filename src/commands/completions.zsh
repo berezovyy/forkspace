@@ -9,22 +9,21 @@ _forkspace_workspaces() {
 _forkspace() {
     local -a commands
     commands=(
-        'new:Create a new workspace from a directory or another workspace'
-        'drop:Remove a workspace'
+        'new:Copy the project you are in into a new workspace'
+        'drop:Throw workspaces away (and stop what runs in them)'
         'enter:Open a shell (or run a command) inside a workspace'
-        'run:Start a process in a workspace'
-        'switch:Switch the active workspace'
-        'ls:List all active workspaces'
-        'diff:Show what changed in a workspace'
-        'merge:Apply workspace changes back to the base directory'
+        'run:Start a dev server in a workspace'
+        'switch:Point localhost:4000 at another workspace'"'"'s dev server'
+        'ls:List your workspaces: what changed, how old, what runs'
+        'diff:Show what changed in a workspace, or compare several'
+        'merge:Put a workspace'"'"'s changes into your project'
         'undo:Put your project back as it was before the latest merge'
-        'pull:Bring base changes into a workspace'
+        'pull:Bring your project'"'"'s newer changes into a workspace'
         'save:Save a snapshot of a workspace to go back to'
         'restore:Go back to a snapshot (without one, list them)'
+        'setup:Set up the coding agents on this machine to use forkspace'
         'upgrade:Upgrade forkspace to the latest release'
         'update:Upgrade forkspace to the latest release'
-        'skill:Print instructions for coding agents that use forkspace'
-        'hook:Run as a Claude Code hook'
     )
 
     _arguments -C \
@@ -108,15 +107,6 @@ _forkspace() {
                 upgrade|update)
                     _arguments \
                         '1:version:' \
-                        '--help[Show help]'
-                    ;;
-                skill)
-                    _arguments '--help[Show help]'
-                    ;;
-                hook)
-                    _arguments \
-                        '1:event:(worktree-create worktree-remove claude-settings)' \
-                        '--discard[Drop the workspace even when it has unmerged work]' \
                         '--help[Show help]'
                     ;;
             esac

@@ -12,6 +12,7 @@ pub(crate) mod merge;
 pub mod new;
 pub(crate) mod pull;
 pub(crate) mod run;
+pub(crate) mod setup;
 pub mod skill;
 pub(crate) mod switch;
 pub(crate) mod undo;
@@ -43,6 +44,7 @@ pub fn dispatch(cli: Cli) -> Result {
         Commands::Save(args) => checkpoint::save(args),
         Commands::Restore(args) => checkpoint::restore(args),
         Commands::Upgrade(args) => upgrade::exec(args),
+        Commands::Setup => setup::exec(),
         Commands::Skill => skill::exec(),
         Commands::Hook(args) => hook::exec(args),
         Commands::ProxyDaemon(args) => crate::process::proxy::run_proxy(args.port),

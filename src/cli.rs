@@ -58,10 +58,15 @@ pub enum Commands {
     #[command(visible_alias = "update")]
     Upgrade(UpgradeArgs),
 
-    /// Print instructions for coding agents that use forkspace
+    /// Set up the coding agents on this machine (Claude Code) to use forkspace
+    Setup,
+
+    /// Print the instructions for coding agents (installed by `setup`)
+    #[command(hide = true)]
     Skill,
 
-    /// Run as a Claude Code hook, so its worktrees are forkspace workspaces
+    /// Run as a Claude Code hook (installed by `setup`)
+    #[command(hide = true)]
     Hook(HookArgs),
 
     /// Generate shell completions
@@ -227,7 +232,6 @@ pub enum HookEvent {
 pub struct UpgradeArgs {
     #[arg(help = "Version to install, e.g. 0.2.0 (defaults to the latest release)")]
     pub version: Option<String>,
-
 }
 
 #[derive(Args)]
