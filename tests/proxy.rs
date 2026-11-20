@@ -34,7 +34,7 @@ fn the_proxy_serves_the_dev_server_and_exits_when_it_stops() {
     let forkspace = |args: &[&str]| -> Output {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
-            .env("FORKSPACE_NO_SYSTEMD", "1")
+            .env_remove("XDG_RUNTIME_DIR")
             .args(args)
             .output()
             .unwrap()

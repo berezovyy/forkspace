@@ -44,7 +44,8 @@ impl Env {
             .env("NO_COLOR", "1")
             .args(args);
         if !self.systemd {
-            command.env("FORKSPACE_NO_SYSTEMD", "1");
+            // As without a user manager.
+            command.env_remove("XDG_RUNTIME_DIR");
         }
         command.output().unwrap()
     }

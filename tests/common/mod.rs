@@ -90,9 +90,10 @@ pub fn setup_test_env() -> TestHome {
     // SAFETY: tests using setup_test_env() are serialized with #[serial],
     // so no concurrent env var mutation can occur.
     unsafe { std::env::set_var("FORKSPACE_HOME", dir.path()) };
-    // Commands would otherwise leave a systemd slice per test workspace that is never
-    // dropped; `tests/processes.rs` covers the systemd path.
-    unsafe { std::env::set_var("FORKSPACE_NO_SYSTEMD", "1") };
+    // Run as without a systemd user manager (an SSH session without lingering): commands
+    // would otherwise leave a slice per test workspace that is never dropped.
+    // `tests/processes.rs` covers the systemd path.
+    unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
     use_forkspace_for_workers();
     dir
 }

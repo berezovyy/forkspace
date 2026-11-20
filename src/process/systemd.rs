@@ -27,9 +27,8 @@ pub fn available() -> bool {
         use std::sync::OnceLock;
         static AVAILABLE: OnceLock<bool> = OnceLock::new();
         *AVAILABLE.get_or_init(|| {
-            std::env::var("FORKSPACE_NO_SYSTEMD").is_err()
-                && std::env::var_os("XDG_RUNTIME_DIR")
-                    .is_some_and(|dir| PathBuf::from(dir).join("systemd/private").exists())
+            std::env::var_os("XDG_RUNTIME_DIR")
+                .is_some_and(|dir| PathBuf::from(dir).join("systemd/private").exists())
                 && which("systemd-run")
         })
     }

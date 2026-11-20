@@ -47,7 +47,7 @@ impl Env {
         command
             .env("FORKSPACE_HOME", self.path("home"))
             .env("FORKSPACE_BACKEND", "copy")
-            .env("FORKSPACE_NO_SYSTEMD", "1")
+            .env_remove("XDG_RUNTIME_DIR")
             .env("HOME", self.path("fake-home"))
             .args(args);
         command.output().unwrap()

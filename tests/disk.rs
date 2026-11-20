@@ -30,7 +30,7 @@ impl Env {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", self.home.path())
             .env("FORKSPACE_BACKEND", backend)
-            .env("FORKSPACE_NO_SYSTEMD", "1")
+            .env_remove("XDG_RUNTIME_DIR")
             .env("NO_COLOR", "1")
             .args(args)
             .stdin(Stdio::null())
