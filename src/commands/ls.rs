@@ -1,4 +1,4 @@
-//! `forkspace ls`: list workspaces as a table, bare names, or JSON.
+//! `forkspace ls`: list workspaces as a table, or as JSON for tools.
 
 use std::path::Path;
 
@@ -11,24 +11,14 @@ use crate::error::Result;
 use crate::state::State;
 use crate::workspace::Workspace;
 
-const HEADERS: [&str; 7] = [
-    "NAME", "BASE", "BRANCH", "BACKEND", "CHANGED", "SIZE", "PROCESS",
-];
+const HEADERS: [&str; 6] = ["NAME", "PROJECT", "CHANGED", "AGE", "SIZE", "RUNNING"];
 const NAME_COLUMN: usize = 0;
-const BRANCH_COLUMN: usize = 2;
+const PROJECT_COLUMN: usize = 1;
 
 type Row = [String; HEADERS.len()];
 
 pub fn exec(args: LsArgs) -> Result {
     let state = State::load()?;
-    if args.names {
-        let mut names: Vec<&String> = state.workspaces.keys().collect();
-        names.sort();
-        for name in names {
-            println!("{name}");
-        }
-        return Ok(());
-    }
 
     let mut workspaces: Vec<&Workspace> = state.workspaces.values().collect();
     workspaces.sort_by(|a, b| a.name.cmp(&b.name));
@@ -54,14 +44,14 @@ pub fn exec(args: LsArgs) -> Result {
     let rows = workspaces
         .iter()
         .zip(&sizes)
-        .map(|(workspace, size)| {
-            table_row(workspace, args.no_gitignore, count_of(workspace), *size)
-        })
+        .map(|(workspace, size)| table_row(workspace, count_of(workspace), *size))
         .collect::<Result<Vec<_>>>()?;
-    let show_branch = workspaces
+    // The project column only tells workspaces of different projects apart.
+    let projects: std::collections::BTreeSet<&Path> = workspaces
         .iter()
-        .any(|workspace| workspace.branch.is_some());
-    print_table(&rows, show_branch);
+        .map(|workspace| workspace.base.as_path())
+        .collect();
+    print_table(&rows, projects.len() > 1);
     print_total(sizes.iter().flatten().sum());
     Ok(())
 }
@@ -96,7 +86,7 @@ fn json_entry(workspace: &Workspace, processes: usize) -> serde_json::Value {
         "parent": workspace.parent,
         "branch": workspace.branch,
         "backend": workspace.backend_kind.as_str(),
-        "live": workspace.is_live(),
+        "age_seconds": age_seconds(workspace),
         "degraded": workspace.degraded,
         "probe_reason": workspace.probe_reason,
         "base_missing": !workspace.base.is_dir(),
@@ -108,19 +98,13 @@ fn json_entry(workspace: &Workspace, processes: usize) -> serde_json::Value {
     })
 }
 
-fn table_row(
-    workspace: &Workspace,
-    include_ignored: bool,
-    processes: usize,
-    size: Option<u64>,
-) -> Result<Row> {
+fn table_row(workspace: &Workspace, processes: usize, size: Option<u64>) -> Result<Row> {
     // A folder deleted or moved by hand has nothing to count; one row says so, and the rest of
     // the table still shows (STATE-12).
     let count = if view_missing(workspace) {
         "view missing".to_string()
     } else {
-        match select_backend(Some(workspace.backend_kind))?.change_count(workspace, include_ignored)
-        {
+        match select_backend(Some(workspace.backend_kind))?.change_count(workspace, false) {
             Ok(count) => describe_count(count),
             Err(error) => {
                 eprintln!(
@@ -134,12 +118,27 @@ fn table_row(
     Ok([
         workspace.name.clone(),
         origin(workspace),
-        workspace.branch.clone().unwrap_or_else(|| "-".to_string()),
-        describe_backend(workspace),
         count,
+        describe_age(age_seconds(workspace)),
         size.map_or_else(|| "?".to_string(), disk::human),
         describe_process(workspace, processes),
     ])
+}
+
+/// Seconds since the workspace was made.
+fn age_seconds(workspace: &Workspace) -> u64 {
+    let now = crate::util::now_unix_ns();
+    u64::try_from(now.saturating_sub(workspace.fork_time_ns) / 1_000_000_000).unwrap_or(u64::MAX)
+}
+
+/// `45s`, `12m`, `5h`, `3d`.
+fn describe_age(seconds: u64) -> String {
+    match seconds {
+        0..60 => format!("{seconds}s"),
+        60..3_600 => format!("{}m", seconds / 60),
+        3_600..86_400 => format!("{}h", seconds / 3_600),
+        _ => format!("{}d", seconds / 86_400),
+    }
 }
 
 /// Whether the workspace's folder is gone (deleted or moved by hand).
@@ -171,18 +170,9 @@ fn shorten_path(path: &Path) -> String {
     }
 }
 
-/// The backend kind, marked when the workspace sees later base changes (`new --live`).
-fn describe_backend(workspace: &Workspace) -> String {
-    let kind = workspace.backend_kind.as_str();
-    if workspace.is_live() {
-        format!("{kind} (live)")
-    } else {
-        kind.to_string()
-    }
-}
-
 fn describe_count(count: ChangeCount) -> String {
     match count {
+        ChangeCount::Ready(0) => "nothing".to_string(),
         ChangeCount::Ready(1) => "1 file".to_string(),
         ChangeCount::Ready(count) => format!("{count} files"),
         ChangeCount::Pending => "-".to_string(),
@@ -219,10 +209,10 @@ fn describe_process(workspace: &Workspace, processes: usize) -> String {
 }
 
 /// Print left-aligned columns separated by two spaces; the last column is not padded. The
-/// BRANCH column is shown only when some workspace has a branch.
-fn print_table(rows: &[Row], show_branch: bool) {
+/// PROJECT column is shown only when the workspaces come from more than one project.
+fn print_table(rows: &[Row], show_project: bool) {
     let columns: Vec<usize> = (0..HEADERS.len())
-        .filter(|&column| show_branch || column != BRANCH_COLUMN)
+        .filter(|&column| show_project || column != PROJECT_COLUMN)
         .collect();
     let last = columns.len() - 1;
     let widths: Vec<usize> = columns

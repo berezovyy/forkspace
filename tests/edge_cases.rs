@@ -79,8 +79,7 @@ fn a_fork_interrupted_by_a_signal_leaves_nothing_behind() {
         }
         let status = child.wait().unwrap();
         // The next command reconciles whatever the interrupted one left.
-        let listed = env.ok(&["ls", "--names"]);
-        let names = String::from_utf8_lossy(&listed.stdout).into_owned();
+        let names = env.workspaces().join("\n");
         if status.success() {
             assert!(names.contains("interrupted"));
             env.ok(&["drop", "interrupted"]);

@@ -10,7 +10,7 @@ Commands:
   enter        Open a shell (or run a command) inside a workspace
   run          Start a process in a workspace (dev server, Electron, etc.)
   switch       Switch the active workspace (hot-swap via proxy)
-  ls           List all active workspaces
+  ls           List your workspaces: what changed, how old, what runs
   diff         Show what changed in a workspace
   compare      Compare parallel workspace attempts side by side
   merge        Apply workspace changes back to the base directory

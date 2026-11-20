@@ -2,7 +2,7 @@
 
 _forkspace_workspaces() {
     local -a names
-    names=(${(f)"$(forkspace ls --names 2>/dev/null)"})
+    names=(${(f)"$(forkspace ls --json 2>/dev/null | sed -n 's/^    "name": "\(.*\)",$/\1/p')"})
     _describe 'workspace' names
 }
 
@@ -79,9 +79,7 @@ _forkspace() {
                     ;;
                 ls)
                     _arguments \
-                        '--names[Output only workspace names]' \
-                        '--json[Output workspace metadata as JSON]' \
-                        '--no-gitignore[Include ignored files]' \
+                        '--json[Print the workspaces as JSON]' \
                         '--help[Show help]'
                     ;;
                 diff)

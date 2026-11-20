@@ -33,7 +33,7 @@ pub enum Commands {
     /// Switch the active workspace (hot-swap via proxy)
     Switch(SwitchArgs),
 
-    /// List all active workspaces
+    /// List your workspaces: what changed, how old, what runs
     Ls(LsArgs),
 
     /// Show what changed in a workspace
@@ -181,21 +181,8 @@ pub struct SwitchArgs {
 
 #[derive(Args)]
 pub struct LsArgs {
-    #[arg(long, help = "Output only workspace names, one per line")]
-    pub names: bool,
-
-    #[arg(
-        long,
-        conflicts_with = "names",
-        help = "Output workspace metadata as JSON"
-    )]
+    #[arg(long, help = "Print the workspaces as JSON, for tools")]
     pub json: bool,
-
-    #[arg(
-        long,
-        help = "Show all files including gitignored paths (build artifacts, node_modules, etc.)"
-    )]
-    pub no_gitignore: bool,
 }
 
 #[derive(Args)]

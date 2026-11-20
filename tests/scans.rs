@@ -103,8 +103,6 @@ fn merge_ls_and_diff_agree_while_node_modules_is_skipped() {
 
     // Asking for ignored paths still walks everything.
     assert_eq!(env.changed(&["diff", "ws", "--json", "--no-gitignore"]), 6);
-    let everything = env.ok(&["ls", "--no-gitignore"]);
-    assert!(everything.contains("6 files"), "{everything}");
 }
 
 #[test]

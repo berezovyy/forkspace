@@ -216,12 +216,7 @@ fn test_drop_force_cascade() {
 #[serial]
 fn test_ls_empty() {
     let _dir = common::setup_test_env();
-    forkspace::commands::ls::exec(forkspace::cli::LsArgs {
-        names: false,
-        json: false,
-        no_gitignore: false,
-    })
-    .unwrap();
+    forkspace::commands::ls::exec(forkspace::cli::LsArgs { json: false }).unwrap();
 }
 
 #[test]
@@ -231,12 +226,7 @@ fn test_ls_shows_workspaces() {
     let (_dir, base) = common::setup_with_project();
 
     let ws = common::fork_helper(base.path().to_path_buf(), "ls-test-ws").unwrap();
-    forkspace::commands::ls::exec(forkspace::cli::LsArgs {
-        names: false,
-        json: false,
-        no_gitignore: false,
-    })
-    .unwrap();
+    forkspace::commands::ls::exec(forkspace::cli::LsArgs { json: false }).unwrap();
 
     let state = State::load().unwrap();
     assert!(state.workspaces.contains_key("ls-test-ws"));
