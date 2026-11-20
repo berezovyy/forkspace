@@ -92,18 +92,6 @@ pub struct NewArgs {
 
     #[arg(
         long,
-        help = "Keep the workspace's changes in RAM (Linux overlay only; lost on reboot)"
-    )]
-    pub tmpfs: bool,
-
-    #[arg(
-        long,
-        help = "Do not flush the workspace's writes on fsync (Linux overlay only; faster installs and builds, recent writes lost on power loss)"
-    )]
-    pub no_fsync: bool,
-
-    #[arg(
-        long,
         value_name = "SIZE",
         help = "Throttle the workspace's processes above this much memory, e.g. 4G (Linux)"
     )]
@@ -158,18 +146,6 @@ pub struct EnterArgs {
 
     #[arg(long, help = "Destroy the workspace automatically on exit")]
     pub ephemeral: bool,
-
-    #[arg(
-        long,
-        help = "Keep the workspace's changes in RAM (Linux overlay only; lost on reboot)"
-    )]
-    pub tmpfs: bool,
-
-    #[arg(
-        long,
-        help = "When creating, do not flush the workspace's writes on fsync (Linux overlay only; implied by --ephemeral)"
-    )]
-    pub no_fsync: bool,
 
     #[arg(long, help = "Let the shell or command write outside the workspace")]
     pub no_sandbox: bool,

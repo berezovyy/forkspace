@@ -26,7 +26,6 @@ and what the OS offers around it. Each row names the test that holds it. Measure
 | Branch / land | yes | yes | yes | yes | `tests/land.rs::public_fork_branch_then_land_preserves_the_workspace_commits` |
 | Compare / signals | yes | yes | yes | yes | `tests/review_gate.rs::compare_preserves_argument_order_and_buckets_divergence` |
 | Dev-server watcher | native host watcher | FSEvents | native host watcher | native host watcher | `tests/macos_clone.rs::run_switch_proxy_hot_reload_and_drop_supervision` |
-| `--tmpfs` | changes on an existing tmpfs | refused | refused | refused | `tests/fork_drop.rs::test_fork_tmpfs_keeps_overlay_layers_in_ram` |
 | `.wh.*` names | refused at fork; cannot be created in the view | ordinary files | ordinary files | ordinary files | `tests/fork_drop.rs::a_base_with_whiteout_names_is_copied_instead_of_layered` |
 | Crash reconciliation | yes | yes | yes | yes | `tests/fault_injection.rs::kill_during_copy_fork_reconciles_the_intent_and_partial_tree` |
 
@@ -58,7 +57,7 @@ desktop (ext4 on NVMe, fuse-overlayfs 1.13, 16 CPUs, 31 GiB, no swap; 2026-11-19
 | FUSE mounts | one | `fusermount` allows 1,000 mounts in total unless root raises `mount_max` in `/etc/fuse.conf` |
 | Page cache for files read through the view | one copy per workspace, on top of the frozen copy's own | reading one 300 MB file through 3 workspaces cached 1.2 GB; the cache is reclaimable, but the copies compete for it |
 | Disk for unchanged files | none: every workspace of a project reads the same frozen copy | the first fork of a project copies it once (bytes on ext4, clones on Btrfs/XFS) |
-| `fsync` | flushed by default | `--no-fsync`: 1,000 small write+fsync calls in 80 ms instead of 1,390 ms |
+| `fsync` | answered without flushing (`fsync=0`) | 1,000 small write+fsync calls in 80 ms instead of 1,390 ms; `merge` still flushes what it writes into the project |
 | Git index | refreshed once in the frozen copy, not written per workspace | first `git status`: no hashing; about 300 ms of cold FUSE lookups for 20,000 files |
 | `state.json` | about 700 bytes | at 1,000 workspaces: 700 KB, `diff` 14 ms, `new` 40–80 ms; every command reads it whole under one lock, so a `diff` waited up to 620 ms while 30 `new` ran at once |
 | inotify | whatever watchers the agent runs | 256 inotify instances per user by default (`fs.inotify.max_user_instances`): one per watching process, the first limit file watchers reach |

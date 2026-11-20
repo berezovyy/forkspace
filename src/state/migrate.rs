@@ -78,7 +78,6 @@ impl From<LegacyWorkspace> for Workspace {
                 merged: value.merged,
                 tmpfs: value.tmpfs,
                 tmpfs_size: value.tmpfs_size,
-                no_fsync: false,
                 unknown_fields: Map::new(),
             }),
             manifest_status: ManifestStatus::Absent,

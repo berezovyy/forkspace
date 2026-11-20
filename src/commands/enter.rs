@@ -135,16 +135,7 @@ fn create_for_entry(args: &EnterArgs) -> Result<String> {
     };
     let base = PathBuf::from(args.from.as_deref().unwrap_or("."));
 
-    let created = workspace::create(
-        base,
-        &name,
-        CreateOptions {
-            tmpfs: args.tmpfs,
-            // A workspace removed when its command exits needs no durability.
-            no_fsync: args.no_fsync || args.ephemeral,
-            ..Default::default()
-        },
-    )?;
+    let created = workspace::create(base, &name, CreateOptions::default())?;
     if args.ephemeral {
         State::with_state(|state| {
             if let Some(stored) = state.workspaces.get_mut(&name) {

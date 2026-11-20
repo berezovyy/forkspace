@@ -36,9 +36,7 @@ pub fn exec(args: NewArgs) -> Result {
         source.from,
         &name,
         CreateOptions {
-            tmpfs: args.tmpfs,
             branch,
-            no_fsync: args.no_fsync,
             ..Default::default()
         },
     )?;
@@ -50,12 +48,6 @@ pub fn exec(args: NewArgs) -> Result {
         })?;
     }
     print_backend_notes(&ws);
-    if args.no_fsync && ws.backend_kind != BackendKind::Overlay {
-        eprintln!(
-            "note: --no-fsync has no effect on '{}' workspaces: they flush on fsync as usual",
-            ws.backend_kind.as_str()
-        );
-    }
     warn_inherited_venvs(&ws);
     println!(
         "created workspace '{}' at {}",

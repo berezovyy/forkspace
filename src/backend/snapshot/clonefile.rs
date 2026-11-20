@@ -17,7 +17,6 @@ use crate::error::{ForkspaceError, Result};
 use crate::util::IoContext;
 
 const CAPABILITIES: Capabilities = Capabilities {
-    tmpfs_backing: false,
     network_namespace: false,
     instant_fork: false,
     sealed_parent: false,
@@ -124,15 +123,6 @@ impl ForkPrimitive for ClonefilePrimitive {
     fn backend_state(&self, _stats: &ForkStats) -> BackendState {
         BackendState::MacClone {
             unknown_fields: Map::new(),
-        }
-    }
-
-    fn tmpfs_unsupported(&self) -> ForkspaceError {
-        ForkspaceError::CapabilityUnsupported {
-            diagnosis: "--tmpfs is unavailable with APFS clones".to_string(),
-            remedy:
-                "omit --tmpfs; for a workspace removed on exit, use `forkspace enter --ephemeral`"
-                    .to_string(),
         }
     }
 }

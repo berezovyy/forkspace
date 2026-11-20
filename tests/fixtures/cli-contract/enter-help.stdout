@@ -10,8 +10,6 @@ Options:
       --create             Create the workspace if it does not exist
       --from <FROM>        Base directory when creating a new workspace on entry
       --ephemeral          Destroy the workspace automatically on exit
-      --tmpfs              Keep the workspace's changes in RAM (Linux overlay only; lost on reboot)
-      --no-fsync           When creating, do not flush the workspace's writes on fsync (Linux overlay only; implied by --ephemeral)
       --no-sandbox         Let the shell or command write outside the workspace
       --sandbox-info       List where commands in the workspace may write, then exit
       --merge-on-exit      Merge changes back to the base directory when exiting the shell

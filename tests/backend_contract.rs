@@ -15,7 +15,6 @@ use forkspace::workspace::Workspace;
 use serial_test::serial;
 
 const FAKE_CAPABILITIES: Capabilities = Capabilities {
-    tmpfs_backing: true,
     network_namespace: false,
     instant_fork: false,
     sealed_parent: false,
@@ -101,9 +100,7 @@ fn fake_backend_passes_workspace_contract() {
     let req = CreateReq {
         name: "view".into(),
         base: root.path().to_path_buf(),
-        tmpfs: false,
         parent_layers: None,
-        no_fsync: false,
     };
 
     backend.preflight(root.path()).unwrap();
@@ -118,7 +115,6 @@ fn fake_backend_passes_workspace_contract() {
     );
 
     assert_eq!(backend.kind(), BackendKind::MacClone);
-    assert!(backend.capabilities().tmpfs_backing);
     assert_eq!(backend.view_path(&workspace), root.path().join("view"));
     assert!(backend
         .changes(&workspace, false, false)

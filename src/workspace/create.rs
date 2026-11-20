@@ -22,12 +22,8 @@ const MAX_FORK_DEPTH: usize = 32;
 #[derive(Debug, Clone, Default)]
 pub struct CreateOptions {
     pub session: Option<String>,
-    /// Keep the writable layers in RAM; only the overlay backend supports it.
-    pub tmpfs: bool,
     /// Create this Git branch in the view and record it; the fork fails without it.
     pub branch: Option<String>,
-    /// Overlay only: do not flush the workspace's writes on `fsync`.
-    pub no_fsync: bool,
 }
 
 /// Where a new workspace's contents come from, and the backend that will copy them.
@@ -64,8 +60,6 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
     let request = CreateReq {
         name: name.to_string(),
         base: origin.clone(),
-        tmpfs: options.tmpfs,
-        no_fsync: options.no_fsync,
         parent_layers,
     };
     let (backend, view) = match backend.create(&request) {

@@ -24,8 +24,6 @@ pub use overlay::OverlayState;
 /// Static feature flags a backend advertises.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
-    /// The writable layer can live on tmpfs.
-    pub tmpfs_backing: bool,
     /// Workspace processes can run in their own network namespace.
     pub network_namespace: bool,
     /// Forking costs O(1) regardless of project size.
@@ -96,14 +94,8 @@ pub enum BackendState {
 pub struct CreateReq {
     pub name: String,
     pub base: PathBuf,
-    /// Put the writable layers on an existing tmpfs (overlay only).
-    pub tmpfs: bool,
     /// The layers of the overlay workspace `base` is the view of, when stacking.
     pub parent_layers: Option<OverlayState>,
-    /// Overlay only: answer `fsync` in the workspace without flushing to disk. Writes of
-    /// the last few seconds can be lost on power loss; the base and forkspace's own state are
-    /// still flushed.
-    pub no_fsync: bool,
 }
 
 /// What [`WorkspaceBackend::create`] produced.

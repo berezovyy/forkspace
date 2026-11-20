@@ -246,55 +246,6 @@ fn test_ls_shows_workspaces() {
 
 #[test]
 #[serial]
-fn test_fork_tmpfs_keeps_overlay_layers_in_ram() {
-    skip_without_overlay!();
-    let (_dir, base) = common::setup_with_project();
-
-    let ws = forkspace::workspace::create(
-        base.path().to_path_buf(),
-        "tmpfs-overlay-ws",
-        forkspace::workspace::CreateOptions {
-            tmpfs: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-
-    assert!(ws.tmpfs());
-    let upper = ws.upper_path().unwrap().to_path_buf();
-    assert!(!upper.starts_with(forkspace::paths::forkspace_home()));
-    assert!(ws.view_path.join("README.md").exists());
-    std::fs::write(ws.view_path.join("note.txt"), "in ram\n").unwrap();
-    assert!(upper.join("note.txt").exists());
-
-    State::with_state(|state| forkspace::workspace::remove(state, "tmpfs-overlay-ws")).unwrap();
-    assert!(!upper.parent().unwrap().exists());
-}
-
-#[test]
-#[serial]
-fn test_fork_tmpfs_is_refused_by_copy_backend() {
-    skip_unless_copying!();
-    let (_dir, base) = common::setup_with_project();
-
-    let result = forkspace::workspace::create(
-        base.path().to_path_buf(),
-        "tmpfs-copy-ws",
-        forkspace::workspace::CreateOptions {
-            tmpfs: true,
-            ..Default::default()
-        },
-    );
-
-    assert!(matches!(
-        result,
-        Err(ForkspaceError::CapabilityUnsupported { .. })
-    ));
-    assert!(State::load().unwrap().workspaces.is_empty());
-}
-
-#[test]
-#[serial]
 fn test_fork_rejects_unsafe_workspace_names() {
     let (_dir, base) = common::setup_with_project();
     for name in ["", ".", "..", "a/b", "a\0b"] {

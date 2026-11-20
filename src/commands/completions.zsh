@@ -46,8 +46,6 @@ _forkspace() {
                 new)
                     _arguments \
                         '1:workspace name:' \
-                        '--tmpfs[Keep changes in RAM]' \
-                        '--no-fsync[Do not flush writes on fsync]' \
                         '--memory=[Memory above which the workspace is throttled]:size:' \
                         '--cpu=[CPU time cap, percent of one CPU]:percent:' \
                         '--help[Show help]'
@@ -67,8 +65,6 @@ _forkspace() {
                         '--create[Create if not exists]' \
                         '--from=[Base directory]:directory:_directories' \
                         '--ephemeral[Destroy on exit]' \
-                        '--tmpfs[Keep changes in RAM]' \
-                        '--no-fsync[Do not flush writes on fsync]' \
                         '--no-sandbox[Let the command write outside the workspace]' \
                         '--sandbox-info[List where commands may write, then exit]' \
                         '--merge-on-exit[Merge changes on exit]' \

@@ -576,22 +576,8 @@ mod macos {
 
     #[test]
     #[serial]
-    fn tmpfs_refuses_and_drop_allows_immediate_refork() {
+    fn drop_allows_immediate_refork() {
         let (home, base) = setup();
-        let error = forkspace::workspace::create(
-            base.path().to_path_buf(),
-            "ram",
-            forkspace::workspace::CreateOptions {
-                tmpfs: true,
-                ..Default::default()
-            },
-        )
-        .unwrap_err();
-        assert!(matches!(
-            error,
-            ForkspaceError::CapabilityUnsupported { .. }
-        ));
-
         let workspace = fork(base.path(), "again");
         let old_view = workspace.view_path.clone();
         let started = Instant::now();

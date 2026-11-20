@@ -97,7 +97,6 @@ fn create(project: &Path, name: &str, input: &Value) -> Result<Workspace> {
     let options = |branch: Option<String>| CreateOptions {
         session: session.clone(),
         branch,
-        ..CreateOptions::default()
     };
     // Like Claude Code's own worktrees: a branch named `worktree-<name>`, when the project is
     // a Git repository and the branch is free.

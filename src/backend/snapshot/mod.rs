@@ -37,7 +37,6 @@ use crate::workspace::Workspace;
 
 /// Capabilities shared by the per-file primitives (reflink and plain copy).
 const DIRECTORY_COPY_CAPABILITIES: Capabilities = Capabilities {
-    tmpfs_backing: false,
     network_namespace: true,
     instant_fork: false,
     sealed_parent: false,
@@ -141,14 +140,6 @@ pub(crate) trait ForkPrimitive: Send + Sync + 'static {
             unknown_fields: Map::new(),
         }
     }
-
-    /// The error for a `--tmpfs` request, which no directory primitive supports.
-    fn tmpfs_unsupported(&self) -> ForkspaceError {
-        ForkspaceError::CapabilityUnsupported {
-            diagnosis: "--tmpfs is unavailable for directory-copy backends".to_string(),
-            remedy: "omit --tmpfs or install fuse-overlayfs".to_string(),
-        }
-    }
 }
 
 pub(crate) struct SnapshotBackend<P: ForkPrimitive> {
@@ -213,9 +204,6 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
     }
 
     fn create(&self, req: &CreateReq) -> Result<ViewInfo> {
-        if req.tmpfs {
-            return Err(self.primitive.tmpfs_unsupported());
-        }
         let destination = paths::snapshot_dir(&req.name);
         if destination.exists() {
             return Err(ForkspaceError::WorkspaceExists(req.name.clone()));
