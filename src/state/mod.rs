@@ -133,9 +133,14 @@ impl State {
         F: FnOnce(&mut State) -> Result<R>,
     {
         let result = State::with_lock(|| {
-            let mut state = State::load_unlocked()?;
+            let (mut state, on_disk) = State::load_with_source()?;
             let result = f(&mut state)?;
-            state.save()?;
+            // Unchanged: no rewrite and no fsync. With a thousand workspaces the file is
+            // hundreds of kilobytes, and every command holds the lock while it is written.
+            let json = state.to_json()?;
+            if on_disk.as_deref() != Some(json.as_str()) {
+                state.write(&json)?;
+            }
             Ok(result)
         })?;
         start_trash_removals();
@@ -144,14 +149,21 @@ impl State {
 
     /// Atomically replace `state.json`. Refuses to downgrade a file from a newer forkspace.
     pub fn save(&self) -> Result {
+        self.write(&self.to_json()?)
+    }
+
+    fn to_json(&self) -> Result<String> {
+        serde_json::to_string_pretty(self)
+            .map_err(|e| ForkspaceError::StateFailed(format!("failed to serialize state: {e}")))
+    }
+
+    fn write(&self, json: &str) -> Result {
         if self.version > CURRENT_VERSION {
             return Err(ForkspaceError::StateFailed(format!(
                 "refusing to overwrite state version {} with a version {} binary; upgrade forkspace and retry",
                 self.version, CURRENT_VERSION
             )));
         }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| ForkspaceError::StateFailed(format!("failed to serialize state: {e}")))?;
         write_atomic(&paths::state_file(), json.as_bytes())
     }
 
@@ -190,6 +202,12 @@ impl State {
     /// Load `state.json` (the caller holds the lock), migrating old versions and reconciling
     /// it with the disk. A missing or blank file is an empty state.
     fn load_unlocked() -> Result<State> {
+        Ok(Self::load_with_source()?.0)
+    }
+
+    /// [`State::load_unlocked`], also returning the file as it is on disk afterwards (`None`
+    /// when that is unknown), so that a caller can tell whether it changed anything.
+    fn load_with_source() -> Result<(State, Option<String>)> {
         let path = paths::state_file();
         migrate::recover_interrupted(&path)?;
         let content = match fs::read_to_string(&path) {
@@ -197,24 +215,38 @@ impl State {
             result => result.io_context(|| format!("read state file {}", path.display()))?,
         };
         if content.trim().is_empty() {
-            return State::default().reconciled();
+            return Ok((State::default().reconciled()?, None));
         }
 
-        let value: Value = serde_json::from_str(&content).map_err(invalid_json)?;
-        let version = value.get("version").and_then(Value::as_u64).unwrap_or(1) as u32;
-        if version <= 1 {
-            return migrate::migrate_v1(&path, &content, value);
+        // The version alone first, without building the document: the file is then parsed
+        // once, straight into the records, unless it needs migrating.
+        #[derive(Deserialize)]
+        struct Version {
+            version: Option<u64>,
         }
-        let state: State = serde_json::from_value(value).map_err(invalid_json)?;
+        let version = serde_json::from_str::<Version>(&content)
+            .map_err(invalid_json)?
+            .version
+            .unwrap_or(1) as u32;
+        if version <= 1 {
+            let value: Value = serde_json::from_str(&content).map_err(invalid_json)?;
+            return Ok((migrate::migrate_v1(&path, &content, value)?, None));
+        }
+        let state: State = serde_json::from_str(&content).map_err(invalid_json)?;
         if state.version > CURRENT_VERSION {
             // This binary cannot save a newer file (see `save`), so skip recovery entirely.
             eprintln!(
                 "warning: state file has version {}, this binary only knows version {}",
                 state.version, CURRENT_VERSION
             );
-            return Ok(state);
+            return Ok((state, Some(content)));
         }
-        state.reconciled()
+        let mut state = state;
+        if state.reconcile_runtime()? {
+            state.save()?;
+            return Ok((state, None));
+        }
+        Ok((state, Some(content)))
     }
 
     /// Run crash recovery, saving only if it changed anything.

@@ -182,18 +182,22 @@ impl State {
     /// A workspace whose view is gone but whose trashed view (`<name>-<fork_time_ns>-…`) is
     /// present was mid-drop when forkspace stopped; finish the drop by forgetting it.
     fn forget_interrupted_drops(&mut self, trash_root: &Path) -> bool {
+        // The trash is read once, and only workspaces with an entry there are looked at on
+        // disk: every command runs this, with however many workspaces there are.
+        let trashed: Vec<String> = bounded_entries(trash_root)
+            .filter_map(|path| path.file_name()?.to_str().map(str::to_string))
+            .collect();
+        if trashed.is_empty() {
+            return false;
+        }
         let interrupted: Vec<String> = self
             .workspaces
             .values()
-            .filter(|workspace| !workspace.view_path.exists())
             .filter(|workspace| {
                 let prefix = format!("{}-{}-", workspace.name, workspace.fork_time_ns);
-                bounded_entries(trash_root).any(|path| {
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| name.starts_with(&prefix))
-                })
+                trashed.iter().any(|name| name.starts_with(&prefix))
             })
+            .filter(|workspace| !workspace.view_path.exists())
             .map(|workspace| workspace.name.clone())
             .collect();
         for name in &interrupted {

@@ -330,3 +330,36 @@ fn forkspace_home_is_created_private_and_tightened() {
     let mode = std::fs::metadata(&home).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o700);
 }
+
+/// A command that changes nothing does not rewrite (and fsync) the state file: with many
+/// workspaces it is large, and every command holds the lock while it is written.
+#[test]
+#[serial]
+fn an_unchanged_state_is_not_rewritten() {
+    let dir = common::setup_test_env();
+    State::with_state(|state| {
+        state.add_workspace(common::make_test_workspace(
+            dir.path(),
+            "kept",
+            dir.path(),
+            None,
+        ))?;
+        Ok(())
+    })
+    .unwrap();
+    let path = dir.path().join("state.json");
+    let before = std::fs::metadata(&path).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    State::with_state(|_| Ok(())).unwrap();
+    let after = std::fs::metadata(&path).unwrap();
+    use std::os::unix::fs::MetadataExt;
+    assert_eq!(before.ino(), after.ino(), "state.json was replaced");
+    assert_eq!(before.mtime_nsec(), after.mtime_nsec());
+
+    State::with_state(|state| {
+        state.require_workspace_mut("kept")?.session = Some("changed".to_string());
+        Ok(())
+    })
+    .unwrap();
+    assert_ne!(std::fs::metadata(&path).unwrap().ino(), after.ino());
+}
