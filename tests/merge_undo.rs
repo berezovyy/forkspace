@@ -1,19 +1,21 @@
 //! `merge --undo`: a merge keeps what it replaces or deletes in the project.
 
+mod common;
+
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 struct Env {
-    home: tempfile::TempDir,
+    home: common::TestHome,
     root: tempfile::TempDir,
 }
 
 impl Env {
     fn new() -> Self {
         let env = Self {
-            home: tempfile::tempdir().unwrap(),
+            home: common::TestHome::new(),
             root: tempfile::tempdir().unwrap(),
         };
         fs::create_dir(env.project()).unwrap();

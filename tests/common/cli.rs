@@ -8,7 +8,7 @@ use forkspace::state::State;
 use forkspace::workspace::Workspace;
 
 pub struct Env {
-    pub home: tempfile::TempDir,
+    pub home: super::TestHome,
     pub root: tempfile::TempDir,
 }
 

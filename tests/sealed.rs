@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 struct Env {
-    home: tempfile::TempDir,
+    home: common::TestHome,
     root: tempfile::TempDir,
 }
 
@@ -17,7 +17,7 @@ impl Env {
     /// A Git project with `a.txt` and `b.txt` on `main` and a different `a.txt` on `other`.
     fn new() -> Self {
         let env = Self {
-            home: tempfile::tempdir().unwrap(),
+            home: common::TestHome::new(),
             root: tempfile::tempdir().unwrap(),
         };
         let project = env.project();

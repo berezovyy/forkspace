@@ -2,13 +2,89 @@
 
 pub mod cli;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use forkspace::util::now_rfc3339;
 use forkspace::workspace::Workspace;
 
-pub fn setup_test_env() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("failed to create temp dir");
+/// A scratch `FORKSPACE_HOME`. Dropping it unmounts every overlay mounted under it, so a test
+/// that leaves workspaces behind (or panics before dropping them) does not leave a
+/// fuse-overlayfs daemon running and a mount in the temporary directory.
+pub struct TestHome(tempfile::TempDir);
+
+impl TestHome {
+    pub fn new() -> Self {
+        Self(tempfile::tempdir().expect("failed to create temp dir"))
+    }
+
+    pub fn path(&self) -> &Path {
+        self.0.path()
+    }
+}
+
+impl Default for TestHome {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for TestHome {
+    fn drop(&mut self) {
+        unmount_under(self.0.path());
+    }
+}
+
+/// Unmount every mount below `root`, deepest first (Linux; elsewhere forkspace mounts none).
+pub fn unmount_under(root: &Path) {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let Ok(info) = std::fs::read_to_string("/proc/self/mountinfo") else {
+        return;
+    };
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut points: Vec<PathBuf> = info
+        .lines()
+        .filter_map(|line| line.split(' ').nth(4))
+        .map(|field| PathBuf::from(unescape_mountinfo(field)))
+        .filter(|point| point.starts_with(&root) && point != &root)
+        .collect();
+    points.sort_by_key(|point| std::cmp::Reverse(point.components().count()));
+    let fusermount = ["/usr/bin/fusermount3", "/usr/bin/fusermount"]
+        .into_iter()
+        .find(|path| Path::new(path).exists())
+        .unwrap_or("fusermount3");
+    for point in points {
+        let _ = std::process::Command::new(fusermount)
+            .args(["-u", "-z"])
+            .arg(&point)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+/// `/proc/self/mountinfo` writes space, tab, newline and backslash in paths as `\ooo`.
+fn unescape_mountinfo(field: &str) -> String {
+    let bytes = field.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' && index + 3 < bytes.len() {
+            if let Ok(value) = u8::from_str_radix(&field[index + 1..index + 4], 8) {
+                out.push(value);
+                index += 4;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+pub fn setup_test_env() -> TestHome {
+    let dir = TestHome::new();
     // SAFETY: tests using setup_test_env() are serialized with #[serial],
     // so no concurrent env var mutation can occur.
     unsafe { std::env::set_var("FORKSPACE_HOME", dir.path()) };
@@ -42,7 +118,7 @@ pub fn create_test_project(dir: &Path) {
     .expect("write Cargo.toml");
 }
 
-pub fn setup_with_project() -> (tempfile::TempDir, tempfile::TempDir) {
+pub fn setup_with_project() -> (TestHome, tempfile::TempDir) {
     let forkspace_dir = setup_test_env();
     let base = tempfile::tempdir().expect("failed to create temp dir");
     create_test_project(base.path());

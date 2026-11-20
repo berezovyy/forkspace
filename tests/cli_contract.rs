@@ -1,3 +1,4 @@
+mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -153,7 +154,7 @@ fn golden_cli_contract() {
         {
             continue;
         }
-        let home = tempfile::tempdir().unwrap();
+        let home = common::TestHome::new();
         if let Some(fixture) = &case.state_fixture {
             fs::copy(fixture_dir().join(fixture), home.path().join("state.json")).unwrap();
         }

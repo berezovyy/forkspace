@@ -7,14 +7,14 @@ use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 struct Env {
-    home: tempfile::TempDir,
+    home: common::TestHome,
     root: tempfile::TempDir,
 }
 
 impl Env {
     fn new() -> Self {
         let env = Self {
-            home: tempfile::tempdir().unwrap(),
+            home: common::TestHome::new(),
             root: tempfile::tempdir().unwrap(),
         };
         fs::create_dir(env.project()).unwrap();

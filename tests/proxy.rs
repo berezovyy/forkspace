@@ -3,6 +3,8 @@
 
 #![cfg(target_os = "linux")]
 
+mod common;
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::{Command, Output};
@@ -22,7 +24,7 @@ fn the_proxy_serves_the_dev_server_and_exits_when_it_stops() {
         eprintln!("skipping: python3 is not installed");
         return;
     }
-    let home = tempfile::tempdir().unwrap();
+    let home = common::TestHome::new();
     let project = tempfile::tempdir().unwrap();
     std::fs::write(
         project.path().join("index.html"),

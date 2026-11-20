@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 struct Env {
-    home: tempfile::TempDir,
+    home: common::TestHome,
     root: tempfile::TempDir,
     backend: &'static str,
     path: Option<String>,
@@ -17,7 +17,7 @@ struct Env {
 impl Env {
     fn new(backend: &'static str) -> Self {
         let env = Self {
-            home: tempfile::tempdir().unwrap(),
+            home: common::TestHome::new(),
             root: tempfile::tempdir().unwrap(),
             backend,
             path: None,

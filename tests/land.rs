@@ -34,7 +34,7 @@ fn commit(path: &Path, message: &str, content: &str) {
 }
 
 struct Fixture {
-    _home: tempfile::TempDir,
+    _home: common::TestHome,
     _root: tempfile::TempDir,
     base: std::path::PathBuf,
     view: std::path::PathBuf,

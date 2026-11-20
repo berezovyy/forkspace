@@ -1,12 +1,14 @@
 //! Snapshot scans skip directories whose changes are never transferred, without changing
 //! what `diff`, `merge`, `pull`, and `ls` report.
 
+mod common;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
 struct Env {
-    home: tempfile::TempDir,
+    home: common::TestHome,
     root: tempfile::TempDir,
 }
 
@@ -14,7 +16,7 @@ impl Env {
     /// A project with sources, an ignored build directory, `.env`, and a `node_modules` tree.
     fn new() -> Self {
         let env = Self {
-            home: tempfile::tempdir().unwrap(),
+            home: common::TestHome::new(),
             root: tempfile::tempdir().unwrap(),
         };
         let project = env.project();

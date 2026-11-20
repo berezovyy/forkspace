@@ -1,5 +1,7 @@
 //! `FORKSPACE_TRACE` phase timings and the benchmark script that reads them.
 
+mod common;
+
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -34,7 +36,7 @@ fn trace_phases(output: &Output) -> Vec<String> {
 
 #[test]
 fn trace_lines_go_to_stderr_only() {
-    let home = tempfile::tempdir().unwrap();
+    let home = common::TestHome::new();
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join("file.txt"), "one\n").unwrap();
     let from = project.path().to_str().unwrap();

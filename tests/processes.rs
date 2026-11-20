@@ -11,7 +11,7 @@ use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
 struct Env {
-    home: tempfile::TempDir,
+    home: common::TestHome,
     root: tempfile::TempDir,
     backend: &'static str,
     systemd: bool,
@@ -20,7 +20,7 @@ struct Env {
 impl Env {
     fn new(backend: &'static str, systemd: bool) -> Self {
         let env = Self {
-            home: tempfile::tempdir().unwrap(),
+            home: common::TestHome::new(),
             root: tempfile::tempdir().unwrap(),
             backend,
             systemd,

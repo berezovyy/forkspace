@@ -14,7 +14,7 @@ use forkspace::state::State;
 use serial_test::serial;
 
 struct Env {
-    home: tempfile::TempDir,
+    home: common::TestHome,
     root: tempfile::TempDir,
 }
 

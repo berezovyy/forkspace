@@ -7,7 +7,7 @@ use forkspace::state::State;
 use forkspace::workspace::Workspace;
 use serial_test::serial;
 
-fn install_state_fixture(dir: &tempfile::TempDir, name: &str) {
+fn install_state_fixture(dir: &common::TestHome, name: &str) {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(name);
