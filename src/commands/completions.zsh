@@ -21,7 +21,6 @@ _forkspace() {
         'pull:Bring base changes into a workspace'
         'save:Save a snapshot of a workspace to go back to'
         'restore:Go back to a snapshot (without one, list them)'
-        'gc:Show what disk forkspace could give back, and reclaim it'
         'upgrade:Upgrade forkspace to the latest release'
         'update:Upgrade forkspace to the latest release'
         'skill:Print instructions for coding agents that use forkspace'
@@ -98,12 +97,6 @@ _forkspace() {
                     _arguments \
                         '1:workspace:_forkspace_workspaces' \
                         '2:note:' \
-                        '--help[Show help]'
-                    ;;
-                gc)
-                    _arguments \
-                        '--older-than=[Only remove unchanged workspaces older than this]:age:' \
-                        '--yes[Remove without asking]' \
                         '--help[Show help]'
                     ;;
                 restore)

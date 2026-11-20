@@ -329,13 +329,6 @@ fn a_view_folder_removed_by_hand_is_reported_and_dropped_cleanly() {
     assert!(table.contains("aa") && table.contains("zz"), "{table}");
     assert!(table.contains("view missing"), "{table}");
 
-    let gc = run(&["gc", "--yes"]);
-    assert!(gc.status.success(), "{gc:?}");
-    assert!(
-        String::from_utf8_lossy(&gc.stdout).contains("'ws'"),
-        "{gc:?}"
-    );
-
     let dropped = run(&["drop", "ws"]);
     assert!(dropped.status.success(), "{dropped:?}");
     assert!(!State::load().unwrap().workspaces.contains_key("ws"));

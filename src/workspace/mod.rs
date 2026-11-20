@@ -1,5 +1,6 @@
 //! The workspace record persisted in `state.json`, and its lifecycle.
 
+pub mod cleanup;
 mod create;
 mod env;
 pub mod git_index;

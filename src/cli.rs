@@ -54,9 +54,6 @@ pub enum Commands {
     /// Go back to a snapshot (without one, list them)
     Restore(RestoreArgs),
 
-    /// Show what disk forkspace could give back, and reclaim it
-    Gc(GcArgs),
-
     /// Upgrade forkspace to the latest release (or to a given version)
     #[command(visible_alias = "update")]
     Upgrade(UpgradeArgs),
@@ -166,20 +163,6 @@ pub struct MergeArgs {
 pub struct UndoArgs {
     #[arg(help = "Undo the latest merge of this workspace (default: the latest merge of any)")]
     pub name: Option<String>,
-}
-
-#[derive(Args)]
-pub struct GcArgs {
-    #[arg(
-        long,
-        value_name = "AGE",
-        default_value = "7d",
-        help = "Only remove unchanged workspaces older than this (s, m, h, d, w)"
-    )]
-    pub older_than: String,
-
-    #[arg(long, help = "Remove without asking")]
-    pub yes: bool,
 }
 
 #[derive(Args)]

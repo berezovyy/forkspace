@@ -31,6 +31,7 @@ pub fn exec(args: DropArgs) -> Result {
         }
         state.sorted_deepest_first(&mut names);
         let failed = remove_all(state, &names)?;
+        workspace::cleanup::leftovers(state);
         if failed.is_none() {
             for name in &names {
                 println!("removed '{name}'");

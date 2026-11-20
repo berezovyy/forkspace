@@ -17,7 +17,6 @@ Commands:
   pull     Bring your project's newer changes into a workspace
   save     Save a snapshot of a workspace to go back to
   restore  Go back to a snapshot (without one, list them)
-  gc       Show what disk forkspace could give back, and reclaim it
   upgrade  Upgrade forkspace to the latest release (or to a given version) [aliases: update]
   skill    Print instructions for coding agents that use forkspace
   hook     Run as a Claude Code hook, so its worktrees are forkspace workspaces

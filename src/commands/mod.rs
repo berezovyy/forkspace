@@ -6,7 +6,6 @@ pub(crate) mod completions;
 pub mod diff;
 pub mod drop;
 pub(crate) mod enter;
-pub(crate) mod gc;
 pub mod hook;
 pub mod ls;
 pub(crate) mod merge;
@@ -43,7 +42,6 @@ pub fn dispatch(cli: Cli) -> Result {
         Commands::Pull(args) => pull::exec(args),
         Commands::Save(args) => checkpoint::save(args),
         Commands::Restore(args) => checkpoint::restore(args),
-        Commands::Gc(args) => gc::exec(args),
         Commands::Upgrade(args) => upgrade::exec(args),
         Commands::Skill => skill::exec(),
         Commands::Hook(args) => hook::exec(args),

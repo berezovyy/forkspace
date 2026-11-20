@@ -98,8 +98,10 @@ fn a_fresh_overlay_workspace_costs_almost_nothing() {
     assert!(size_of(&env.sizes(), "fresh") < 64 * 1024);
 }
 
+/// `drop` also clears what nothing uses any more: undo data past retention (10 merges or
+/// 14 days) and fork-time copies of workspaces that are gone. Other workspaces stay.
 #[test]
-fn gc_lists_idle_workspaces_and_expired_data_but_removes_nothing_unasked() {
+fn drop_clears_leftovers_and_keeps_other_workspaces() {
     let env = Env::new();
     env.fork("idle");
     env.fork("busy");
@@ -108,7 +110,7 @@ fn gc_lists_idle_workspaces_and_expired_data_but_removes_nothing_unasked() {
         "work\n",
     )
     .unwrap();
-    // Undo data for twelve merges a month ago: two are past retention (10 merges or 14 days).
+    // Undo data for twelve merges a month ago: two are past retention.
     let month_ago = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -124,33 +126,17 @@ fn gc_lists_idle_workspaces_and_expired_data_but_removes_nothing_unasked() {
         });
         fs::write(dir.join("record.json"), record.to_string()).unwrap();
     }
-    // An unused frozen copy is removed by crash recovery on the next command already.
-    let unused = env.home.path().join("frozen/deadbeef-1/tree");
-    fs::create_dir_all(&unused).unwrap();
+    let orphan = env.home.path().join("ancestors/long-gone");
+    fs::create_dir_all(&orphan).unwrap();
 
-    let fresh = env.ok(&["gc"]);
-    assert!(
-        !fresh.contains("workspace 'idle'"),
-        "younger than 7 days: {fresh}"
-    );
-    assert!(!unused.exists(), "recovery sweeps unused frozen copies");
-
-    let survey = env.ok(&["gc", "--older-than", "0s"]);
-    assert!(survey.contains("workspace 'idle'"), "{survey}");
-    assert_eq!(survey.matches("undo data").count(), 2, "{survey}");
-    assert!(survey.contains("keeping 'busy'"), "{survey}");
-    assert!(!survey.contains("workspace 'busy'"), "{survey}");
-    assert!(survey.contains("nothing removed"), "{survey}");
-    assert!(common::view_of(env.home.path(), "idle").exists());
-
-    let removed = env.ok(&["gc", "--older-than", "0s", "--yes"]);
-    assert!(removed.contains("freed"), "{removed}");
+    env.ok(&["drop", "idle"]);
     assert!(!common::view_of(env.home.path(), "idle").exists());
     assert!(common::view_of(env.home.path(), "busy").exists());
     assert_eq!(
         fs::read_dir(env.home.path().join("undo")).unwrap().count(),
         10
     );
+    assert!(!orphan.exists());
 }
 
 #[test]
