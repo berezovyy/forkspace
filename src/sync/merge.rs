@@ -69,7 +69,7 @@ pub fn held_error(held: &[PathBuf]) -> ForkspaceError {
     ForkspaceError::ChangedDuring {
         operation: "merge".to_string(),
         paths: crate::sync::display_paths(held),
-        remedy: "they changed while the merge ran (in the base, or in the workspace after it was read), so the workspace's versions were not applied there; the workspace was kept; review them and merge again".to_string(),
+        remedy: "they changed while the merge ran (in your project, or in the workspace after it was read), so the workspace's versions were not applied there; the workspace was kept; review them and merge again".to_string(),
     }
 }
 

@@ -1,4 +1,4 @@
-fork() for your project directory — disposable, isolated workspaces
+Make throwaway copies of your project to try things in, then keep what works
 
 Usage: forkspace <COMMAND>
 
@@ -6,8 +6,8 @@ Commands:
   new      Copy the project you are in into a new workspace
   drop     Throw workspaces away (and stop what runs in them)
   enter    Open a shell (or run a command) inside a workspace
-  run      Start a process in a workspace (dev server, Electron, etc.)
-  switch   Switch the active workspace (hot-swap via proxy)
+  run      Start a dev server (or any long-running app) in a workspace
+  switch   Point localhost:4000 at another workspace's dev server
   ls       List your workspaces: what changed, how old, what runs
   diff     Show what changed in a workspace, or compare several
   merge    Put a workspace's changes into your project (and keep its commits as a branch)

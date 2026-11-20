@@ -1,4 +1,4 @@
-Start a process in a workspace (dev server, Electron, etc.)
+Start a dev server (or any long-running app) in a workspace
 
 Usage: forkspace run [OPTIONS] [NAME] [-- <COMMAND>...]
 

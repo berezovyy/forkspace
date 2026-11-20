@@ -1,1 +1,1 @@
-error: workspaces were made from 'parent': ["child"]; drop them too, in the same command or first
+error: workspaces were made from 'parent': child; drop them too, in the same command or first

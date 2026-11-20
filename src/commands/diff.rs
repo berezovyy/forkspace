@@ -100,9 +100,11 @@ fn manifest_status_after_scan(workspace: &Workspace) -> Result<ManifestStatus> {
 
 fn warn_about_manifest(status: ManifestStatus) {
     match status {
-        ManifestStatus::Building => eprintln!("warning: deletions pending manifest build"),
+        ManifestStatus::Building => eprintln!(
+            "warning: deleted files are not listed yet: forkspace is still listing the files the workspace started with"
+        ),
         ManifestStatus::Degraded => {
-            eprintln!("warning: deletion tracking degraded; the fork manifest is unavailable");
+            eprintln!("warning: deleted files cannot be listed: forkspace lost its list of the files the workspace started with");
         }
         ManifestStatus::Absent | ManifestStatus::Ready => {}
     }

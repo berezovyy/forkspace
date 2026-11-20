@@ -125,7 +125,7 @@ fn apply_forkspaceclean(view: &Path) {
         }
     }
     if cleaned > 0 {
-        eprintln!("forkspaceclean: removed {cleaned} overlay-incompatible file(s)");
+        eprintln!("note: removed {cleaned} file(s) a workspace cannot hold");
     }
 }
 
@@ -303,7 +303,7 @@ impl WorkspaceBackend for OverlayBackend {
         // root would delete every workspace's data in that store (SEC-02).
         if paths::is_store_path(&root) {
             eprintln!(
-                "warning: not removing {}: the name '{}' is reserved for forkspace's own files; delete the workspace's upper/, work/ and merged/ there by hand",
+                "warning: not removing {}: the name '{}' is reserved for forkspace's own files; delete that folder by hand",
                 root.display(),
                 ws.name
             );

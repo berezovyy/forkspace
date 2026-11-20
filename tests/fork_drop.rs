@@ -327,7 +327,7 @@ fn a_view_folder_removed_by_hand_is_reported_and_dropped_cleanly() {
     assert!(ls.status.success(), "{ls:?}");
     let table = String::from_utf8_lossy(&ls.stdout);
     assert!(table.contains("aa") && table.contains("zz"), "{table}");
-    assert!(table.contains("view missing"), "{table}");
+    assert!(table.contains("folder missing"), "{table}");
 
     let dropped = run(&["drop", "ws"]);
     assert!(dropped.status.success(), "{dropped:?}");

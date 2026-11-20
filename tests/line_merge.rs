@@ -228,7 +228,7 @@ fn binary_files_both_sides_changed_stay_whole_file_conflicts() {
     env.ok(&["merge", "ws1"]);
     let refused = env.run(&["merge", "ws2"]);
     assert_eq!(exit_code(&refused), Some(5));
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("too since the fork"));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("also changed"));
     assert_eq!(
         fs::read(env.project().join("image.bin")).unwrap(),
         b"\0one\n"
@@ -253,7 +253,7 @@ fn without_git_both_sides_changed_is_a_whole_file_conflict() {
     env.path = Some(empty.display().to_string());
     let refused = env.run(&["merge", "ws2"]);
     assert_eq!(exit_code(&refused), Some(5));
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("too since the fork"));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("also changed"));
 }
 
 #[test]

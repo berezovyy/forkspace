@@ -37,7 +37,7 @@ impl ForkPrimitive for ReflinkPrimitive {
         }
         Err(ForkspaceError::BackendUnavailable {
             diagnosis: probe.reason,
-            remedy: "install fuse-overlayfs for O(1) forks".to_string(),
+            remedy: "install fuse-overlayfs to make workspaces instantly".to_string(),
         })
     }
 

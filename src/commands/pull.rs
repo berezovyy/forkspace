@@ -138,14 +138,14 @@ pub fn exec(args: PullArgs) -> Result {
         }
         if !left.is_empty() {
             eprintln!(
-                "warning: the base changed while pulling; left for the next pull: {}",
+                "warning: your project changed while pulling; left for the next pull: {}",
                 crate::sync::join_paths(&left)
             );
         }
         let held = (!held.is_empty()).then(|| ForkspaceError::ChangedDuring {
             operation: "pull".to_string(),
             paths: crate::sync::display_paths(&held),
-            remedy: "they changed while the pull ran, so the base's versions were not pulled into them; the workspace's versions now count as its own edits".to_string(),
+            remedy: "they changed while the pull ran, so your project's versions were not pulled into them; the workspace's versions now count as its own edits".to_string(),
         });
         if marked.is_empty() {
             return held.map_or(Ok(()), Err);

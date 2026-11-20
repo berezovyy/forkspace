@@ -6,10 +6,11 @@ use clap_complete::Shell;
 #[derive(Parser)]
 #[command(
     version,
-    about = "fork() for your project directory — disposable, isolated workspaces",
-    long_about = "Forkspace creates disposable project workspaces using the fastest backend the host supports.\n\n\
-        Linux overlayfs, APFS clones, Linux reflinks, and a portable copy floor share one \
-        command and state contract. Backend selection is automatic and sticky per workspace."
+    about = "Make throwaway copies of your project to try things in, then keep what works",
+    long_about = "forkspace makes throwaway copies of your project, called workspaces. Try something in \
+        one, as a person or a coding agent; merge it into your project when it works, drop it when \
+        it doesn't. Your project is not touched until you merge.\n\n\
+        Start with `forkspace new` in your project, then `forkspace enter`."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -27,10 +28,10 @@ pub enum Commands {
     /// Open a shell (or run a command) inside a workspace
     Enter(EnterArgs),
 
-    /// Start a process in a workspace (dev server, Electron, etc.)
+    /// Start a dev server (or any long-running app) in a workspace
     Run(RunArgs),
 
-    /// Switch the active workspace (hot-swap via proxy)
+    /// Point localhost:4000 at another workspace's dev server
     Switch(SwitchArgs),
 
     /// List your workspaces: what changed, how old, what runs

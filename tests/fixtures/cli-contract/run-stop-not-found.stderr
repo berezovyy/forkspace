@@ -1,1 +1,1 @@
-error: workspace 'absent' not found (run 'forkspace ls' to see available workspaces)
+error: there is no workspace 'absent' (`forkspace ls` lists them)

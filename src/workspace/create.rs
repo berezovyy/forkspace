@@ -72,8 +72,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
             })?;
             let copying = crate::backend::copying_backend_for(&origin)?;
             eprintln!(
-                "note: {path} uses the .wh. prefix, which fuse-overlayfs reserves, so '{name}' is a {} workspace instead",
-                copying.kind().as_str()
+                "note: {path} starts with .wh., so '{name}' is a full copy of your project instead"
             );
             record_intent(name, copying.as_ref())?;
             match copying.create(&request) {
@@ -138,7 +137,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
     })?;
     if build_here {
         if let Err(error) = crate::changes::manifest::build_here(name) {
-            eprintln!("warning: could not record the fork manifest of '{name}' ({error}); merge and pull will try again");
+            eprintln!("warning: could not list the files '{name}' started with ({error}); merge and pull will try again");
         }
     }
     super::git_index::start(&workspace);
@@ -195,7 +194,7 @@ fn record_fork_time_files(workspace: &Workspace) {
     let recorded = crate::sync::ancestor::record(&workspace.name, &workspace.view_path);
     if let Err(error) = recorded {
         eprintln!(
-            "warning: could not keep fork-time copies for line-level merges ({error}); files both sides change will be whole-file conflicts"
+            "warning: could not keep a copy of your project as it was ({error}); files both sides change cannot be merged line by line"
         );
     }
 }

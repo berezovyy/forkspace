@@ -72,7 +72,7 @@ pub fn restore(args: RestoreArgs) -> Result {
         }
         if !restored.unrestorable.is_empty() {
             eprintln!(
-                "warning: left as they are because their fork-time version is unknown: {}",
+                "warning: left as they are because forkspace does not know how they looked when the workspace was made: {}",
                 join_paths(&restored.unrestorable)
             );
         }

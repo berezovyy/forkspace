@@ -1,1 +1,1 @@
-workspace 'c' has comparison base <BASE-2>, expected <BASE-1>; cross-base columns would be misleading
+'c' was made from <BASE-2>, the others from <BASE-1>; compare workspaces of the same project

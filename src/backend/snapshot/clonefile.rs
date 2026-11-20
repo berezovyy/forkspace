@@ -47,7 +47,7 @@ impl ForkPrimitive for ClonefilePrimitive {
         };
         if base_meta.dev() != destination_meta.dev() {
             return Err(ForkspaceError::CapabilityUnsupported {
-                diagnosis: "base and workspace root are on different volumes".to_string(),
+                diagnosis: "your project and forkspace's folder are on different disks".to_string(),
                 remedy: SAME_VOLUME_REMEDY.to_string(),
             });
         }
@@ -81,7 +81,7 @@ impl ForkPrimitive for ClonefilePrimitive {
             clone_except(base, dest, Path::new(""), &excluded)?;
             if before != sample(base) {
                 eprintln!(
-                    "warning: base changed while '{}' was being forked; retry the fork for a consistent view",
+                    "warning: your project changed while '{}' was being made; drop it and make it again for a clean copy",
                     workspace_name(dest)
                 );
             }
@@ -105,7 +105,7 @@ impl ForkPrimitive for ClonefilePrimitive {
         // clonefile is not atomic with respect to concurrent writers in the base.
         if before != sample(base) {
             eprintln!(
-                "warning: base changed while '{}' was being forked; retry the fork for a consistent view",
+                "warning: your project changed while '{}' was being made; drop it and make it again for a clean copy",
                 workspace_name(dest)
             );
         }

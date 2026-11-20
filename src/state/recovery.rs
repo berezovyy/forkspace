@@ -149,7 +149,7 @@ impl State {
             {
                 let _ = fs::write(tree.with_file_name("damaged-reported"), b"");
                 eprintln!(
-                    "warning: the machine stopped before the frozen copy {} was written to disk, and it is damaged; save the changes of {} (forkspace diff --full), then drop and create them again",
+                    "warning: the machine stopped before forkspace finished saving its copy {} of your project, and the copy is damaged; save what you need from {} (`forkspace diff` shows it), then drop and make them again",
                     tree.display(),
                     names.join(", ")
                 );

@@ -101,7 +101,7 @@ fn table_row(workspace: &Workspace, processes: usize, size: Option<u64>) -> Resu
     // A folder deleted or moved by hand has nothing to count; one row says so, and the rest of
     // the table still shows (STATE-12).
     let count = if view_missing(workspace) {
-        "view missing".to_string()
+        "folder missing".to_string()
     } else {
         match select_backend(Some(workspace.backend_kind))?.change_count(workspace, false) {
             Ok(count) => describe_count(count),
@@ -175,7 +175,7 @@ fn describe_count(count: ChangeCount) -> String {
         ChangeCount::Ready(1) => "1 file".to_string(),
         ChangeCount::Ready(count) => format!("{count} files"),
         ChangeCount::Pending => "-".to_string(),
-        ChangeCount::Degraded => "degraded".to_string(),
+        ChangeCount::Degraded => "unknown".to_string(),
     }
 }
 

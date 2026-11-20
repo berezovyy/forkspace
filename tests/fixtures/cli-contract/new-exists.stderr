@@ -1,1 +1,1 @@
-error: workspace 'parent' already exists (use 'forkspace enter parent' to enter it)
+error: a workspace named 'parent' already exists (`forkspace enter parent` opens it)

@@ -354,7 +354,7 @@ fn installer_failure_keeps_the_journal_and_the_next_merge_finishes_it() {
         .output()
         .unwrap();
     assert!(!failed.status.success());
-    assert!(String::from_utf8_lossy(&failed.stderr).contains("package manager failed"));
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("installing dependencies failed"));
     assert_eq!(fs::read(base.path().join("source")).unwrap(), b"new\n");
     assert!(forkspace::state::State::load()
         .unwrap()

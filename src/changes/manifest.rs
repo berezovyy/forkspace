@@ -1209,7 +1209,7 @@ pub fn settle(state: &mut State, name: &str) -> Result {
     if !rebuildable(&workspace)? {
         return Ok(());
     }
-    eprintln!("rebuilding the fork manifest of '{name}'");
+    eprintln!("listing the files '{name}' started with again");
     let staged = stage(&workspace).map_err(|error| {
         ForkspaceError::StateFailed(format!(
             "could not rebuild the fork manifest of '{name}': {error}"
@@ -1242,7 +1242,7 @@ pub fn settle_now(name: &str, wait: bool) -> Result {
             break needs_rebuild(workspace);
         }
         if !told {
-            eprintln!("waiting for the fork manifest of '{name}' to be built");
+            eprintln!("waiting for forkspace to finish listing the files of '{name}'");
             told = true;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
