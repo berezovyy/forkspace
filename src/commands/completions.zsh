@@ -63,7 +63,6 @@ _forkspace() {
                         '1:workspace:_forkspace_workspaces' \
                         '--port=[App port]:port:' \
                         '--stop[Stop running process]' \
-                        '--no-sandbox[Let the process write outside the workspace]' \
                         '--help[Show help]'
                     ;;
                 switch)

@@ -142,9 +142,6 @@ pub struct RunArgs {
     #[arg(long, help = "Stop the running process instead of starting one")]
     pub stop: bool,
 
-    #[arg(long, help = "Let the process write outside its workspace")]
-    pub no_sandbox: bool,
-
     #[arg(last = true, help = "Command to run (e.g. npm run dev)")]
     pub command: Vec<String>,
 }

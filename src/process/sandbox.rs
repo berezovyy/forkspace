@@ -11,7 +11,7 @@
 //! macOS runs the command under `sandbox-exec` with a profile that denies writes beneath the
 //! project and `FORKSPACE_HOME` and allows them beneath the workspace view.
 //!
-//! `--no-sandbox` turns it off. `no_new_privs`, which Landlock
+//! It is always on. `no_new_privs`, which Landlock
 //! requires, means setuid programs such as `sudo` gain no privileges inside the sandbox.
 
 use std::path::{Path, PathBuf};
