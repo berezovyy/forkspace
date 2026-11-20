@@ -11,9 +11,15 @@ use crate::util::IoContext;
 /// Copies every extended attribute of `source` onto `destination`. With `symlink`, the
 /// attributes of the links themselves are copied rather than of their targets.
 pub(super) fn copy_xattrs(source: &Path, destination: &Path, symlink: bool) -> Result {
+    let source_path = source;
     let source = c_path(source)?;
     let destination = c_path(destination)?;
-    let names = list_names(&source, symlink)?;
+    let names = match list_names(&source, symlink) {
+        Ok(names) => names,
+        // Deleted while the tree was copied: it has no attributes left to copy.
+        Err(_) if std::fs::symlink_metadata(source_path).is_err() => return Ok(()),
+        Err(error) => return Err(error),
+    };
     for raw_name in names
         .split(|byte| *byte == 0)
         .filter(|name| !name.is_empty())

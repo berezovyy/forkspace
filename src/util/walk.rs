@@ -180,16 +180,21 @@ fn walk(root: &Path, keep: &Keep<'_>) -> Result {
 fn visit_directory(root: &Path, directory: &Path, keep: &Keep<'_>) -> Result<Vec<PathBuf>> {
     use crate::util::IoContext;
 
-    let entries =
-        fs::read_dir(directory).io_context(|| format!("failed to walk {}", directory.display()))?;
+    let entries = match fs::read_dir(directory) {
+        // Deleted since its parent was read (`git gc` packing loose objects, a package manager
+        // replacing a dependency): it is simply no longer part of the tree.
+        Err(error) if vanished(&error) && directory != root => return Ok(Vec::new()),
+        entries => entries.io_context(|| format!("failed to walk {}", directory.display()))?,
+    };
     let mut descend = Vec::new();
     for entry in entries {
         let entry = entry.io_context(|| format!("failed to walk {}", directory.display()))?;
         let path = entry.path();
-        let walked = entry
-            .metadata()
-            .map(|metadata| Entry::of(&metadata))
-            .io_context(|| format!("inspect {}", path.display()))?;
+        let walked = match entry.metadata() {
+            Ok(metadata) => Entry::of(&metadata),
+            Err(error) if vanished(&error) => continue,
+            Err(error) => return Err(error).io_context(|| format!("inspect {}", path.display())),
+        };
         let relative = path.strip_prefix(root).map_err(|_| {
             ForkspaceError::StateFailed(format!(
                 "{} escaped the walk of {}",
@@ -204,10 +209,46 @@ fn visit_directory(root: &Path, directory: &Path, keep: &Keep<'_>) -> Result<Vec
     Ok(descend)
 }
 
+/// Whether `error` says an entry no longer exists: another process deleted it, or a directory
+/// above it, while the walk ran.
+pub(super) fn vanished(error: &std::io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::ENOENT) | Some(libc::ENOTDIR)
+    )
+}
+
 pub(crate) fn threads() -> usize {
     std::thread::available_parallelism()
         .map(|count| count.get().min(16))
         .unwrap_or(4)
+}
+
+#[cfg(test)]
+mod vanishing_tests {
+    use super::*;
+
+    #[test]
+    fn entries_deleted_during_the_walk_are_skipped_not_errors() {
+        let root = tempfile::tempdir().unwrap();
+        for directory in ["gone", "kept"] {
+            fs::create_dir_all(root.path().join(directory).join("inner")).unwrap();
+            fs::write(root.path().join(directory).join("inner/file"), b"x").unwrap();
+        }
+        // Delete `gone` as soon as the walk has listed it, before it reads inside it.
+        let walked = parallel_with(root.path(), |relative, path, _| {
+            if relative == Path::new("gone") {
+                fs::remove_dir_all(path).unwrap();
+            }
+            Ok(Step::Descend(Some(())))
+        })
+        .unwrap();
+        let paths: Vec<PathBuf> = walked.into_iter().map(|(path, ())| path).collect();
+        assert!(paths.contains(&PathBuf::from("kept/inner/file")));
+        assert!(!paths
+            .iter()
+            .any(|path| path.starts_with("gone") && path != Path::new("gone")));
+    }
 }
 
 #[cfg(test)]

@@ -157,12 +157,28 @@ where
     fs::create_dir_all(target).io_context(|| format!("create {}", target.display()))?;
     let mut plan = plan_tree(listed, target, record)?;
     let mut stats = plan.stats;
-    stats.absorb(place_files(&plan.files, place_regular)?);
+    let (placed, mut vanished) = place_files(&plan.files, place_regular)?;
+    stats.absorb(placed);
+    vanished.extend(std::mem::take(&mut plan.vanished));
     for (existing, destination) in &plan.links {
-        fs::hard_link(existing, destination)
-            .io_context(|| format!("hard-link {}", destination.display()))?;
+        match fs::hard_link(existing, destination) {
+            Ok(()) => {}
+            // Its first name vanished from the source before it was copied.
+            Err(_) if vanished.contains(existing) => {
+                vanished.insert(destination.clone());
+            }
+            Err(error) => {
+                return Err(error).io_context(|| format!("hard-link {}", destination.display()))
+            }
+        }
     }
     finish_directories(plan.directories, &mut stats, &mut plan.entries)?;
+    // Files deleted from the source while it was copied are not in the copy: they are not in
+    // what it records either.
+    if !vanished.is_empty() {
+        plan.entries
+            .retain(|(relative, _)| !vanished.contains(&target.join(relative)));
+    }
     if durable {
         sync_tree(target)?;
     }
@@ -181,6 +197,8 @@ struct TreePlan {
     /// With recording on, every entry relative to the target, in walk order.
     entries: Vec<(PathBuf, Entry)>,
     stats: ForkStats,
+    /// Destinations of symlinks deleted from the source before they were copied.
+    vanished: std::collections::HashSet<PathBuf>,
 }
 
 struct FileJob {
@@ -228,6 +246,7 @@ fn plan_tree(
         directories: Vec::new(),
         entries: Vec::new(),
         stats: ForkStats::default(),
+        vanished: std::collections::HashSet::new(),
     };
     // First destination of each multiply-linked source inode, keyed by `(dev, ino)`.
     let mut first_link: HashMap<(u64, u64), PathBuf> = HashMap::new();
@@ -281,10 +300,22 @@ fn plan_tree(
                 .io_context(|| format!("create {}", destination.display()))
         })?;
     }
+    let vanished = Mutex::new(std::collections::HashSet::new());
     for_each_parallel(
         &symlinks.iter().collect::<Vec<_>>(),
-        |(source, destination, entry)| copy_symlink(source, destination, entry),
+        |(source, destination, entry)| match copy_symlink(source, destination, entry) {
+            Err(error) if source_vanished(&error, source) => {
+                let _ = fs::remove_file(destination);
+                vanished
+                    .lock()
+                    .expect("vanished symlinks")
+                    .insert(destination.clone());
+                Ok(())
+            }
+            result => result,
+        },
     )?;
+    plan.vanished = vanished.into_inner().expect("vanished symlinks");
     Ok(plan)
 }
 
@@ -344,10 +375,14 @@ const FILES_PER_THREAD: usize = 256;
 
 /// Place every file of `files` on up to [`crate::util::walk::threads`] threads. The first
 /// error stops the others and is returned.
-fn place_files<F>(files: &[FileJob], place_regular: &F) -> Result<ForkStats>
+fn place_files<F>(
+    files: &[FileJob],
+    place_regular: &F,
+) -> Result<(ForkStats, std::collections::HashSet<PathBuf>)>
 where
     F: Fn(&Path, &Path, &Entry) -> Result<Placed> + Sync,
 {
+    let vanished = Mutex::new(std::collections::HashSet::new());
     let threads = crate::util::walk::threads()
         .min(files.len().div_ceil(FILES_PER_THREAD))
         .max(1);
@@ -361,6 +396,15 @@ where
                 break;
             };
             if let Err(error) = place_file(job, place_regular, &mut stats) {
+                // Deleted from the source after the walk listed it: leave it out.
+                if source_vanished(&error, &job.source) {
+                    let _ = fs::remove_file(&job.destination);
+                    vanished
+                        .lock()
+                        .expect("vanished files")
+                        .insert(job.destination.clone());
+                    continue;
+                }
                 stop.store(true, Ordering::Relaxed);
                 failure
                     .lock()
@@ -384,8 +428,14 @@ where
     }
     match failure.into_inner().expect("file placement failure") {
         Some(error) => Err(error),
-        None => Ok(stats),
+        None => Ok((stats, vanished.into_inner().expect("vanished files"))),
     }
+}
+
+/// Whether `error` came from `source` having been deleted since the walk listed it.
+fn source_vanished(error: &ForkspaceError, source: &Path) -> bool {
+    matches!(error, ForkspaceError::Io { source: io, .. } if io.kind() == std::io::ErrorKind::NotFound)
+        && fs::symlink_metadata(source).is_err()
 }
 
 /// Place one regular file and apply its metadata.

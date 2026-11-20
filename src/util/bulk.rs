@@ -75,6 +75,12 @@ pub(crate) fn private_tree_bytes(root: &Path, threads: usize) -> Option<u64> {
 
 /// Visit the entries of `directory`; returns the subdirectories to descend into.
 fn visit_directory(root: &Path, directory: &Path, keep: &Keep<'_>) -> Result<Vec<PathBuf>> {
+    // Deleted since its parent was read: no longer part of the tree.
+    if directory != root
+        && std::fs::symlink_metadata(directory).is_err_and(|error| super::walk::vanished(&error))
+    {
+        return Ok(Vec::new());
+    }
     let mut descend = Vec::new();
     for (name, entry) in read_directory(directory)? {
         let path = directory.join(&name);
@@ -139,7 +145,16 @@ fn plain_entries(directory: &Path) -> Result<Vec<(PathBuf, Entry)>> {
             context: format!("failed to walk {}", directory.display()),
             source,
         })?;
-        let facts = Entry::lstat(&entry.path())?;
+        let facts = match std::fs::symlink_metadata(entry.path()) {
+            Ok(metadata) => Entry::of(&metadata),
+            Err(error) if super::walk::vanished(&error) => continue,
+            Err(source) => {
+                return Err(ForkspaceError::Io {
+                    context: format!("inspect {}", entry.path().display()),
+                    source,
+                })
+            }
+        };
         found.push((PathBuf::from(entry.file_name()), facts));
     }
     Ok(found)

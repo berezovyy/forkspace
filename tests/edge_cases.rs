@@ -138,3 +138,48 @@ fn set_group_id_directories_keep_the_bit_and_are_no_change() {
         );
     }
 }
+
+/// A tool deleting part of the project while it is forked (`git gc` packing loose objects, a
+/// package manager replacing a dependency) used to fail the fork with "failed to walk ...:
+/// No such file or directory". What was deleted is simply not in the workspace.
+#[test]
+#[serial]
+fn a_fork_succeeds_while_the_project_deletes_a_directory() {
+    let env = Env::new();
+    write(&env.project().join("keep.txt"), "keep\n");
+    for round in 0..6 {
+        let doomed = env.project().join("doomed");
+        for index in 0..300 {
+            write(&doomed.join(format!("d{index}/f.txt")), "x\n");
+            std::os::unix::fs::symlink("f.txt", doomed.join(format!("d{index}/link"))).unwrap();
+        }
+        let deleter = {
+            let doomed = doomed.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(1 + round * 3));
+                fs::remove_dir_all(&doomed).unwrap();
+            })
+        };
+        let name = format!("racing-{round}");
+        let from = env.project();
+        let args: Vec<&str> = if round % 2 == 0 {
+            vec!["new", &name, "--from", from.to_str().unwrap(), "--copy"]
+        } else {
+            vec!["new", &name, "--from", from.to_str().unwrap()]
+        };
+        let output = env.run(&args);
+        deleter.join().unwrap();
+        assert!(
+            output.status.success(),
+            "round {round}: {}",
+            stderr(&output)
+        );
+        assert!(env.view(&name).join("keep.txt").exists());
+        let diff = env.ok(&["diff", &name, "--files"]);
+        let diff = String::from_utf8_lossy(&diff.stdout).into_owned();
+        assert!(
+            diff.trim().is_empty() || diff.contains("clean"),
+            "round {round}: {diff}"
+        );
+    }
+}
