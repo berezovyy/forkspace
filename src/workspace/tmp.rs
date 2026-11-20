@@ -1,7 +1,7 @@
 //! A private temporary directory per workspace.
 //!
 //! Commands started by `enter` and `run` get `TMPDIR` (and `TMP`, `TEMP`) pointing at a
-//! directory of their workspace's own. Parallel agents running the same tests then no longer
+//! directory of their workspace's own, under one directory per `FORKSPACE_HOME`. Parallel agents running the same tests then no longer
 //! meet in fixed `/tmp` paths (sockets, lock files, build scratch), and what a killed or
 //! timed-out command leaves there goes with the workspace on `drop`.
 //! `FORKSPACE_PRIVATE_TMP=0` turns it off.
@@ -23,10 +23,16 @@ pub fn ensure(name: &str) -> Option<PathBuf> {
     if disabled() {
         return None;
     }
-    let root = paths::private_tmp_root();
     let directory = paths::private_tmp(name);
-    match owned_private_dir(&root).and_then(|()| owned_private_dir(&directory)) {
-        Ok(()) => Some(directory),
+    match owned_private_dir(&paths::private_tmp_root())
+        .and_then(|()| owned_private_dir(&paths::private_tmp_home()))
+        .and_then(|()| owned_private_dir(&directory))
+    {
+        Ok(()) => {
+            record_home();
+            sweep_abandoned_homes();
+            Some(directory)
+        }
         Err(reason) => {
             eprintln!(
                 "warning: no private TMPDIR for '{name}' ({reason}); commands use the shared one"
@@ -61,6 +67,43 @@ pub(crate) fn owned_private_dir(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The file in each home's directory that names the `FORKSPACE_HOME` it belongs to.
+const HOME_MARKER: &str = ".home";
+
+fn record_home() {
+    let marker = paths::private_tmp_home().join(HOME_MARKER);
+    if !marker.exists() {
+        let _ = fs::write(
+            &marker,
+            paths::forkspace_home().as_os_str().as_encoded_bytes(),
+        );
+    }
+}
+
+/// Remove the directories of homes that no longer exist (a test's temporary home, a home
+/// deleted by hand): nothing else would ever remove what their workspaces left there.
+fn sweep_abandoned_homes() {
+    let Ok(entries) = fs::read_dir(paths::private_tmp_root()) else {
+        return;
+    };
+    let own = paths::private_tmp_home();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == own
+            || entry.file_name() == "jobserver"
+            || !entry.file_type().is_ok_and(|kind| kind.is_dir())
+        {
+            continue;
+        }
+        let home = fs::read(path.join(HOME_MARKER))
+            .ok()
+            .map(|bytes| PathBuf::from(String::from_utf8_lossy(&bytes).into_owned()));
+        if home.is_none_or(|home| !home.exists()) {
+            let _ = fs::remove_dir_all(&path);
+        }
+    }
+}
+
 /// The environment that points temporary files at `directory`.
 pub fn env(directory: &Path) -> Vec<(String, String)> {
     let value = directory.display().to_string();
@@ -81,7 +124,7 @@ pub fn remove(name: &str) {
 /// Remove the private temporary directories of workspaces that no longer exist, keeping
 /// those named in `keep`.
 pub fn sweep(keep: &[&str]) {
-    let Ok(entries) = fs::read_dir(paths::private_tmp_root()) else {
+    let Ok(entries) = fs::read_dir(paths::private_tmp_home()) else {
         return;
     };
     for entry in entries.flatten() {

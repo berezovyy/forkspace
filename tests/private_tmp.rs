@@ -70,3 +70,23 @@ fn the_private_tmpdir_can_be_turned_off() {
     assert!(stdout(&output).starts_with("/tmp"), "{}", stdout(&output));
     assert!(!stdout(&output).starts_with("/tmp/forkspace-"));
 }
+
+#[test]
+#[serial]
+fn workspaces_of_the_same_name_in_two_homes_do_not_share_a_tmpdir() {
+    let first = Env::new();
+    let second = Env::new();
+    for env in [&first, &second] {
+        write(&env.project().join("a.txt"), "a\n");
+        env.fork_copy("same");
+    }
+    let one = tmpdir_of(&first, "same");
+    let two = tmpdir_of(&second, "same");
+    assert_ne!(one, two);
+    first.ok(&["drop", "same"]);
+    assert!(
+        two.exists(),
+        "dropping in one home removed the other's TMPDIR"
+    );
+    second.ok(&["drop", "same"]);
+}

@@ -135,9 +135,28 @@ pub fn private_tmp_root() -> PathBuf {
     std::env::temp_dir().join(format!("forkspace-{uid}"))
 }
 
+/// Where the private temporary directories of this `FORKSPACE_HOME`'s workspaces live: one
+/// directory per home, so two homes with a workspace of the same name never share one.
+pub fn private_tmp_home() -> PathBuf {
+    private_tmp_home_of(&forkspace_home())
+}
+
+/// [`private_tmp_home`] for the `FORKSPACE_HOME` `home`.
+pub fn private_tmp_home_of(home: &std::path::Path) -> PathBuf {
+    // FNV-1a of the home's path: short, and the same in every forkspace version.
+    let tag = home
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+        });
+    private_tmp_root().join(format!("{:08x}", tag >> 32))
+}
+
 /// The private temporary directory of workspace `name` (`TMPDIR` inside `enter` and `run`).
 pub fn private_tmp(name: &str) -> PathBuf {
-    private_tmp_root().join(name)
+    private_tmp_home().join(name)
 }
 
 /// Dev-server stdout/stderr logs for workspace `name`.

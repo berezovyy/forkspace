@@ -31,6 +31,8 @@ impl Default for TestHome {
 impl Drop for TestHome {
     fn drop(&mut self) {
         unmount_under(self.0.path());
+        // The private TMPDIRs of this home's workspaces live outside it.
+        let _ = std::fs::remove_dir_all(forkspace::paths::private_tmp_home_of(self.0.path()));
     }
 }
 
