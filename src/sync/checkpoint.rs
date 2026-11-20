@@ -4,7 +4,10 @@
 //! every changed path including ignored ones such as `node_modules`), in
 //! `FORKSPACE_HOME/checkpoints/<workspace>/<id>/`: `record.json` lists each path and its change
 //! kind, and `files/` holds the saved entries with their permissions and modification times.
-//! Files are copied with `fs::copy`, which clones on APFS, Btrfs, and XFS.
+//! A changed regular file is kept zstd-compressed against its fork-time version (see
+//! [`crate::sync::compress`]), which is kept once per fork generation in `refs/`, when that
+//! saves more than a tenth; otherwise it is copied with `fs::copy`, which clones on APFS,
+//! Btrfs, and XFS.
 //!
 //! Restore compares the workspace now with the checkpoint: saved paths get their saved
 //! version back, and paths changed only after the checkpoint go back to their fork-time version
@@ -26,8 +29,8 @@ use crate::changes::manifest::{self, ManifestKind, ManifestStatus};
 use crate::changes::{ChangeKind, FileChange};
 use crate::error::{ForkspaceError, Result};
 use crate::paths;
-use crate::sync::ancestor;
 use crate::sync::journal::{self, Fingerprint, MergedStep, OperationKind};
+use crate::sync::{ancestor, compress};
 use crate::util::fs::ensure_private_dir;
 use crate::util::{ensure_parent_dir, now_rfc3339, now_unix_ns, write_atomic, IoContext};
 use crate::workspace::Workspace;
@@ -65,7 +68,30 @@ pub struct Entry {
     #[serde(with = "crate::changes::path_serde")]
     pub path: PathBuf,
     pub kind: ChangeKind,
+    /// How a regular file is kept, when compressed; absent for a plain copy (and in
+    /// checkpoints made before files were compressed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored: Option<Stored>,
 }
+
+/// A file kept compressed in a checkpoint: the facts the compressed file no longer carries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Stored {
+    /// Bytes of the file itself.
+    pub size: u64,
+    /// Permission bits.
+    pub mode: u32,
+    /// Modification time: seconds and nanoseconds since the epoch.
+    pub mtime: (i64, u32),
+    /// The reference it was compressed against (its fork-time version), under the
+    /// workspace's `refs/`; none for plain compression.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+/// Fork-time versions that checkpoints are compressed against, under each workspace's
+/// checkpoint directory, by fork generation and encoded path.
+const REFS: &str = "refs";
 
 /// What a restore did, or could not do.
 #[derive(Debug, Default)]
@@ -173,6 +199,36 @@ pub fn restore(workspace: &Workspace, id: u64) -> Result<Restored> {
     let staging = journal::staging_dir(&journal_path);
     let _ = fs::remove_dir_all(&staging);
 
+    // Compressed files are decompressed beside the journal first; the steps below read them
+    // like the plain copies.
+    let decoded = staging.with_extension("decoded");
+    let _ = fs::remove_dir_all(&decoded);
+    for entry in &checkpoint.entries {
+        if entry.stored.is_some() {
+            if let Err(error) = restore_compressed(
+                &workspace.name,
+                entry,
+                &saved.join(&entry.path),
+                &decoded.join(&entry.path),
+            ) {
+                let _ = fs::remove_dir_all(&decoded);
+                return Err(error);
+            }
+        }
+    }
+    let result = restore_from(workspace, &checkpoint, &saved, &decoded, &staging);
+    let _ = fs::remove_dir_all(&decoded);
+    result
+}
+
+fn restore_from(
+    workspace: &Workspace,
+    checkpoint: &Checkpoint,
+    saved: &Path,
+    decoded: &Path,
+    staging: &Path,
+) -> Result<Restored> {
+    let id = checkpoint.id;
     let view = &workspace.view_path;
     let mut unrestorable = Vec::new();
     // The checkpoint's own entries first: they win over anything derived below.
@@ -180,7 +236,11 @@ pub fn restore(workspace: &Workspace, id: u64) -> Result<Restored> {
         .entries
         .iter()
         .map(|entry| {
-            let source = saved.join(&entry.path);
+            let source = if entry.stored.is_some() {
+                decoded.join(&entry.path)
+            } else {
+                saved.join(&entry.path)
+            };
             let want = if entry.kind == ChangeKind::Deleted {
                 Want::Delete
             } else if is_real_dir(&source) {
@@ -282,7 +342,7 @@ pub fn restore(workspace: &Workspace, id: u64) -> Result<Restored> {
         journal::set_phase(&path, journal::OperationPhase::Done)?;
         journal::remove(&path)?;
     } else {
-        let _ = fs::remove_dir_all(&staging);
+        let _ = fs::remove_dir_all(staging);
     }
     unrestorable.sort();
     Ok(Restored {
@@ -315,16 +375,112 @@ fn save(workspace: &Workspace, staging: &Path, all: bool) -> Result<(Vec<Entry>,
     let mut entries = Vec::new();
     let mut bytes = 0;
     for change in backend.changes(workspace, all, false)? {
+        let mut stored = None;
         if change.kind != ChangeKind::Deleted {
             let source = workspace.view_path.join(&change.path);
-            bytes += stage(&source, &files.join(&change.path))?;
+            let target = files.join(&change.path);
+            match keep_compressed(workspace, &change.path, &source, &target)? {
+                Some((kept, size)) => {
+                    bytes += size;
+                    stored = Some(kept);
+                }
+                None => bytes += stage(&source, &target)?,
+            }
         }
         entries.push(Entry {
             path: change.path,
             kind: change.kind,
+            stored,
         });
     }
     Ok((entries, bytes))
+}
+
+/// Keep the regular file `source` at `target` compressed, against its fork-time version when
+/// there is one, if that is smaller than a copy by more than a tenth. `None` (and nothing
+/// left at `target`) when a copy is better: not a regular file, too large, or incompressible.
+fn keep_compressed(
+    workspace: &Workspace,
+    relative: &Path,
+    source: &Path,
+    target: &Path,
+) -> Result<Option<(Stored, u64)>> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata =
+        fs::symlink_metadata(source).io_context(|| format!("inspect {}", source.display()))?;
+    if !metadata.is_file() || metadata.len() > compress::MAX_COMPRESSED || metadata.len() < 64 {
+        return Ok(None);
+    }
+    let reference = ancestor::entry(workspace, relative).filter(|path| {
+        fs::symlink_metadata(path).is_ok_and(|reference| {
+            reference.is_file() && reference.len() <= compress::MAX_REFERENCE
+        })
+    });
+    let reference_bytes = match &reference {
+        Some(path) => Some(fs::read(path).io_context(|| format!("read {}", path.display()))?),
+        None => None,
+    };
+    ensure_parent_dir(target)?;
+    let size = compress::encode(source, reference_bytes.as_deref(), target)?;
+    if size * 10 > metadata.len() * 9 {
+        let _ = fs::remove_file(target);
+        return Ok(None);
+    }
+    let reference = match reference_bytes {
+        Some(bytes) => Some(save_reference(workspace, relative, &bytes)?),
+        None => None,
+    };
+    let stored = Stored {
+        size: metadata.len(),
+        mode: metadata.mode() & 0o7777,
+        mtime: (metadata.mtime(), metadata.mtime_nsec() as u32),
+        reference,
+    };
+    Ok(Some((stored, metadata.len())))
+}
+
+/// Keep `bytes`, the fork-time version of `relative`, as a reference for checkpoints, once
+/// per fork generation (`pull` moves the fork point, and with it the fork-time versions).
+fn save_reference(workspace: &Workspace, relative: &Path, bytes: &[u8]) -> Result<String> {
+    let key = format!(
+        "g{}/{}.zst",
+        workspace.manifest_generation,
+        manifest::encode_path(relative)
+    );
+    let path = workspace_dir(&workspace.name).join(REFS).join(&key);
+    if !path.exists() {
+        ensure_parent_dir(&path)?;
+        let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+        compress::encode_bytes(bytes, &temporary)?;
+        fs::rename(&temporary, &path).io_context(|| format!("install {}", path.display()))?;
+    }
+    Ok(key)
+}
+
+/// Write the checkpoint's version of `entry`, kept compressed at `stored_at`, to `target`, with
+/// its permissions and modification time.
+fn restore_compressed(workspace: &str, entry: &Entry, stored_at: &Path, target: &Path) -> Result {
+    let Some(stored) = &entry.stored else {
+        return Ok(());
+    };
+    let reference = match &stored.reference {
+        Some(key) => Some(compress::decode_bytes(
+            &workspace_dir(workspace).join(REFS).join(key),
+        )?),
+        None => None,
+    };
+    ensure_parent_dir(target)?;
+    compress::decode(stored_at, reference.as_deref(), target)?;
+    let modified = std::time::UNIX_EPOCH
+        + std::time::Duration::new(stored.mtime.0.max(0) as u64, stored.mtime.1);
+    fs::OpenOptions::new()
+        .write(true)
+        .open(target)
+        .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(modified)))
+        .io_context(|| format!("set time on {}", target.display()))?;
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(target, fs::Permissions::from_mode(stored.mode))
+        .io_context(|| format!("set permissions on {}", target.display()))
 }
 
 /// Copy the file, symlink, or (empty) directory at `source` to `target` with its permissions
@@ -499,6 +655,29 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 fn prune(workspace: &str) {
     for directory in expired(workspace) {
         let _ = fs::remove_dir_all(directory);
+    }
+    prune_references(workspace);
+}
+
+/// Remove the references no remaining checkpoint of `workspace` was compressed against.
+fn prune_references(workspace: &str) {
+    let refs = workspace_dir(workspace).join(REFS);
+    if !refs.is_dir() {
+        return;
+    }
+    let Ok(checkpoints) = list(workspace) else {
+        return;
+    };
+    let used: std::collections::HashSet<PathBuf> = checkpoints
+        .iter()
+        .flat_map(|checkpoint| &checkpoint.entries)
+        .filter_map(|entry| entry.stored.as_ref()?.reference.as_ref())
+        .map(|key| refs.join(key))
+        .collect();
+    for entry in WalkDir::new(&refs).into_iter().flatten() {
+        if entry.file_type().is_file() && !used.contains(entry.path()) {
+            let _ = fs::remove_file(entry.path());
+        }
     }
 }
 

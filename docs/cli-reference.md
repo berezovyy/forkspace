@@ -131,7 +131,7 @@ diverged, `--drop` drops the workspace once the branch is updated.
 
 ### `forkspace checkpoint [name] [-m <label>] [--all]`
 
-Save what changed since the fork. `--all` also saves ignored paths such as `node_modules`. The
+Save what changed since the fork. `--all` also saves ignored paths such as `node_modules`. Changed files are kept zstd-compressed against their fork-time version, so a small edit of a large file takes a few hundred bytes per checkpoint. The
 newest 20 manual and 10 automatic checkpoints are kept. The name defaults to
 `$FORKSPACE_WORKSPACE`.
 

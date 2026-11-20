@@ -7,6 +7,7 @@
 
 pub mod ancestor;
 pub mod checkpoint;
+pub mod compress;
 pub mod install;
 pub mod journal;
 pub mod merge;
