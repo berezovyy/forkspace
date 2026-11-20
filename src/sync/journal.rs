@@ -455,18 +455,10 @@ pub fn apply_remaining(path: &Path) -> Result<OperationJournal> {
     let mut unsaved = false;
     let staging = staging_dir(path);
     let undo = journal.undo.clone();
-    // Fault-injection tests slow each step so they can kill the process mid-apply.
-    let step_delay = std::env::var("FORKSPACE_INTERNAL_STEP_DELAY_MS")
-        .ok()
-        .and_then(|ms| ms.parse().ok())
-        .map(std::time::Duration::from_millis);
     if journal.installed.len() < journal.changes.len() {
         journal.installed.resize(journal.changes.len(), None);
     }
     while journal.next < journal.changes.len() {
-        if let Some(delay) = step_delay {
-            std::thread::sleep(delay);
-        }
         let change = &journal.changes[journal.next];
         // A step that already ran (before a crash, since the last save) installed this; an
         // entry there now that is not it was written since.

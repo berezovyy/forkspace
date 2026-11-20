@@ -110,6 +110,53 @@ pub fn use_forkspace_for_workers() {
     };
 }
 
+/// `command` under strace, with every rename delayed by `delay` before it runs. Each step of a
+/// merge, pull or restore installs or moves its entry with a rename, and so does each save of
+/// its journal, so a test gets time to act between steps without a hook in forkspace.
+/// `--kill-on-exit`: killing the returned child kills forkspace too. `None`, after a skip
+/// line, where strace cannot trace (macOS, strace missing, ptrace refused).
+pub fn with_slow_renames(
+    command: &std::process::Command,
+    delay: std::time::Duration,
+) -> Option<std::process::Command> {
+    static TRACEABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let traceable = *TRACEABLE.get_or_init(|| {
+        cfg!(target_os = "linux")
+            && std::process::Command::new("strace")
+                .args(["-f", "--kill-on-exit", "-o", "/dev/null", "true"])
+                .output()
+                .is_ok_and(|output| output.status.success())
+    });
+    if !traceable {
+        eprintln!(
+            "FORKSPACE_TEST_SKIP {{\"capability\":\"strace\",\"reason\":\"strace cannot trace here\"}}"
+        );
+        return None;
+    }
+    let renames = "rename,renameat,renameat2";
+    let mut traced = std::process::Command::new("strace");
+    traced
+        .args(["-f", "--kill-on-exit", "-o", "/dev/null", "-e"])
+        .arg(format!("trace={renames}"))
+        .arg("-e")
+        .arg(format!(
+            "inject={renames}:delay_enter={}",
+            delay.as_micros()
+        ))
+        .arg(command.get_program())
+        .args(command.get_args());
+    for (key, value) in command.get_envs() {
+        match value {
+            Some(value) => traced.env(key, value),
+            None => traced.env_remove(key),
+        };
+    }
+    if let Some(directory) = command.get_current_dir() {
+        traced.current_dir(directory);
+    }
+    Some(traced)
+}
+
 pub fn create_test_project(dir: &Path) {
     std::fs::create_dir_all(dir.join("src")).expect("create src dir");
     std::fs::write(dir.join("README.md"), "# Test Project\n").expect("write README");

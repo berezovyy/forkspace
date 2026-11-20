@@ -80,14 +80,18 @@ impl Env {
         self.ok(&["new", name, "--from", project.to_str().unwrap(), "--copy"]);
     }
 
-    /// Start a command whose journal steps each wait \`delay_ms\` first.
-    fn spawn_slow(&self, args: &[&str], delay_ms: u64) -> Child {
-        self.command(args)
-            .env("FORKSPACE_INTERNAL_STEP_DELAY_MS", delay_ms.to_string())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap()
+    /// Start a command whose journal steps each wait about `delay_ms` first; `None` where
+    /// that cannot be done (see [`common::with_slow_renames`]).
+    fn spawn_slow(&self, args: &[&str], delay_ms: u64) -> Option<Child> {
+        let command = self.command(args);
+        let mut slowed = common::with_slow_renames(&command, Duration::from_millis(delay_ms))?;
+        Some(
+            slowed
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        )
     }
 
     /// Wait until an open journal of \`op\` records at least \`next\` applied steps.
@@ -317,7 +321,10 @@ fn merge_leaves_base_edits_made_while_it_applies_and_keeps_the_workspace() {
     write(&view.join("b.txt"), "b1 workspace\nline 2\n");
     fs::remove_file(view.join("c.txt")).unwrap();
 
-    let child = env.spawn_slow(&["merge", "w", "--quiet", "--no-install", "--drop"], 400);
+    let Some(child) = env.spawn_slow(&["merge", "w", "--quiet", "--no-install", "--drop"], 400)
+    else {
+        return;
+    };
     env.wait_for_journal("merge", 0);
     write(&env.project().join("b.txt"), "b0\nUSER EDIT\n");
     write(&env.project().join("c.txt"), "USER EDIT c\n");
@@ -354,7 +361,9 @@ fn a_resumed_merge_and_its_undo_leave_base_edits_made_while_it_was_interrupted()
             "base\nworkspace\n",
         );
     }
-    let mut child = env.spawn_slow(&["merge", "w", "--quiet", "--no-install"], 300);
+    let Some(mut child) = env.spawn_slow(&["merge", "w", "--quiet", "--no-install"], 300) else {
+        return;
+    };
     env.wait_for_journal("merge", 2);
     child.kill().unwrap();
     let _ = child.wait();
@@ -402,7 +411,9 @@ fn a_resumed_pull_also_pulls_base_changes_made_while_it_was_interrupted() {
             "base\nbase edit\n",
         );
     }
-    let mut child = env.spawn_slow(&["pull", "w", "--no-install"], 300);
+    let Some(mut child) = env.spawn_slow(&["pull", "w", "--no-install"], 300) else {
+        return;
+    };
     env.wait_for_journal("pull", 2);
     child.kill().unwrap();
     let _ = child.wait();
@@ -437,7 +448,9 @@ fn a_pull_also_pulls_base_changes_made_while_it_applies() {
     std::thread::sleep(Duration::from_millis(5));
     write(&env.project().join("a.txt"), "a1\n");
     write(&env.project().join("d.txt"), "d1\n");
-    let child = env.spawn_slow(&["pull", "w", "--no-install"], 400);
+    let Some(child) = env.spawn_slow(&["pull", "w", "--no-install"], 400) else {
+        return;
+    };
     // After the step for a.txt, before the one for d.txt.
     env.wait_for_journal("pull", 1);
     write(&env.project().join("a.txt"), "a2 during the pull\n");
@@ -565,7 +578,10 @@ fn merge_drop_keeps_the_workspace_when_the_agent_writes_while_it_merges() {
     write(&view.join("a.txt"), "a1\n");
     write(&view.join("b.txt"), "b1\n");
 
-    let child = env.spawn_slow(&["merge", "w", "--quiet", "--no-install", "--drop"], 400);
+    let Some(child) = env.spawn_slow(&["merge", "w", "--quiet", "--no-install", "--drop"], 400)
+    else {
+        return;
+    };
     env.wait_for_journal("merge", 0);
     write(&view.join("late.txt"), "AGENT late\n");
     write(&view.join("a.txt"), "AGENT a2\n");
@@ -745,7 +761,9 @@ fn a_catch_up_round_never_wedges_on_what_the_agent_wrote() {
         write(&env.project().join(format!("f{index}.txt")), "planned\n");
     }
     let view = env.view("w");
-    let child = env.spawn_slow(&["pull", "w", "--no-install"], 300);
+    let Some(child) = env.spawn_slow(&["pull", "w", "--no-install"], 300) else {
+        return;
+    };
     env.wait_for_journal("pull", 0);
     write(&view.join("f6.txt"), "AGENT f6\n");
     write(&env.project().join("late.txt"), "late\n");
@@ -833,7 +851,9 @@ fn a_base_file_that_keeps_changing_is_left_for_the_next_pull() {
     for index in 0..8 {
         write(&env.project().join(format!("src/f{index}.txt")), "v1\n");
     }
-    let child = env.spawn_slow(&["pull", "w", "--no-install"], 50);
+    let Some(child) = env.spawn_slow(&["pull", "w", "--no-install"], 50) else {
+        return;
+    };
     let hot = env.project().join("hot.txt");
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let writer = {

@@ -266,10 +266,17 @@ fn kill_during_merge_blocks_mutations_until_explicit_resume_then_converges() {
     for index in 0..600 {
         fs::write(view.join(format!("file-{index:04}")), b"new\n").unwrap();
     }
-    let mut child = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-        .env("FORKSPACE_HOME", home.path())
-        .env("FORKSPACE_INTERNAL_STEP_DELAY_MS", "2")
-        .args(["merge", "merge-kill", "--no-install", "--quiet"])
+    let mut merge = Command::new(env!("CARGO_BIN_EXE_forkspace"));
+    merge.env("FORKSPACE_HOME", home.path()).args([
+        "merge",
+        "merge-kill",
+        "--no-install",
+        "--quiet",
+    ]);
+    let Some(mut merge) = common::with_slow_renames(&merge, Duration::from_millis(2)) else {
+        return;
+    };
+    let mut child = merge
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
