@@ -122,9 +122,9 @@ name.
 ## Reproduction
 
 ```sh
-python3 scripts/bench.py --synthetic 10000 --backends auto,copy --out docs/benchmarks/my-host.json
+python3 scripts/bench.py --synthetic 10000 --out docs/benchmarks/my-host.json
 corpus=$(scripts/bench-corpus.sh)   # network on the first run only
-python3 scripts/bench.py --corpus "$corpus" --backends auto --out docs/benchmarks/my-host-next.json
+python3 scripts/bench.py --corpus "$corpus" --out docs/benchmarks/my-host-next.json
 python3 scripts/bench-report.py     # regenerate the tables above
 ```
 

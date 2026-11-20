@@ -76,11 +76,6 @@ fn setup_case(case: &Case, home: &Path) {
         .unwrap();
         return;
     }
-    if case.setup.as_deref() == Some("copy-small") {
-        fs::create_dir_all(home.join("base")).unwrap();
-        fs::write(home.join("base/file"), "x\n").unwrap();
-        return;
-    }
     if case.setup.as_deref() != Some("diff-class") {
         return;
     }
@@ -198,22 +193,7 @@ fn golden_cli_contract() {
                 String::from_utf8_lossy(&stdout)
             ));
         }
-        let stderr = if case.setup.as_deref() == Some("copy-small") {
-            let value = String::from_utf8(output.stderr).unwrap();
-            let value =
-                if let (Some(start), Some(end)) = (value.find(" bytes in "), value.find(" ms);")) {
-                    format!(
-                        "{} bytes in <TIME> ms);{}",
-                        &value[..start],
-                        &value[end + 5..]
-                    )
-                } else {
-                    value
-                };
-            value.into_bytes()
-        } else {
-            output.stderr
-        };
+        let stderr = output.stderr;
         if stderr != expected(&case.name, "stderr") {
             failures.push(format!(
                 "stderr changed for {}:\n{}",

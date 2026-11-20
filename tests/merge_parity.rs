@@ -256,6 +256,7 @@ fn building_refuses_and_dirty_rows_are_ancestor_unknown_not_conflicts() {
 #[test]
 #[serial]
 fn selected_directory_backend_round_trips_through_the_public_cli() {
+    skip_unless_copying!();
     let home = common::setup_test_env();
     let base = tempfile::tempdir().unwrap();
     fs::write(base.path().join("edit"), b"old\n").unwrap();
@@ -264,7 +265,7 @@ fn selected_directory_backend_round_trips_through_the_public_cli() {
     let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
         .current_dir(base.path())
-        .args(["new", "primitive-parity", "--copy"])
+        .args(["new", "primitive-parity"])
         .output()
         .unwrap();
     assert!(
@@ -320,7 +321,7 @@ fn installer_failure_keeps_the_applied_journal_resumable_and_never_drops() {
     let forked = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
         .current_dir(base.path())
-        .args(["new", "install-failure", "--copy"])
+        .args(["new", "install-failure"])
         .output()
         .unwrap();
     assert!(forked.status.success());
@@ -444,14 +445,14 @@ fn merge_installs_only_when_dependencies_change() {
             .view_path
             .clone()
     };
-    forkspace(&["new", "source-only", "--copy"]);
+    forkspace(&["new", "source-only"]);
     fs::write(view("source-only").join("page.tsx"), b"new\n").unwrap();
     let merged = forkspace(&["merge", "source-only", "--drop"]);
     assert!(!merged.contains("ran package install"), "{merged}");
     assert!(!marker.exists(), "npm ran for a source-only merge");
     assert_eq!(fs::read(base.path().join("page.tsx")).unwrap(), b"new\n");
 
-    forkspace(&["new", "add-dependency", "--copy"]);
+    forkspace(&["new", "add-dependency"]);
     fs::write(
         view("add-dependency").join("package.json"),
         br#"{"name":"merge-fixture","version":"1.0.0","dependencies":{"zod":"^3.0.0"}}"#,

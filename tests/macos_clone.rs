@@ -1691,7 +1691,7 @@ S(('127.0.0.1',int(os.environ['PORT'])),H).serve_forever()
             let copied = Command::new(env!("CARGO_BIN_EXE_forkspace"))
                 .env("FORKSPACE_HOME", &home)
                 .current_dir(&Path::new(&base))
-                .args(["new", "non-apfs-copy", "--copy"])
+                .args(["new", "non-apfs-copy"])
                 .output()
                 .unwrap();
             assert!(

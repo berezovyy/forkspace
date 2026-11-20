@@ -200,13 +200,9 @@ fn refuse_reserved_names(name: &str) -> Result<bool> {
         clean &= !row.dirty;
         if frozen::has_whiteout_name(row.path) {
             let path = crate::changes::manifest::decode_path(row.path)?;
-            return Err(crate::error::ForkspaceError::CapabilityUnsupported {
-                diagnosis: format!(
-                    "{} uses the .wh. prefix, which fuse-overlayfs reserves for deletion markers",
-                    path.display()
-                ),
-                remedy: "rename that path, or fork with --copy".to_string(),
-            });
+            return Err(crate::error::ForkspaceError::ReservedOverlayName(
+                path.display().to_string(),
+            ));
         }
     }
     Ok(clean)
@@ -260,11 +256,7 @@ impl WorkspaceBackend for OverlayBackend {
 
     fn create(&self, req: &CreateReq) -> Result<ViewInfo> {
         let root = paths::overlay_root(&req.name);
-        let frozen = if req.live {
-            None
-        } else {
-            Some(freeze_base(req)?)
-        };
+        let frozen = Some(freeze_base(req)?);
         let fork_time_ns = crate::util::fs::ctime_clock_ns();
         let mut layers = OverlayState::at(&root);
         layers.lower = frozen.as_ref().map(|frozen| frozen.tree.clone());

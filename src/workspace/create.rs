@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 
 use crate::backend::{
-    choose_backend_for_create, pending_create_path, select_backend, select_backend_for_create,
-    CreateReq, DestroyMode, OverlayState, WorkspaceBackend,
+    choose_backend_for_create, pending_create_path, select_backend, CreateReq, DestroyMode,
+    OverlayState, WorkspaceBackend,
 };
 use crate::changes::manifest::{Builder, ManifestStatus};
 use crate::error::{ForkspaceError, Result};
@@ -24,10 +24,6 @@ pub struct CreateOptions {
     pub session: Option<String>,
     /// Keep the writable layers in RAM; only the overlay backend supports it.
     pub tmpfs: bool,
-    /// Skip capability probing and use the portable full-copy backend.
-    pub force_copy: bool,
-    /// Overlay only: mount the base itself rather than a frozen copy of it.
-    pub live: bool,
     /// Create this Git branch in the view and record it; the fork fails without it.
     pub branch: Option<String>,
     /// Overlay only: do not flush the workspace's writes on `fsync`.
@@ -48,7 +44,7 @@ struct Origin {
 /// Fork `base` into a new workspace called `name`.
 ///
 /// If `base` is the name of an existing workspace, the new workspace is stacked on top of it
-/// and inherits its backend (unless `force_copy` is set).
+/// and inherits its backend.
 pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Workspace> {
     validate_name(name)?;
     let Origin {
@@ -57,7 +53,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         parent_layers,
         backend,
         skipped,
-    } = resolve_origin(base, name, options.force_copy)?;
+    } = resolve_origin(base, name)?;
 
     backend.preflight(&origin)?;
     let origin = origin
@@ -69,12 +65,34 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         name: name.to_string(),
         base: origin.clone(),
         tmpfs: options.tmpfs,
-        live: options.live,
         no_fsync: options.no_fsync,
         parent_layers,
     };
-    let view = match backend.create(&request) {
-        Ok(view) => view,
+    let (backend, view) = match backend.create(&request) {
+        Ok(view) => (backend, view),
+        // A project the overlay cannot hold is copied instead.
+        Err(ForkspaceError::ReservedOverlayName(path)) if parent.is_none() => {
+            State::with_state(|state| {
+                clear_intent(state, name);
+                Ok(())
+            })?;
+            let copying = crate::backend::copying_backend_for(&origin)?;
+            eprintln!(
+                "note: {path} uses the .wh. prefix, which fuse-overlayfs reserves, so '{name}' is a {} workspace instead",
+                copying.kind().as_str()
+            );
+            record_intent(name, copying.as_ref())?;
+            match copying.create(&request) {
+                Ok(view) => (copying, view),
+                Err(error) => {
+                    State::with_state(|state| {
+                        clear_intent(state, name);
+                        Ok(())
+                    })?;
+                    return Err(explain_long_path(error));
+                }
+            }
+        }
         Err(error) => {
             State::with_state(|state| {
                 clear_intent(state, name);
@@ -202,12 +220,12 @@ fn give_private_git(workspace: &mut Workspace) -> Result {
 }
 
 /// Resolve `base` to a directory, stacking on the workspace of that name if there is one.
-fn resolve_origin(base: PathBuf, name: &str, force_copy: bool) -> Result<Origin> {
+fn resolve_origin(base: PathBuf, name: &str) -> Result<Origin> {
     let state = State::load()?;
     ensure_name_free(&state, name)?;
 
     let Some(parent) = state.workspaces.get(base.to_str().unwrap_or("")) else {
-        let (backend, skipped) = choose_backend_for_create(&base, force_copy)?;
+        let (backend, skipped) = choose_backend_for_create(&base)?;
         return Ok(Origin {
             path: base,
             parent: None,
@@ -225,11 +243,7 @@ fn resolve_origin(base: PathBuf, name: &str, force_copy: bool) -> Result<Origin>
     }
     guard::require_live_view(&state, parent)?;
     let path = select_backend(Some(parent.backend_kind))?.view_path(parent);
-    let backend = if force_copy {
-        select_backend_for_create(&path, true)?
-    } else {
-        select_backend(Some(parent.backend_kind))?
-    };
+    let backend = select_backend(Some(parent.backend_kind))?;
     Ok(Origin {
         path,
         parent: Some(parent.name.clone()),

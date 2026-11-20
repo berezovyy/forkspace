@@ -22,12 +22,12 @@ and what the OS offers around it. Each row names the test that holds it. Measure
 | Line-level merge | yes | yes | yes | yes | `tests/line_merge.rs::different_lines_reach_the_project_from_both_workspaces` |
 | Merge undo | yes | yes | yes | yes | `tests/merge_undo.rs::undo_restores_the_exact_project_and_removes_what_merge_added` |
 | Pull | yes | yes | yes | yes | `tests/pull.rs::merge_after_pull_pushes_only_remaining_workspace_edits` |
-| Checkpoints | yes | yes | yes | yes | `tests/checkpoints.rs::checkpoint_then_restore_is_exact_on_the_copy_backend` |
+| Checkpoints | yes | yes | yes | yes | `tests/checkpoints.rs::checkpoint_then_restore_is_exact` |
 | Branch / land | yes | yes | yes | yes | `tests/land.rs::public_fork_branch_then_land_preserves_the_workspace_commits` |
 | Compare / signals | yes | yes | yes | yes | `tests/review_gate.rs::compare_preserves_argument_order_and_buckets_divergence` |
 | Dev-server watcher | native host watcher | FSEvents | native host watcher | native host watcher | `tests/macos_clone.rs::run_switch_proxy_hot_reload_and_drop_supervision` |
 | `--tmpfs` | changes on an existing tmpfs | refused | refused | refused | `tests/fork_drop.rs::test_fork_tmpfs_keeps_overlay_layers_in_ram` |
-| `.wh.*` names | refused at fork; cannot be created in the view | ordinary files | ordinary files | ordinary files | `tests/fork_drop.rs::test_overlay_fork_refuses_base_with_whiteout_names` |
+| `.wh.*` names | refused at fork; cannot be created in the view | ordinary files | ordinary files | ordinary files | `tests/fork_drop.rs::a_base_with_whiteout_names_is_copied_instead_of_layered` |
 | Crash reconciliation | yes | yes | yes | yes | `tests/fault_injection.rs::kill_during_copy_fork_reconciles_the_intent_and_partial_tree` |
 
 Selection is probed for each new fork and recorded permanently. Existing workspaces never

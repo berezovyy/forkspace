@@ -102,16 +102,6 @@ pub struct NewArgs {
     )]
     pub no_fsync: bool,
 
-    #[arg(long, help = "Consent to a full directory copy backend")]
-    pub copy: bool,
-
-    #[arg(
-        long,
-        conflicts_with = "copy",
-        help = "Show later changes to the source in the workspace (Linux overlay only; skips the frozen copy)"
-    )]
-    pub live: bool,
-
     #[arg(
         long,
         value_name = "SIZE",
@@ -180,16 +170,6 @@ pub struct EnterArgs {
         help = "When creating, do not flush the workspace's writes on fsync (Linux overlay only; implied by --ephemeral)"
     )]
     pub no_fsync: bool,
-
-    #[arg(long, help = "Consent to a full directory copy backend when creating")]
-    pub copy: bool,
-
-    #[arg(
-        long,
-        conflicts_with = "copy",
-        help = "When creating, show later changes to the base in the workspace (Linux overlay only)"
-    )]
-    pub live: bool,
 
     #[arg(long, help = "Let the shell or command write outside the workspace")]
     pub no_sandbox: bool,

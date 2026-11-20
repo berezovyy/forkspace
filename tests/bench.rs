@@ -16,7 +16,7 @@ fn bench_script_runs_in_short_mode() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/bench.py");
     let output = Command::new("python3")
         .arg(script)
-        .args(["--short", "--json", "--backends", "copy", "--bin", BIN])
+        .args(["--short", "--json", "--bin", BIN])
         .arg("--work")
         .arg(work.path())
         .env_remove("FORKSPACE_HOME")
@@ -29,7 +29,7 @@ fn bench_script_runs_in_short_mode() {
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let backend = &report["backends"][0];
-    assert_eq!(backend["kind"], "copy");
+    assert!(backend["kind"].is_string(), "{backend}");
     assert_eq!(backend["errors"], serde_json::json!([]));
     for label in ["new", "diff --stat (clean)", "merge (one file)", "drop"] {
         assert_eq!(

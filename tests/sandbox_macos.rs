@@ -21,7 +21,7 @@ fn seatbelt_refuses_writes_to_the_project_and_allows_the_view() {
             .output()
             .unwrap()
     };
-    assert!(run(&["new", "ws", "--copy"]).status.success());
+    assert!(run(&["new", "ws"]).status.success());
     let script = format!(
         "echo agent > '{}'; echo inside > app.txt",
         project.join("app.txt").display()

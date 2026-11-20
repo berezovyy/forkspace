@@ -1,1 +1,0 @@
-error: unsupported capability: --tmpfs is unavailable for directory-copy backends; omit --tmpfs or install fuse-overlayfs

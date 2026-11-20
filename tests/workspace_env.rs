@@ -44,7 +44,7 @@ fn new_warns_about_a_copied_venv_that_points_at_the_base() {
     let base_path = base.path().canonicalize().unwrap();
     fake_venv(&base_path);
 
-    let output = common::new_in(home.path(), &base_path, &["venv-ws", "--copy"]);
+    let output = common::new_in(home.path(), &base_path, &["venv-ws"]);
     assert!(
         output.status.success(),
         "{}",
@@ -71,7 +71,7 @@ fn new_does_not_warn_about_unrelated_shebangs() {
     fs::write(tool.join("pyvenv.cfg"), "home = /usr/bin\n").unwrap();
     fs::write(tool.join("bin/script"), "#!/usr/bin/env python3\n").unwrap();
 
-    let output = common::new_in(home.path(), base.path(), &["plain-ws", "--copy"]);
+    let output = common::new_in(home.path(), base.path(), &["plain-ws"]);
     assert!(
         output.status.success(),
         "{}",
@@ -88,7 +88,7 @@ fn enter_gives_each_workspace_its_own_compose_project() {
     let base = root.path().join("My Shop");
     fs::create_dir_all(&base).unwrap();
     fs::write(base.join("compose.yaml"), "services: {}\n").unwrap();
-    let new = common::new_in(home.path(), &base, &["Agent.1", "--copy"]);
+    let new = common::new_in(home.path(), &base, &["Agent.1"]);
     assert!(
         new.status.success(),
         "{}",

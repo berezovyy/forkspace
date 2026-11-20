@@ -181,20 +181,16 @@ fn copy_stack_is_a_snapshot_and_merges_exactly_one_level_at_a_time() {
             .output()
             .unwrap()
     };
-    assert!(
-        common::new_in(home.path(), base.path(), &["parent", "--copy"])
-            .status
-            .success()
-    );
+    assert!(common::new_in(home.path(), base.path(), &["parent"])
+        .status
+        .success());
     let parent_view = forkspace::state::State::load().unwrap().workspaces["parent"]
         .view_path
         .clone();
     fs::write(parent_view.join("file"), b"before-child\n").unwrap();
-    assert!(
-        common::new_in(home.path(), &parent_view, &["child", "--copy"])
-            .status
-            .success()
-    );
+    assert!(common::new_in(home.path(), &parent_view, &["child"])
+        .status
+        .success());
     let child_view = forkspace::state::State::load().unwrap().workspaces["child"]
         .view_path
         .clone();

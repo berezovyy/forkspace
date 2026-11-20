@@ -17,7 +17,6 @@ fn copy_workspace(base: &Path, name: &str) -> Workspace {
         base.to_path_buf(),
         name,
         forkspace::workspace::CreateOptions {
-            force_copy: true,
             ..Default::default()
         },
     )

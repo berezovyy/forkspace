@@ -216,15 +216,6 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
         if req.tmpfs {
             return Err(self.primitive.tmpfs_unsupported());
         }
-        if req.live {
-            return Err(ForkspaceError::CapabilityUnsupported {
-                diagnosis: format!(
-                    "--live needs the Linux overlay backend; {} workspaces are always sealed copies",
-                    self.primitive.kind().as_str()
-                ),
-                remedy: "omit --live".to_string(),
-            });
-        }
         let destination = paths::snapshot_dir(&req.name);
         if destination.exists() {
             return Err(ForkspaceError::WorkspaceExists(req.name.clone()));

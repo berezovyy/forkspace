@@ -274,6 +274,7 @@ fn test_fork_tmpfs_keeps_overlay_layers_in_ram() {
 #[test]
 #[serial]
 fn test_fork_tmpfs_is_refused_by_copy_backend() {
+    skip_unless_copying!();
     let (_dir, base) = common::setup_with_project();
 
     let result = forkspace::workspace::create(
@@ -281,7 +282,6 @@ fn test_fork_tmpfs_is_refused_by_copy_backend() {
         "tmpfs-copy-ws",
         forkspace::workspace::CreateOptions {
             tmpfs: true,
-            force_copy: true,
             ..Default::default()
         },
     );
@@ -339,29 +339,30 @@ fn test_fork_stack_depth_is_bounded() {
 
 #[test]
 #[serial]
-fn test_overlay_fork_refuses_base_with_whiteout_names() {
+fn a_base_with_whiteout_names_is_copied_instead_of_layered() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
     std::fs::create_dir_all(base.path().join("vendor")).unwrap();
     std::fs::write(base.path().join("vendor/.wh.cache"), "marker-like\n").unwrap();
     std::fs::write(base.path().join("vendor/cache"), "data\n").unwrap();
 
-    let error = forkspace::workspace::create(
+    let workspace = forkspace::workspace::create(
         base.path().to_path_buf(),
         "whiteout-ws",
         forkspace::workspace::CreateOptions::default(),
     )
-    .unwrap_err();
+    .unwrap();
 
-    match error {
-        ForkspaceError::CapabilityUnsupported { diagnosis, remedy } => {
-            assert!(diagnosis.contains("vendor/.wh.cache"), "{diagnosis}");
-            assert!(remedy.contains("--copy"), "{remedy}");
-        }
-        other => panic!("expected CapabilityUnsupported, got {other:?}"),
-    }
-    assert!(State::load().unwrap().workspaces.is_empty());
+    assert_ne!(
+        workspace.backend_kind,
+        forkspace::backend::BackendKind::Overlay
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.view_path.join("vendor/.wh.cache")).unwrap(),
+        "marker-like\n"
+    );
     assert!(!forkspace::paths::overlay_root("whiteout-ws").exists());
+    assert_eq!(State::load().unwrap().workspaces.len(), 1);
 }
 
 /// STATE-12: a workspace folder deleted or moved by hand. `ls` and `gc` report it and go on
@@ -370,6 +371,7 @@ fn test_overlay_fork_refuses_base_with_whiteout_names() {
 #[test]
 #[serial]
 fn a_view_folder_removed_by_hand_is_reported_and_dropped_cleanly() {
+    skip_unless_copying!();
     let home = common::setup_test_env();
     let root = tempfile::tempdir().unwrap();
     let project = root.path().join("project");
@@ -384,7 +386,7 @@ fn a_view_folder_removed_by_hand_is_reported_and_dropped_cleanly() {
             .unwrap()
     };
     for name in ["aa", "ws", "zz"] {
-        let output = run(&["new", name, "--copy"]);
+        let output = run(&["new", name]);
         assert!(output.status.success(), "{output:?}");
     }
     let view = State::load()
@@ -420,6 +422,6 @@ fn a_view_folder_removed_by_hand_is_reported_and_dropped_cleanly() {
         );
     }
     assert!(!forkspace::changes::manifest::manifest_path("ws").exists());
-    let again = run(&["new", "ws", "--copy"]);
+    let again = run(&["new", "ws"]);
     assert!(again.status.success(), "{again:?}");
 }

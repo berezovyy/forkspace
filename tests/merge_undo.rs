@@ -27,7 +27,7 @@ impl Env {
     }
 
     fn view(&self, name: &str) -> PathBuf {
-        self.home.path().join("workspaces").join(name)
+        common::view_of(self.home.path(), name)
     }
 
     fn run(&self, args: &[&str]) -> Output {
@@ -50,7 +50,7 @@ impl Env {
     }
 
     fn fork(&self, name: &str) {
-        self.ok(&["new", name, "--copy"]);
+        self.ok(&["new", name]);
     }
 
     fn merge(&self, name: &str) {

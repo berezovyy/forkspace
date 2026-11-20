@@ -37,8 +37,6 @@ pub fn exec(args: NewArgs) -> Result {
         &name,
         CreateOptions {
             tmpfs: args.tmpfs,
-            force_copy: args.copy,
-            live: args.live,
             branch,
             no_fsync: args.no_fsync,
             ..Default::default()

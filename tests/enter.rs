@@ -352,7 +352,7 @@ fn enter_exits_with_the_command_status() {
             .output()
             .unwrap()
     };
-    assert!(forkspace(&["new", "status-ws", "--copy"]).status.success());
+    assert!(forkspace(&["new", "status-ws"]).status.success());
 
     let failed = forkspace(&["enter", "status-ws", "--", "sh", "-c", "exit 3"]);
     assert_eq!(failed.status.code(), Some(3), "{failed:?}");
@@ -366,7 +366,7 @@ fn enter_exits_with_the_command_status() {
     let ephemeral = Command::new(forkspace_bin())
         .env("FORKSPACE_HOME", &home)
         .current_dir(base.path())
-        .args(["enter", "--ephemeral", "--copy", "--", "sh", "-c", "exit 4"])
+        .args(["enter", "--ephemeral", "--", "sh", "-c", "exit 4"])
         .output()
         .unwrap();
     assert_eq!(ephemeral.status.code(), Some(4), "{ephemeral:?}");
@@ -387,7 +387,7 @@ fn an_ephemeral_workspace_with_unmerged_changes_is_kept() {
         Command::new(forkspace_bin())
             .env("FORKSPACE_HOME", &home)
             .current_dir(base.path())
-            .args(["enter", "--ephemeral", "--copy", "--merge-on-exit", "--"])
+            .args(["enter", "--ephemeral", "--merge-on-exit", "--"])
             .args(["sh", "-c", script])
             .output()
             .unwrap()

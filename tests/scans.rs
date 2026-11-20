@@ -29,7 +29,7 @@ impl Env {
         fs::write(project.join("dist/app.js"), "built\n").unwrap();
         fs::write(project.join("node_modules/pkg/lib/index.js"), "pkg\n").unwrap();
         fs::write(project.join("node_modules/pkg/package.json"), "{}\n").unwrap();
-        let output = env.run(&["new", "ws", "--copy"]);
+        let output = env.run(&["new", "ws"]);
         assert!(output.status.success());
         env
     }
@@ -39,7 +39,7 @@ impl Env {
     }
 
     fn view(&self) -> PathBuf {
-        self.home.path().join("workspaces/ws")
+        common::view_of(self.home.path(), "ws")
     }
 
     fn run(&self, args: &[&str]) -> Output {
@@ -161,7 +161,7 @@ fn deletions_next_to_a_skipped_directory_are_reported() {
     fs::write(project.join("node_modules-extra/keep.js"), "keep\n").unwrap();
     fs::write(project.join("node_modules.js"), "shim\n").unwrap();
     assert!(env.run(&["drop", "ws"]).status.success());
-    let forked = env.run(&["new", "ws", "--copy"]);
+    let forked = env.run(&["new", "ws"]);
     assert!(forked.status.success());
 
     let view = env.view();

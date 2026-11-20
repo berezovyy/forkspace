@@ -68,7 +68,7 @@ fn run_follows_a_server_that_ignores_port_and_listens_on_ipv6_only() {
     let base = tempfile::tempdir().unwrap();
     fs::write(base.path().join("server.py"), IPV6_ONLY_SERVER).unwrap();
 
-    let created = common::new_in(home.path(), base.path(), &["ports", "--copy"]);
+    let created = common::new_in(home.path(), base.path(), &["ports"]);
     assert!(
         created.status.success(),
         "{}",

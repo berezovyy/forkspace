@@ -40,7 +40,7 @@ fn the_proxy_serves_the_dev_server_and_exits_when_it_stops() {
             .output()
             .unwrap()
     };
-    assert!(forkspace(&["new", "web", "--copy"]).status.success());
+    assert!(forkspace(&["new", "web"]).status.success());
     let started = forkspace(&[
         "run",
         "web",

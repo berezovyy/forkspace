@@ -10,16 +10,14 @@ use std::process::{Command, Output};
 struct Env {
     home: common::TestHome,
     root: tempfile::TempDir,
-    backend: &'static str,
     path: Option<String>,
 }
 
 impl Env {
-    fn new(backend: &'static str) -> Self {
+    fn new() -> Self {
         let env = Self {
             home: common::TestHome::new(),
             root: tempfile::tempdir().unwrap(),
-            backend,
             path: None,
         };
         fs::create_dir(env.project()).unwrap();
@@ -31,8 +29,9 @@ impl Env {
     }
 
     fn view(&self, name: &str) -> PathBuf {
-        if self.backend == "linux" {
-            self.home.path().join(name).join("merged")
+        let overlay = self.home.path().join(name).join("merged");
+        if overlay.is_dir() {
+            overlay
         } else {
             self.home.path().join("workspaces").join(name)
         }
@@ -62,7 +61,7 @@ impl Env {
     }
 
     fn fork(&self, name: &str) {
-        self.ok(&["new", name, "--copy"]);
+        self.ok(&["new", name]);
     }
 
     fn read(&self, path: &Path) -> String {
@@ -91,14 +90,12 @@ fn exit_code(output: &Output) -> Option<i32> {
     output.status.code()
 }
 
-fn different_lines_reach_the_project_from_both_workspaces(backend: &'static str) {
-    let env = Env::new(backend);
+#[test]
+fn different_lines_reach_the_project_from_both_workspaces() {
+    let env = Env::new();
     fs::write(env.project().join("app.txt"), numbered(20)).unwrap();
     for name in ["ws1", "ws2", "ws3"] {
-        let mut args = vec!["new", name];
-        if backend == "copy" {
-            args.push("--copy");
-        }
+        let args = vec!["new", name];
         env.ok(&args);
     }
     edit(&env.view("ws1").join("app.txt"), "line 2\n", "line 2 ws1\n");
@@ -135,19 +132,8 @@ fn different_lines_reach_the_project_from_both_workspaces(backend: &'static str)
 }
 
 #[test]
-fn different_lines_merge_on_the_copy_backend() {
-    different_lines_reach_the_project_from_both_workspaces("copy");
-}
-
-#[test]
-fn different_lines_merge_on_a_sealed_overlay() {
-    skip_without_overlay!();
-    different_lines_reach_the_project_from_both_workspaces("linux");
-}
-
-#[test]
 fn same_lines_get_markers_in_the_workspace_and_never_reach_the_project() {
-    let env = Env::new("copy");
+    let env = Env::new();
     fs::write(env.project().join("app.txt"), numbered(5)).unwrap();
     env.fork("ws1");
     env.fork("ws2");
@@ -186,7 +172,7 @@ fn same_lines_get_markers_in_the_workspace_and_never_reach_the_project() {
 
 #[test]
 fn package_json_merges_and_the_lockfile_is_regenerated_not_merged() {
-    let mut env = Env::new("copy");
+    let mut env = Env::new();
     let manifest = "{\n  \"name\": \"app\",\n  \"dependencies\": {\n    \"a\": \"1.0.0\"\n  },\n  \"devDependencies\": {\n    \"x\": \"1.0.0\"\n  }\n}\n";
     fs::write(env.project().join("package.json"), manifest).unwrap();
     fs::write(env.project().join("package-lock.json"), "{\"lock\": 0}\n").unwrap();
@@ -237,7 +223,7 @@ fn package_json_merges_and_the_lockfile_is_regenerated_not_merged() {
 
 #[test]
 fn binary_files_both_sides_changed_stay_whole_file_conflicts() {
-    let env = Env::new("copy");
+    let env = Env::new();
     fs::write(env.project().join("image.bin"), b"\0base\n").unwrap();
     env.fork("ws1");
     env.fork("ws2");
@@ -255,7 +241,7 @@ fn binary_files_both_sides_changed_stay_whole_file_conflicts() {
 
 #[test]
 fn without_git_both_sides_changed_is_a_whole_file_conflict() {
-    let mut env = Env::new("copy");
+    let mut env = Env::new();
     fs::write(env.project().join("app.txt"), numbered(20)).unwrap();
     env.fork("ws1");
     env.fork("ws2");
@@ -280,7 +266,7 @@ fn an_interrupted_auto_merge_resumes_from_its_journal() {
         self, Fingerprint, MergedStep, OperationJournal, OperationKind, OperationPhase,
     };
 
-    let env = Env::new("copy");
+    let env = Env::new();
     fs::write(env.project().join("app.txt"), numbered(20)).unwrap();
     env.fork("ws1");
     env.fork("ws2");

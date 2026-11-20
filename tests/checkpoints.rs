@@ -10,15 +10,13 @@ use std::process::{Command, Output};
 struct Env {
     home: common::TestHome,
     root: tempfile::TempDir,
-    backend: &'static str,
 }
 
 impl Env {
-    fn new(backend: &'static str) -> Self {
+    fn new() -> Self {
         let env = Self {
             home: common::TestHome::new(),
             root: tempfile::tempdir().unwrap(),
-            backend,
         };
         let project = env.root.path().join("project");
         fs::create_dir(&project).unwrap();
@@ -26,19 +24,17 @@ impl Env {
         fs::write(project.join("edit.txt"), "fork\n").unwrap();
         fs::write(project.join("gone.txt"), "gone\n").unwrap();
         fs::write(project.join("later.txt"), "fork version\n").unwrap();
-        let mut args = vec!["new", "ws"];
-        if backend == "copy" {
-            args.push("--copy");
-        }
+        let args = vec!["new", "ws"];
         env.ok(&args);
         env
     }
 
     fn view(&self) -> PathBuf {
-        if self.backend == "linux" {
-            self.home.path().join("ws/merged")
+        let overlay = self.home.path().join("ws").join("merged");
+        if overlay.is_dir() {
+            overlay
         } else {
-            self.home.path().join("workspaces/ws")
+            self.home.path().join("workspaces").join("ws")
         }
     }
 
@@ -93,8 +89,9 @@ fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>, u32, i64, i64)> {
     files
 }
 
-fn checkpoint_then_restore_is_exact(backend: &'static str) {
-    let env = Env::new(backend);
+#[test]
+fn checkpoint_then_restore_is_exact() {
+    let env = Env::new();
     let view = env.view();
     fs::write(view.join("edit.txt"), "checkpointed\n").unwrap();
     fs::set_permissions(view.join("edit.txt"), fs::Permissions::from_mode(0o750)).unwrap();
@@ -129,19 +126,8 @@ fn checkpoint_then_restore_is_exact(backend: &'static str) {
 }
 
 #[test]
-fn checkpoint_then_restore_is_exact_on_the_copy_backend() {
-    checkpoint_then_restore_is_exact("copy");
-}
-
-#[test]
-fn checkpoint_then_restore_is_exact_on_a_sealed_overlay() {
-    skip_without_overlay!();
-    checkpoint_then_restore_is_exact("linux");
-}
-
-#[test]
 fn the_automatic_checkpoint_undoes_a_restore() {
-    let env = Env::new("copy");
+    let env = Env::new();
     let view = env.view();
     fs::write(view.join("edit.txt"), "one\n").unwrap();
     env.ok(&["checkpoint", "ws"]);
@@ -159,7 +145,7 @@ fn the_automatic_checkpoint_undoes_a_restore() {
 
 #[test]
 fn an_interrupted_restore_resumes() {
-    let env = Env::new("copy");
+    let env = Env::new();
     let view = env.view();
     fs::write(view.join("edit.txt"), "saved\n").unwrap();
     fs::create_dir(view.join("z")).unwrap();
@@ -185,7 +171,7 @@ fn an_interrupted_restore_resumes() {
 
 #[test]
 fn pull_takes_an_automatic_checkpoint_and_drop_removes_them_all() {
-    let env = Env::new("copy");
+    let env = Env::new();
     fs::write(env.view().join("edit.txt"), "ours\n").unwrap();
     fs::write(env.root.path().join("project/keep.txt"), "base update\n").unwrap();
     env.ok(&["pull", "ws", "--no-install"]);
@@ -198,7 +184,7 @@ fn pull_takes_an_automatic_checkpoint_and_drop_removes_them_all() {
 
 #[test]
 fn retention_keeps_twenty_manual_checkpoints() {
-    let env = Env::new("copy");
+    let env = Env::new();
     for round in 0..22 {
         fs::write(env.view().join("edit.txt"), format!("{round}\n")).unwrap();
         env.ok(&["checkpoint", "ws"]);

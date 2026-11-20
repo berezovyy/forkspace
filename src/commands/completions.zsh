@@ -48,8 +48,6 @@ _forkspace() {
                         '1:workspace name:' \
                         '--tmpfs[Keep changes in RAM]' \
                         '--no-fsync[Do not flush writes on fsync]' \
-                        '--copy[Consent to a full directory copy]' \
-                        '--live[Show later source changes (no frozen copy)]' \
                         '--memory=[Memory above which the workspace is throttled]:size:' \
                         '--cpu=[CPU time cap, percent of one CPU]:percent:' \
                         '--help[Show help]'
@@ -71,8 +69,6 @@ _forkspace() {
                         '--ephemeral[Destroy on exit]' \
                         '--tmpfs[Keep changes in RAM]' \
                         '--no-fsync[Do not flush writes on fsync]' \
-                        '--copy[Consent to a full directory copy]' \
-                        '--live[Show later base changes (no frozen copy)]' \
                         '--no-sandbox[Let the command write outside the workspace]' \
                         '--sandbox-info[List where commands may write, then exit]' \
                         '--merge-on-exit[Merge changes on exit]' \

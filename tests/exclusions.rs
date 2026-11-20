@@ -83,7 +83,7 @@ fn assert_left_out(view: &Path) {
 fn forks_leave_out_nested_worktrees_and_excluded_paths() {
     let env = Env::new();
     project(&env);
-    env.ok(&["new", "copied", "--copy"]);
+    env.ok(&["new", "copied"]);
     env.ok(&["new", "default"]);
     for name in ["copied", "default"] {
         let view = env.view(name);

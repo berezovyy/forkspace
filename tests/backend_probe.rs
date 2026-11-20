@@ -15,6 +15,7 @@ use walkdir::WalkDir;
 #[test]
 #[serial]
 fn plain_copy_is_a_privilege_free_fidelity_floor() {
+    skip_unless_copying!();
     let _home = common::setup_test_env();
     let base = tempfile::tempdir().unwrap();
     fs::create_dir_all(base.path().join("dir")).unwrap();
@@ -60,7 +61,6 @@ fn plain_copy_is_a_privilege_free_fidelity_floor() {
         base.path().to_path_buf(),
         "copy-floor",
         forkspace::workspace::CreateOptions {
-            force_copy: true,
             ..Default::default()
         },
     )

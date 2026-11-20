@@ -38,8 +38,8 @@ fn workspaces_are_numbered_and_get_a_branch_of_their_name() {
     // A branch the project already has is skipped, not reused.
     git(&project, &["branch", "project-2"]);
 
-    env.ok(&["new", "--copy"]);
-    env.ok(&["new", "--copy"]);
+    env.ok(&["new"]);
+    env.ok(&["new"]);
     let names: Vec<String> = env.workspaces();
     assert_eq!(names, ["project-1", "project-3"]);
     for name in &names {
@@ -47,7 +47,7 @@ fn workspaces_are_numbered_and_get_a_branch_of_their_name() {
     }
     assert_eq!(git(&project, &["branch", "--show-current"]), "main");
 
-    let taken = env.run(&["new", "project-2", "--copy"]);
+    let taken = env.run(&["new", "project-2"]);
     assert!(!taken.status.success());
     assert!(
         stderr(&taken).contains("already has a branch 'project-2'"),
@@ -74,7 +74,7 @@ fn a_folder_inside_another_repository_never_switches_that_repository() {
     let inner = outer.join("build/app");
     write(&inner.join("a.txt"), "a\n");
 
-    let output = common::new_in(env.home.path(), &inner, &["w", "--copy"]);
+    let output = common::new_in(env.home.path(), &inner, &["w"]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(git(&outer, &["branch", "--show-current"]), "main");
     assert_eq!(git(&outer, &["branch", "--list", "w"]), "");

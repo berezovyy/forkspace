@@ -38,13 +38,13 @@ jobs:
         run: |
           corpus=$(scripts/bench-corpus.sh)
           python3 scripts/bench.py --bin target/release/forkspace --corpus "$corpus" \
-            --backends auto,copy --runs "${{ inputs.runs }}" \
+            --runs "${{ inputs.runs }}" \
             --out "bench/${{ runner.os }}-next.json"
       - name: Benchmark synthetic trees
         run: |
           for entries in 1000 10000; do
             python3 scripts/bench.py --bin target/release/forkspace --synthetic "$entries" \
-              --backends auto,copy --runs "${{ inputs.runs }}" \
+              --runs "${{ inputs.runs }}" \
               --out "bench/${{ runner.os }}-synthetic-$entries.json"
           done
       - uses: actions/upload-artifact@v4

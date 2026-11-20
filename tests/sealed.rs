@@ -631,21 +631,3 @@ fn drop_removes_frozen_copies_no_workspace_uses() {
     env.run(&["drop", "two"]);
     assert!(env.frozen_copies().is_empty());
 }
-
-#[test]
-fn live_workspaces_mount_the_base_itself() {
-    skip_without_overlay!();
-    let env = Env::new();
-    env.new_workspace("live", &["--live"]);
-    // What a live view shows after the base changes is undefined (fuse-overlayfs caches
-    // what it has loaded), which is why workspaces are sealed by default; only check that
-    // no frozen copy is made and the workspace is labelled.
-    assert!(env.frozen_copies().is_empty());
-    assert_eq!(
-        fs::read_to_string(env.view("live").join("a.txt")).unwrap(),
-        "a\n"
-    );
-    assert!(env.stdout(&["ls"]).contains("linux (live)"));
-    let listed: serde_json::Value = serde_json::from_str(&env.stdout(&["ls", "--json"])).unwrap();
-    assert_eq!(listed[0]["live"], true);
-}

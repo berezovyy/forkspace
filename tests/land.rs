@@ -121,7 +121,7 @@ fn public_fork_branch_then_land_preserves_the_workspace_commits() {
     let forked = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
         .current_dir(&base)
-        .args(["new", "public", "--copy"])
+        .args(["new", "public"])
         .output()
         .unwrap();
     assert!(
@@ -424,6 +424,7 @@ fn stacked_child_lands_every_commit_into_the_root_repository() {
 #[test]
 #[serial]
 fn a_git_worktree_base_gets_a_private_repository() {
+    skip_unless_copying!();
     let home = common::setup_test_env();
     let forkspace = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
@@ -452,7 +453,7 @@ fn a_git_worktree_base_gets_a_private_repository() {
     let worktree_head = git(&worktree, &["rev-parse", "HEAD"]);
     let worktree_branch = git(&worktree, &["branch", "--show-current"]);
 
-    let created = common::new_in(home.path(), &worktree, &["topic", "--copy"]);
+    let created = common::new_in(home.path(), &worktree, &["topic"]);
     assert!(created.status.success(), "{}", stderr(&created));
     assert_eq!(git(&main, &["show-ref"]), refs_before);
 

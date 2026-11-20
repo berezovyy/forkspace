@@ -77,15 +77,9 @@ fn a_small_edit_is_kept_as_a_small_delta_and_restored_exactly() {
         })
         .collect();
     fs::write(env.project().join("noise.bin"), &random).unwrap();
-    for flags in [&["--copy"][..], &[][..]] {
-        let name = if flags.is_empty() {
-            "default"
-        } else {
-            "copied"
-        };
-        let mut args = vec!["new", name];
-        args.extend_from_slice(flags);
-        env.ok(&args);
+    {
+        let name = "default";
+        env.ok(&["new", name]);
         let view = env.view(name);
         edit(&view);
         let noise: Vec<u8> = random.iter().map(|byte| byte ^ 0x5a).collect();

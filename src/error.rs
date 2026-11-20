@@ -113,6 +113,10 @@ pub enum ForkspaceError {
     #[error("unsupported capability: {diagnosis}; {remedy}")]
     CapabilityUnsupported { diagnosis: String, remedy: String },
 
+    /// A project path fuse-overlayfs cannot hold; `new` copies such a project instead.
+    #[error("{0} uses the .wh. prefix, which fuse-overlayfs reserves for deletion markers; rename that path")]
+    ReservedOverlayName(String),
+
     #[error("backend unavailable: {diagnosis}; {remedy}")]
     BackendUnavailable { diagnosis: String, remedy: String },
 
@@ -188,7 +192,7 @@ impl ForkspaceError {
             | Self::ConflictMarkers { .. }
             | Self::ChangedDuring { .. }
             | Self::PullConflict { .. } => 5,
-            Self::CapabilityUnsupported { .. } => 6,
+            Self::CapabilityUnsupported { .. } | Self::ReservedOverlayName(_) => 6,
             Self::BackendUnavailable { .. } | Self::MountFailed(_) => 7,
             Self::StaleAncestor(_)
             | Self::InterruptedOperation { .. }

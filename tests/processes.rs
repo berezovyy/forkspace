@@ -17,7 +17,7 @@ struct Env {
 }
 
 impl Env {
-    fn new(backend: &'static str, systemd: bool) -> Self {
+    fn new(systemd: bool) -> Self {
         let env = Self {
             home: common::TestHome::new(),
             root: tempfile::tempdir().unwrap(),
@@ -26,10 +26,7 @@ impl Env {
         let project = env.root.path().join("project");
         fs::create_dir(&project).unwrap();
         fs::write(project.join("a.txt"), "a\n").unwrap();
-        let mut args = vec!["new", "ws"];
-        if backend == "copy" {
-            args.push("--copy");
-        }
+        let args = vec!["new", "ws"];
         assert!(env.run(&args).status.success());
         env
     }
@@ -103,8 +100,8 @@ fn systemd_user_available() -> bool {
         .is_some_and(|dir| PathBuf::from(dir).join("systemd/private").exists())
 }
 
-fn a_background_process_blocks_drop_until_killed(backend: &'static str, marker: &str) {
-    let env = Env::new(backend, true);
+fn a_background_process_blocks_drop_until_killed(marker: &str) {
+    let env = Env::new(true);
     env.start(&format!("nohup sleep {marker} >/dev/null 2>&1 & exit 0"));
     assert_eq!(running(marker).len(), 1);
 
@@ -131,14 +128,8 @@ fn a_background_process_blocks_drop_until_killed(backend: &'static str, marker: 
 }
 
 #[test]
-fn copy_workspace_processes_block_drop_until_killed() {
-    a_background_process_blocks_drop_until_killed("copy", "3101");
-}
-
-#[test]
-fn overlay_workspace_processes_block_drop_until_killed() {
-    skip_without_overlay!();
-    a_background_process_blocks_drop_until_killed("linux", "3102");
+fn workspace_processes_block_drop_until_killed() {
+    a_background_process_blocks_drop_until_killed("3101");
 }
 
 #[test]
@@ -147,7 +138,7 @@ fn processes_that_leave_the_workspace_directory_are_still_killed_through_the_sli
         eprintln!("skipping: no systemd user manager");
         return;
     }
-    let env = Env::new("copy", true);
+    let env = Env::new(true);
     env.start("setsid sh -c 'cd / && exec sleep 3103' >/dev/null 2>&1 & exit 0");
     assert_eq!(running("3103").len(), 1);
     let refused = env.run(&["drop", "ws"]);
@@ -160,8 +151,8 @@ fn processes_that_leave_the_workspace_directory_are_still_killed_through_the_sli
 /// nothing until it is free.
 #[test]
 fn drop_all_refuses_and_removes_nothing_while_one_workspace_is_in_use() {
-    let env = Env::new("copy", false);
-    assert!(env.run(&["new", "idle", "--copy"]).status.success());
+    let env = Env::new(false);
+    assert!(env.run(&["new", "idle"]).status.success());
     env.start("nohup sleep 3106 >/dev/null 2>&1 & exit 0");
 
     let refused = env.run(&["drop", "--all"]);
@@ -184,14 +175,14 @@ fn drop_all_refuses_and_removes_nothing_while_one_workspace_is_in_use() {
 
 #[test]
 fn without_systemd_the_proc_scan_still_finds_the_process() {
-    let env = Env::new("copy", false);
+    let env = Env::new(false);
     env.start("nohup sleep 3104 >/dev/null 2>&1 & exit 0");
     let refused = env.run(&["drop", "ws"]);
     assert_eq!(refused.status.code(), Some(5));
     assert!(String::from_utf8_lossy(&refused.stderr).contains("sleep"));
     assert!(env.run(&["drop", "ws", "--kill"]).status.success());
     assert!(wait_until_gone("3104"));
-    assert!(!env.home.path().join("workspaces/ws").exists());
+    assert!(!common::view_of(env.home.path(), "ws").exists());
 }
 
 /// The cgroup directory of the slice whose name ends in `_<workspace>.slice`.
@@ -241,11 +232,9 @@ fn workspace_processes_run_under_forkspace_slice_with_limits() {
         eprintln!("skipping: no systemd user manager");
         return;
     }
-    let env = Env::new("copy", true);
+    let env = Env::new(true);
     // A distinct workspace name, so the slice can be told apart from parallel tests'.
-    let created = env.run(&[
-        "new", "limited", "--copy", "--memory", "1G", "--cpu", "150%",
-    ]);
+    let created = env.run(&["new", "limited", "--memory", "1G", "--cpu", "150%"]);
     assert!(
         created.status.success(),
         "{}",

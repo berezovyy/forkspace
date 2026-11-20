@@ -59,9 +59,9 @@ def main():
             "warmup": args.warmup,
             "backends": [],
         }
-        for backend in args.backends.split(","):
-            log(f"backend {backend}: {args.runs} runs")
-            report["backends"].append(bench_backend(binary, backend, corpus, work, args))
+        # One backend: the one `new` picks on this host (fuse-overlayfs, reflinks or a copy).
+        log(f"{args.runs} runs")
+        report["backends"].append(bench_backend(binary, "auto", corpus, work, args))
     finally:
         if not args.keep:
             remove_tree(work)
@@ -83,7 +83,6 @@ def parse_args():
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--corpus", help="project directory or .tar/.tar.gz to fork")
     source.add_argument("--synthetic", type=int, help="generate a project with this many entries")
-    parser.add_argument("--backends", default="auto", help="comma list: auto (what new picks), copy (new --copy)")
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=1, help="untimed runs before measuring")
     parser.add_argument("--workspaces", type=int, default=5, help="workspaces alive for the second ls")
@@ -310,9 +309,7 @@ def filesystem_type(path):
 
 def bench_backend(binary, backend, corpus, work, args):
     env = dict(os.environ)
-    if backend not in ("auto", "copy"):
-        raise SystemExit(f"unknown backend {backend!r}: use auto or copy")
-    new_flags = ("--copy",) if backend == "copy" else ()
+    new_flags = ()
     project = work / f"project-{backend}"
     copy_tree(corpus, project)
 

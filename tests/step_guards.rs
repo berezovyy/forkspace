@@ -76,7 +76,7 @@ impl Env {
     }
 
     fn fork(&self, name: &str) {
-        self.ok(&["new", name, "--copy"]);
+        self.ok(&["new", name]);
     }
 
     /// Start a command whose journal steps each wait about `delay_ms` first; `None` where
@@ -240,6 +240,7 @@ fn pull_never_deletes_through_a_directory_the_base_replaced_with_a_symlink() {
 #[test]
 #[serial]
 fn pull_never_writes_through_a_parent_swapped_for_a_symlink_after_planning() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("d/x.txt"), "x v1\n");
     sentinels(&env);
@@ -702,6 +703,7 @@ fn diff_files(env: &Env, name: &str) -> String {
 #[test]
 #[serial]
 fn base_changes_after_the_pull_last_read_the_base_are_left_for_the_next_pull() {
+    skip_unless_copying!();
     let env = Env::new();
     for (path, text) in [
         ("a.txt", "a0\n"),
@@ -786,6 +788,7 @@ fn a_catch_up_round_never_wedges_on_what_the_agent_wrote() {
 #[test]
 #[serial]
 fn a_catch_up_round_pulls_a_base_directory_renamed_during_the_pull() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("d/x.txt"), "x0\n");
     write(&env.project().join("d/y.txt"), "y0\n");
@@ -840,6 +843,7 @@ fn a_base_file_gone_before_its_step_is_a_base_deletion() {
 #[test]
 #[serial]
 fn a_base_file_that_keeps_changing_is_left_for_the_next_pull() {
+    skip_unless_copying!();
     let env = Env::new();
     for index in 0..8 {
         write(&env.project().join(format!("src/f{index}.txt")), "v0\n");

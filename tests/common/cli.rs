@@ -12,6 +12,13 @@ pub struct Env {
     pub root: tempfile::TempDir,
 }
 
+impl Drop for Env {
+    /// A test may point a command at another home under `root`; unmount what it left there.
+    fn drop(&mut self) {
+        super::unmount_under(self.root.path());
+    }
+}
+
 impl Env {
     pub fn new() -> Self {
         let env = Self {
@@ -57,7 +64,7 @@ impl Env {
     }
 
     pub fn fork_copy(&self, name: &str) {
-        self.ok(&["new", name, "--copy"]);
+        self.ok(&["new", name]);
     }
 
     pub fn workspace(&self, name: &str) -> Workspace {

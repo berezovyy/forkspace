@@ -26,7 +26,7 @@ fn a_path_too_long_for_forkspace_home_fails_cleanly_and_names_the_remedy() {
     let home = env.outside().join("h".repeat(200)).join("h".repeat(200));
     fs::create_dir_all(&home).unwrap();
     let output = env
-        .command(&["new", "deep", "--copy"])
+        .command(&["new", "deep"])
         .env("FORKSPACE_HOME", &home)
         .output()
         .unwrap();
@@ -52,7 +52,7 @@ fn a_path_too_long_for_forkspace_home_fails_cleanly_and_names_the_remedy() {
     // Excluding the path makes the fork possible.
     write(&project.join(".forkspaceexclude"), "/d*/\n");
     let output = env
-        .command(&["new", "deep", "--copy"])
+        .command(&["new", "deep"])
         .env("FORKSPACE_HOME", &home)
         .output()
         .unwrap();
@@ -71,10 +71,7 @@ fn a_fork_interrupted_by_a_signal_leaves_nothing_behind() {
         );
     }
     for signal in [libc::SIGINT, libc::SIGTERM] {
-        let mut child = env
-            .command(&["new", "interrupted", "--copy"])
-            .spawn()
-            .unwrap();
+        let mut child = env.command(&["new", "interrupted"]).spawn().unwrap();
         std::thread::sleep(Duration::from_millis(15));
         // SAFETY: `kill` only signals the child we started.
         unsafe {
@@ -113,7 +110,7 @@ fn set_group_id_directories_keep_the_bit_and_are_no_change() {
         eprintln!("FORKSPACE_TEST_SKIP {{\"capability\":\"setgid\",\"reason\":\"filesystem drops S_ISGID\"}}");
         return;
     }
-    env.ok(&["new", "copied", "--copy"]);
+    env.ok(&["new", "copied"]);
     env.ok(&["new", "default"]);
     for name in ["copied", "default"] {
         let view = env.view(name);
@@ -154,12 +151,7 @@ fn a_fork_succeeds_while_the_project_deletes_a_directory() {
             })
         };
         let name = format!("racing-{round}");
-        let args: Vec<&str> = if round % 2 == 0 {
-            vec!["new", &name, "--copy"]
-        } else {
-            vec!["new", &name]
-        };
-        let output = env.run(&args);
+        let output = env.run(&["new", &name]);
         deleter.join().unwrap();
         assert!(
             output.status.success(),

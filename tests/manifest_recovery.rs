@@ -110,6 +110,7 @@ fn a_manifest_build_whose_builder_died_is_restarted_by_the_next_command() {
 #[test]
 #[serial]
 fn a_command_that_needs_the_manifest_builds_it_when_its_builder_is_gone() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("a.txt"), "a\n");
     write(&env.project().join("b.txt"), "b\n");
@@ -198,6 +199,7 @@ fn a_base_rename_of_a_dangling_symlink_before_the_walk_leaves_the_manifest_ready
 #[test]
 #[serial]
 fn a_lost_manifest_is_rebuilt_and_keeps_deletions_of_files_the_base_also_changed() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("x.txt"), "x\n");
     write(&env.project().join("y.txt"), "y\n");
@@ -233,6 +235,7 @@ fn a_lost_manifest_is_rebuilt_and_keeps_deletions_of_files_the_base_also_changed
 #[test]
 #[serial]
 fn a_pulled_workspace_rebuilds_its_manifest_from_the_pull_not_the_view() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("a.txt"), "a\n");
     write(&env.project().join("b.txt"), "b\n");
@@ -255,6 +258,7 @@ fn a_pulled_workspace_rebuilds_its_manifest_from_the_pull_not_the_view() {
 #[test]
 #[serial]
 fn an_intact_manifest_marked_degraded_is_used_again() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("a.txt"), "a\n");
     env.fork_copy("ws");

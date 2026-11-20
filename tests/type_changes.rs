@@ -61,7 +61,7 @@ impl Env {
     }
 
     fn fork(&self, name: &str) {
-        self.ok(&["new", name, "--copy"]);
+        self.ok(&["new", name]);
     }
 
     /// The journals still open in the store.
@@ -122,6 +122,7 @@ fn stderr(output: &Output) -> String {
 #[test]
 #[serial]
 fn merge_undo_turns_a_file_made_a_directory_and_a_directory_made_a_file_back() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("dir2file/x.txt"), "x\n");
     write(&env.project().join("file2dir"), "ORIGINAL BASE FILE\n");
@@ -148,6 +149,7 @@ fn merge_undo_turns_a_file_made_a_directory_and_a_directory_made_a_file_back() {
 #[test]
 #[serial]
 fn merge_undo_leaves_a_directory_written_into_since_the_merge() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("file2dir"), "ORIGINAL BASE FILE\n");
     env.fork("w");
@@ -176,6 +178,7 @@ fn merge_undo_leaves_a_directory_written_into_since_the_merge() {
 #[test]
 #[serial]
 fn restore_puts_back_a_deleted_directory_and_symlink() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("h/a"), "alpha\n");
     write(&env.project().join("h/sub/b"), "beta\n");
@@ -217,6 +220,7 @@ fn restore_puts_back_a_deleted_directory_and_symlink() {
 #[test]
 #[serial]
 fn restore_swaps_a_directory_and_a_symlink_both_ways() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("d/x.txt"), "base x\n");
     write(&env.project().join("d/y.txt"), "base y\n");
@@ -243,6 +247,7 @@ fn restore_swaps_a_directory_and_a_symlink_both_ways() {
 #[test]
 #[serial]
 fn the_before_pull_checkpoint_restores_after_the_base_turned_a_directory_into_a_file() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("dir/keep.txt"), "keep\n");
     write(&env.project().join("dir/sub/k2.txt"), "k2\n");
@@ -372,6 +377,7 @@ fn restore_keeps_a_directory_deleted_at_the_checkpoint_deleted() {
 #[test]
 #[serial]
 fn merge_replaces_a_symlinked_directory_with_the_workspace_directory() {
+    skip_unless_copying!();
     let env = Env::new();
     write(&env.project().join("c/d.txt"), "eps\nbeta\ndelta");
     symlink("c", env.project().join("b")).unwrap();

@@ -48,11 +48,8 @@ impl Env {
         String::from_utf8(output.stdout).unwrap()
     }
 
-    fn fork(&self, name: &str, backend: &str) {
-        let mut args = vec!["new", name];
-        if backend == "copy" {
-            args.push("--copy");
-        }
+    fn fork(&self, name: &str) {
+        let args = vec!["new", name];
         self.ok(&args);
     }
 
@@ -81,9 +78,9 @@ fn size_of(listed: &serde_json::Value, name: &str) -> u64 {
 #[test]
 fn ls_shows_private_sizes_and_a_total() {
     let env = Env::new();
-    env.fork("copied", "copy");
+    env.fork("copied");
     fs::write(
-        env.home.path().join("workspaces/copied/big.bin"),
+        common::view_of(env.home.path(), "copied").join("big.bin"),
         vec![7_u8; 256 * 1024],
     )
     .unwrap();
@@ -97,16 +94,20 @@ fn ls_shows_private_sizes_and_a_total() {
 fn a_fresh_overlay_workspace_costs_almost_nothing() {
     skip_without_overlay!();
     let env = Env::new();
-    env.fork("fresh", "linux");
+    env.fork("fresh");
     assert!(size_of(&env.sizes(), "fresh") < 64 * 1024);
 }
 
 #[test]
 fn gc_lists_idle_workspaces_and_expired_data_but_removes_nothing_unasked() {
     let env = Env::new();
-    env.fork("idle", "copy");
-    env.fork("busy", "copy");
-    fs::write(env.home.path().join("workspaces/busy/work.txt"), "work\n").unwrap();
+    env.fork("idle");
+    env.fork("busy");
+    fs::write(
+        common::view_of(env.home.path(), "busy").join("work.txt"),
+        "work\n",
+    )
+    .unwrap();
     // Undo data for twelve merges a month ago: two are past retention (10 merges or 14 days).
     let month_ago = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -140,12 +141,12 @@ fn gc_lists_idle_workspaces_and_expired_data_but_removes_nothing_unasked() {
     assert!(survey.contains("keeping 'busy'"), "{survey}");
     assert!(!survey.contains("workspace 'busy'"), "{survey}");
     assert!(survey.contains("nothing removed"), "{survey}");
-    assert!(env.home.path().join("workspaces/idle").exists());
+    assert!(common::view_of(env.home.path(), "idle").exists());
 
     let removed = env.ok(&["gc", "--older-than", "0s", "--yes"]);
     assert!(removed.contains("freed"), "{removed}");
-    assert!(!env.home.path().join("workspaces/idle").exists());
-    assert!(env.home.path().join("workspaces/busy").exists());
+    assert!(!common::view_of(env.home.path(), "idle").exists());
+    assert!(common::view_of(env.home.path(), "busy").exists());
     assert_eq!(
         fs::read_dir(env.home.path().join("undo")).unwrap().count(),
         10
@@ -154,9 +155,14 @@ fn gc_lists_idle_workspaces_and_expired_data_but_removes_nothing_unasked() {
 
 #[test]
 fn every_internal_store_is_tagged_for_backups() {
+    skip_unless_copying!();
     let env = Env::new();
-    env.fork("ws", "copy");
-    fs::write(env.home.path().join("workspaces/ws/app.txt"), "changed\n").unwrap();
+    env.fork("ws");
+    fs::write(
+        common::view_of(env.home.path(), "ws").join("app.txt"),
+        "changed\n",
+    )
+    .unwrap();
     env.ok(&["checkpoint", "ws"]);
     env.ok(&["merge", "ws", "--quiet", "--no-install"]);
     env.ok(&["drop", "ws"]);

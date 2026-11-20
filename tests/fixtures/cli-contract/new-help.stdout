@@ -8,8 +8,6 @@ Arguments:
 Options:
       --tmpfs          Keep the workspace's changes in RAM (Linux overlay only; lost on reboot)
       --no-fsync       Do not flush the workspace's writes on fsync (Linux overlay only; faster installs and builds, recent writes lost on power loss)
-      --copy           Consent to a full directory copy backend
-      --live           Show later changes to the source in the workspace (Linux overlay only; skips the frozen copy)
       --memory <SIZE>  Throttle the workspace's processes above this much memory, e.g. 4G (Linux)
       --cpu <PERCENT>  Cap the workspace's CPU time, as a percentage of one CPU, e.g. 200% (Linux)
   -h, --help           Print help

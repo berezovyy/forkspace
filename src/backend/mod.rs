@@ -98,9 +98,6 @@ pub struct CreateReq {
     pub base: PathBuf,
     /// Put the writable layers on an existing tmpfs (overlay only).
     pub tmpfs: bool,
-    /// Mount the base itself instead of a frozen copy (overlay only), so later base changes
-    /// show through.
-    pub live: bool,
     /// The layers of the overlay workspace `base` is the view of, when stacking.
     pub parent_layers: Option<OverlayState>,
     /// Overlay only: answer `fsync` in the workspace without flushing to disk. Writes of
@@ -201,24 +198,28 @@ pub fn select_backend(recorded: Option<BackendKind>) -> Result<Box<dyn Workspace
 
 /// Chooses the backend for a new workspace forked from `base`: a full copy when forced, and
 /// otherwise the best primitive the platform offers.
-pub fn select_backend_for_create(
-    base: &Path,
-    force_copy: bool,
-) -> Result<Box<dyn WorkspaceBackend>> {
-    Ok(choose_backend_for_create(base, force_copy)?.0)
+pub fn select_backend_for_create(base: &Path) -> Result<Box<dyn WorkspaceBackend>> {
+    Ok(choose_backend_for_create(base)?.0)
 }
 
 /// [`select_backend_for_create`], also saying why faster backends were passed over, when they
 /// were: the probes' own reasons, such as `fuse-overlayfs: cannot open /dev/fuse: ...`.
 pub fn choose_backend_for_create(
     base: &Path,
-    force_copy: bool,
 ) -> Result<(Box<dyn WorkspaceBackend>, Option<String>)> {
-    if force_copy {
-        return Ok((select_backend(Some(BackendKind::PlainCopy))?, None));
-    }
     let (kind, skipped) = probe_create_kind(base)?;
     Ok((select_backend(Some(kind))?, skipped))
+}
+
+/// The best backend for `base` that copies it rather than layering over it: for a project
+/// the overlay cannot hold (see [`ForkspaceError::ReservedOverlayName`]).
+pub fn copying_backend_for(base: &Path) -> Result<Box<dyn WorkspaceBackend>> {
+    let kind = if probe::reflink_supported(base, &paths::snapshot_root()) {
+        BackendKind::LinuxReflink
+    } else {
+        BackendKind::PlainCopy
+    };
+    select_backend(Some(kind))
 }
 
 /// Where a workspace of `kind` named `name` will live. Recorded before creation so an
@@ -272,10 +273,21 @@ fn probe_create_kind(base: &Path) -> Result<(BackendKind, Option<String>)> {
     Ok((kind, report.skipped()))
 }
 
-/// The best backend kind for forking `base` on this platform.
+/// The best backend kind for forking `base` on this platform: APFS clones, or a copy when
+/// the project and `FORKSPACE_HOME` are not on one APFS volume.
 #[cfg(target_os = "macos")]
-fn probe_create_kind(_base: &Path) -> Result<(BackendKind, Option<String>)> {
-    Ok((BackendKind::MacClone, None))
+fn probe_create_kind(base: &Path) -> Result<(BackendKind, Option<String>)> {
+    use snapshot::ForkPrimitive;
+
+    let root = paths::snapshot_root();
+    let _ = std::fs::create_dir_all(&root);
+    match snapshot::ClonefilePrimitive.check_available(base, &root) {
+        Ok(()) => Ok((BackendKind::MacClone, None)),
+        Err(error) => Ok((
+            BackendKind::PlainCopy,
+            Some(format!("APFS clones: {error}")),
+        )),
+    }
 }
 
 /// The best backend kind for forking `base` on this platform.

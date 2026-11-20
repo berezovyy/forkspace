@@ -437,7 +437,6 @@ fn dry_run_text_and_json_match_the_subsequent_public_apply() {
         base.path().to_path_buf(),
         "pull-dry",
         forkspace::workspace::CreateOptions {
-            force_copy: true,
             ..Default::default()
         },
     )
@@ -481,7 +480,6 @@ fn package_pull_runs_the_manager_in_the_view_and_never_copies_node_modules() {
         base.path().to_path_buf(),
         "pull-package",
         forkspace::workspace::CreateOptions {
-            force_copy: true,
             ..Default::default()
         },
     )
@@ -588,7 +586,6 @@ fn child_pull_uses_its_immediate_parent_and_propagates_one_level_at_a_time() {
         root.path().to_path_buf(),
         "pull-parent",
         forkspace::workspace::CreateOptions {
-            force_copy: true,
             ..Default::default()
         },
     )
@@ -597,7 +594,6 @@ fn child_pull_uses_its_immediate_parent_and_propagates_one_level_at_a_time() {
         std::path::PathBuf::from("pull-parent"),
         "pull-child",
         forkspace::workspace::CreateOptions {
-            force_copy: true,
             ..Default::default()
         },
     )

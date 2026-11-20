@@ -191,7 +191,7 @@ fn clone_one(source: &Path, target: &Path) -> Result {
 }
 
 const SAME_VOLUME_REMEDY: &str =
-    "move the project and FORKSPACE_HOME to the same APFS volume, or pass --copy to accept a full copy";
+    "move the project and FORKSPACE_HOME to the same APFS volume for clones instead of a copy";
 
 fn workspace_name(dest: &Path) -> std::borrow::Cow<'_, str> {
     dest.file_name()

@@ -3,6 +3,8 @@
 
 #![cfg(target_os = "linux")]
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -23,7 +25,7 @@ impl Env {
         }
         fs::write(env.path("project/app.txt"), "original\n").unwrap();
         for name in ["ws", "other"] {
-            let output = env.run(&["new", name, "--copy"]);
+            let output = env.run(&["new", name]);
             assert!(
                 output.status.success(),
                 "{}",
@@ -38,7 +40,7 @@ impl Env {
     }
 
     fn view(&self, name: &str) -> PathBuf {
-        self.path("home/workspaces").join(name)
+        common::view_of(&self.path("home"), name)
     }
 
     fn run(&self, args: &[&str]) -> Output {

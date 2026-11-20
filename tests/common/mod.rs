@@ -52,17 +52,24 @@ pub fn unmount_under(root: &Path) {
         .filter(|point| point.starts_with(&root) && point != &root)
         .collect();
     points.sort_by_key(|point| std::cmp::Reverse(point.components().count()));
-    let fusermount = ["/usr/bin/fusermount3", "/usr/bin/fusermount"]
+    // fusermount3 refuses some mounts (EPERM) that the older fusermount still unmounts.
+    let tools: Vec<&str> = ["/usr/bin/fusermount3", "/usr/bin/fusermount"]
         .into_iter()
-        .find(|path| Path::new(path).exists())
-        .unwrap_or("fusermount3");
+        .filter(|path| Path::new(path).exists())
+        .collect();
     for point in points {
-        let _ = std::process::Command::new(fusermount)
-            .args(["-u", "-z"])
-            .arg(&point)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        for tool in &tools {
+            let unmounted = std::process::Command::new(tool)
+                .args(["-u", "-z"])
+                .arg(&point)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+            if unmounted {
+                break;
+            }
+        }
     }
 }
 
@@ -94,6 +101,16 @@ pub fn new_in(home: &Path, project: impl AsRef<Path>, args: &[&str]) -> std::pro
         .args(args)
         .output()
         .unwrap()
+}
+
+/// Where workspace `name` of the home `home` is: an overlay's merged view, or a copy's folder.
+pub fn view_of(home: &Path, name: &str) -> PathBuf {
+    let overlay = home.join(name).join("merged");
+    if overlay.is_dir() {
+        overlay
+    } else {
+        home.join("workspaces").join(name)
+    }
 }
 
 pub fn setup_test_env() -> TestHome {
@@ -228,6 +245,20 @@ pub fn strip_ansi(s: &str) -> String {
 
 pub fn cleanup_workspace(ws: &forkspace::workspace::Workspace) {
     let _ = forkspace::backend::overlay::mount::unmount_overlay(&ws.view_path);
+}
+
+/// Return early (with a skip line) where `new` would not copy: fuse-overlayfs works here, so
+/// workspaces are overlays. For tests of what only a copied workspace does.
+#[macro_export]
+macro_rules! skip_unless_copying {
+    () => {{
+        if forkspace::backend::overlay::mount::probe_fuse_overlayfs_fresh().is_ok() {
+            eprintln!(
+                "FORKSPACE_TEST_SKIP {{\"capability\":\"copy\",\"reason\":\"fuse-overlayfs works here, so workspaces are overlays\"}}"
+            );
+            return;
+        }
+    }};
 }
 
 #[macro_export]
