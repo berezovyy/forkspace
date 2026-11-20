@@ -101,7 +101,7 @@ pub fn checkpoint_root() -> PathBuf {
     forkspace_home().join("checkpoints")
 }
 
-/// What each merge replaced or deleted in a project, for `merge --undo`.
+/// What each merge replaced or deleted in a project, for `undo`.
 pub fn undo_root() -> PathBuf {
     forkspace_home().join("undo")
 }

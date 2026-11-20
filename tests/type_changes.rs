@@ -140,7 +140,7 @@ fn merge_undo_turns_a_file_made_a_directory_and_a_directory_made_a_file_back() {
     assert_eq!(read(&env.project().join("dir2file")), "now a file\n");
     assert_eq!(read(&env.project().join("file2dir/in.txt")), "inside\n");
 
-    env.ok(&["merge", "--undo", "w"]);
+    env.ok(&["undo", "w"]);
     assert_eq!(tree(&env.project()), before);
 }
 
@@ -159,7 +159,7 @@ fn merge_undo_leaves_a_directory_written_into_since_the_merge() {
     env.ok(&["merge", "w"]);
     write(&env.project().join("file2dir/later.txt"), "user\n");
 
-    let output = env.ok(&["merge", "--undo", "w"]);
+    let output = env.ok(&["undo", "w"]);
     assert_eq!(
         read(&env.project().join("file2dir/later.txt")),
         "user\n",
@@ -390,7 +390,7 @@ fn merge_replaces_a_symlinked_directory_with_the_workspace_directory() {
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(tree(&env.project()), tree(&view));
     assert_eq!(read(&env.project().join("c/d.txt")), "eps\nbeta\ndelta");
-    env.ok(&["merge", "--undo", "w"]);
+    env.ok(&["undo", "w"]);
     assert_eq!(
         fs::read_link(env.project().join("b")).unwrap(),
         Path::new("c")

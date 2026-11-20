@@ -261,7 +261,7 @@ pub fn render(plan: &MergePlan) -> String {
 ///
 /// Stricter than [`ManifestRow::matches`] for files: the mtime must match too. A symlink
 /// matches on its target alone, which is all it holds: one re-created with the same target
-/// (`git checkout`, `merge --undo`) has lost nothing (OVL-06). A directory matches on kind and
+/// (`git checkout`, `undo`) has lost nothing (OVL-06). A directory matches on kind and
 /// mode only: an APFS clone gives every directory a fresh mtime, and the entries inside are
 /// compared on their own.
 pub(crate) fn matches_ancestor(path: &Path, row: &ManifestRow) -> bool {

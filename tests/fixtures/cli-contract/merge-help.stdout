@@ -1,11 +1,9 @@
 Put a workspace's changes into your project (and keep its commits as a branch)
 
-Usage: forkspace merge [OPTIONS] [NAME]
+Usage: forkspace merge [NAME]
 
 Arguments:
-  [NAME]  Workspace (defaults to the one you are in; with --undo: whose latest merge to undo)
+  [NAME]  Workspace (defaults to the one you are in)
 
 Options:
-      --undo  Put the project back as it was before the latest merge
-      --list  With --undo, list the merges that can be undone
   -h, --help  Print help

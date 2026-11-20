@@ -50,7 +50,7 @@ Report what changed with `diff`, not from memory. `compare` lists facts; the use
 
 - `forkspace merge <name> --dry-run` shows the plan without changing anything. Show it to the
   user and ask before running `forkspace merge <name>`, which writes to their project.
-- `forkspace merge --undo` puts the project back as it was before the latest merge.
+- `forkspace undo` puts the project back as it was before the latest merge.
 - `forkspace land <name>` brings the workspace's Git commits into the project's repository
   (no working-tree changes). Ask first.
 - Exit code 5 means a conflict or refusal and that nothing was changed. Read the message and

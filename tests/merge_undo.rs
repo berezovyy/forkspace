@@ -133,10 +133,7 @@ fn undo_restores_the_exact_project_and_removes_what_merge_added() {
     fs::write(env.view("ws").join("new/dir/added.txt"), "added\n").unwrap();
     env.merge("ws");
     assert!(!env.project().join("notes.txt").exists());
-
-    let listed = String::from_utf8(env.ok(&["merge", "--undo", "--list"]).stdout).unwrap();
-    assert!(listed.contains("  ws  "), "{listed}");
-    let undone = String::from_utf8(env.ok(&["merge", "--undo"]).stdout).unwrap();
+    let undone = String::from_utf8(env.ok(&["undo"]).stdout).unwrap();
     assert!(undone.contains("undid the merge of 'ws'"), "{undone}");
     assert_eq!(snapshot(&env.project()), before);
     assert_eq!(
@@ -161,7 +158,7 @@ fn files_edited_after_the_merge_are_left_alone_and_kept() {
     )
     .unwrap();
 
-    let output = env.ok(&["merge", "--undo"]);
+    let output = env.ok(&["undo"]);
     assert!(
         stderr(&output).contains("changed after the merge"),
         "{}",
@@ -192,7 +189,7 @@ fn undoing_an_older_merge_refuses_files_a_newer_merge_changed() {
     fs::write(env.view("ws2").join("shared.txt"), "2\n").unwrap();
     env.merge("ws2");
 
-    let output = env.ok(&["merge", "--undo", "ws1"]);
+    let output = env.ok(&["undo", "ws1"]);
     assert!(
         stderr(&output).contains("newer merge"),
         "{}",
@@ -207,12 +204,12 @@ fn undoing_an_older_merge_refuses_files_a_newer_merge_changed() {
         "2\n"
     );
 
-    env.ok(&["merge", "--undo", "ws2"]);
+    env.ok(&["undo", "ws2"]);
     assert_eq!(
         fs::read_to_string(env.project().join("shared.txt")).unwrap(),
         "1\n"
     );
-    env.ok(&["merge", "--undo", "ws1"]);
+    env.ok(&["undo", "ws1"]);
     assert_eq!(
         fs::read_to_string(env.project().join("shared.txt")).unwrap(),
         "0\n"
@@ -247,7 +244,7 @@ fn a_resumed_merge_can_still_be_undone() {
         fs::read_to_string(env.project().join("z/b.txt")).unwrap(),
         "b1\n"
     );
-    env.ok(&["merge", "--undo"]);
+    env.ok(&["undo"]);
     assert_eq!(snapshot(&env.project()), before);
 }
 
@@ -280,9 +277,4 @@ fn undo_data_beyond_ten_merges_and_two_weeks_is_removed() {
     fs::write(env.view("ws").join("a.txt"), "1\n").unwrap();
     env.merge("ws");
     assert_eq!(env.undo_dirs(), 10);
-    let listed = String::from_utf8(env.ok(&["merge", "--undo", "--list"]).stdout).unwrap();
-    assert!(
-        listed.lines().next().unwrap().contains("  ws  "),
-        "newest first: {listed}"
-    );
 }

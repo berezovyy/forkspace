@@ -42,6 +42,9 @@ pub enum Commands {
     /// Put a workspace's changes into your project (and keep its commits as a branch)
     Merge(MergeArgs),
 
+    /// Put your project back as it was before the latest merge
+    Undo(UndoArgs),
+
     /// Bring base changes into a workspace
     Pull(PullArgs),
 
@@ -196,20 +199,14 @@ pub struct DiffArgs {
 
 #[derive(Args)]
 pub struct MergeArgs {
-    #[arg(
-        help = "Workspace (defaults to the one you are in; with --undo: whose latest merge to undo)"
-    )]
+    #[arg(help = "Workspace (defaults to the one you are in)")]
     pub name: Option<String>,
+}
 
-    #[arg(long, help = "Put the project back as it was before the latest merge")]
-    pub undo: bool,
-
-    #[arg(
-        long,
-        requires = "undo",
-        help = "With --undo, list the merges that can be undone"
-    )]
-    pub list: bool,
+#[derive(Args)]
+pub struct UndoArgs {
+    #[arg(help = "Undo the latest merge of this workspace (default: the latest merge of any)")]
+    pub name: Option<String>,
 }
 
 #[derive(Args)]

@@ -13,6 +13,7 @@ Commands:
   ls           List your workspaces: what changed, how old, what runs
   diff         Show what changed in a workspace, or compare several
   merge        Put a workspace's changes into your project (and keep its commits as a branch)
+  undo         Put your project back as it was before the latest merge
   pull         Bring base changes into a workspace
   checkpoint   Save the current state of a workspace
   checkpoints  List a workspace's checkpoints

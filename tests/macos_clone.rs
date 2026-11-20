@@ -1154,7 +1154,7 @@ mod macos {
         assert_eq!(fs::read(base.path().join("src/m.txt")).unwrap(), b"m\n");
         assert_eq!(fs::read(base.path().join(nfd)).unwrap(), b"cafe edited\n");
 
-        assert_cli(home.path(), &["merge", "--undo", "respell"]);
+        assert_cli(home.path(), &["undo", "respell"]);
         assert_eq!(names(base.path()), original);
         assert_eq!(fs::read(base.path().join(nfc)).unwrap(), b"cafe\n");
         assert_eq!(names(&base.path().join("Src")), vec![b"m.txt".to_vec()]);

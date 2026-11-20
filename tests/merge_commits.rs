@@ -138,7 +138,7 @@ fn a_workspace_without_commits_adds_no_branch_and_undo_takes_one_back() {
     commit(&view, "busy.txt", "busy\n", "busy work");
     env.ok(&["merge", "busy"]);
     assert!(branch_exists(&project, "busy"));
-    let undone = env.ok(&["merge", "--undo", "busy"]);
+    let undone = env.ok(&["undo", "busy"]);
     assert!(
         stdout(&undone).contains("branch 'busy'"),
         "{}",

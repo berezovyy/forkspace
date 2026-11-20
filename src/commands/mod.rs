@@ -16,6 +16,7 @@ pub(crate) mod pull;
 pub(crate) mod run;
 pub mod skill;
 pub(crate) mod switch;
+pub(crate) mod undo;
 pub mod upgrade;
 
 use crate::cli::{Cli, Commands};
@@ -39,6 +40,7 @@ pub fn dispatch(cli: Cli) -> Result {
         Commands::Completions(args) => completions::exec(args.shell),
         Commands::Diff(args) => diff::exec(args),
         Commands::Merge(args) => merge::exec(args),
+        Commands::Undo(args) => undo::exec(args),
         Commands::Pull(args) => pull::exec(args),
         Commands::Checkpoint(args) => checkpoint::save(args),
         Commands::Checkpoints(args) => checkpoint::list(args),

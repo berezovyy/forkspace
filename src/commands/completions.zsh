@@ -17,6 +17,7 @@ _forkspace() {
         'ls:List all active workspaces'
         'diff:Show what changed in a workspace'
         'merge:Apply workspace changes back to the base directory'
+        'undo:Put your project back as it was before the latest merge'
         'pull:Bring base changes into a workspace'
         'checkpoint:Save the current state of a workspace'
         'checkpoints:List a workspace'"'"'s checkpoints'
@@ -89,8 +90,11 @@ _forkspace() {
                 merge)
                     _arguments \
                         '1:workspace:_forkspace_workspaces' \
-                        '--undo[Put the base back as it was before the latest merge]' \
-                        '--list[With --undo, list the merges that can be undone]' \
+                        '--help[Show help]'
+                    ;;
+                undo)
+                    _arguments \
+                        '1:workspace:_forkspace_workspaces' \
                         '--help[Show help]'
                     ;;
                 pull)

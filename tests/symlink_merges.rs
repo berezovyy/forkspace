@@ -41,7 +41,7 @@ fn a_symlink_merge_undone_merges_again() {
     retarget(&view.join("c.md"), "target-two");
     env.ok(&["merge", "ws"]);
     assert_eq!(target(&env.project().join("c.md")), "target-two");
-    env.ok(&["merge", "--undo", "ws"]);
+    env.ok(&["undo", "ws"]);
     assert_eq!(target(&env.project().join("c.md")), "target-one");
     env.ok(&["merge", "ws"]);
     assert_eq!(target(&env.project().join("c.md")), "target-two");

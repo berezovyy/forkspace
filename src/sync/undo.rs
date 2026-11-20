@@ -1,5 +1,5 @@
 //! Undo for `merge`: the project entries a merge replaces or deletes are kept, so
-//! `forkspace merge --undo` can put the project back exactly as it was.
+//! `forkspace undo` can put the project back exactly as it was.
 //!
 //! Each merge gets `FORKSPACE_HOME/undo/<id>/` with `record.json` (one step per merged path)
 //! and `kept/`, where the journal moves every entry it replaces or deletes. Moving is a
@@ -92,7 +92,7 @@ impl Identity {
     }
 }
 
-/// What `merge --undo` did.
+/// What `undo` did.
 #[derive(Debug, Default)]
 pub struct UndoReport {
     pub workspace: String,

@@ -191,7 +191,7 @@ fn merge_and_undo_never_act_through_a_directory_replaced_by_a_symlink() {
         env.outside()
     );
 
-    env.ok(&["merge", "--undo", "w"]);
+    env.ok(&["undo", "w"]);
     sentinels_intact(&env);
     assert!(fs::symlink_metadata(env.project().join("d"))
         .unwrap()
@@ -340,7 +340,7 @@ fn merge_leaves_base_edits_made_while_it_applies_and_keeps_the_workspace() {
     assert_eq!(read(&env.project().join("c.txt")), "USER EDIT c\n");
     assert!(view.join("b.txt").exists(), "the workspace was dropped");
 
-    env.ok(&["merge", "--undo", "w"]);
+    env.ok(&["undo", "w"]);
     assert_eq!(read(&env.project().join("a.txt")), "a0\n");
     assert_eq!(read(&env.project().join("b.txt")), "b0\nUSER EDIT\n");
     assert_eq!(read(&env.project().join("c.txt")), "USER EDIT c\n");
@@ -382,7 +382,7 @@ fn a_resumed_merge_and_its_undo_leave_base_edits_made_while_it_was_interrupted()
         );
     }
 
-    env.ok(&["merge", "--undo", "w"]);
+    env.ok(&["undo", "w"]);
     for index in 1..=6 {
         let text = read(&env.project().join(format!("f{index}.txt")));
         assert!(
@@ -496,7 +496,7 @@ fn undo_never_restores_through_a_directory_replaced_by_a_symlink_since() {
     // After the merge, the base's directory becomes a link to one outside the project.
     fs::rename(env.project().join("d"), env.root.path().join("d.moved")).unwrap();
     symlink(env.outside(), env.project().join("d")).unwrap();
-    env.ok(&["merge", "--undo", "w"]);
+    env.ok(&["undo", "w"]);
     assert!(
         files(&env.outside()).is_empty(),
         "undo wrote outside the project"
