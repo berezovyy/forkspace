@@ -30,16 +30,6 @@ pub fn exec(args: UpgradeArgs) -> Result {
         )));
     }
 
-    if args.check {
-        if newer(&target_version, CURRENT) {
-            println!(
-                "forkspace {target_version} is available (you have {CURRENT}); run `forkspace upgrade`"
-            );
-        } else {
-            println!("forkspace {CURRENT} is up to date (latest release: {target_version})");
-        }
-        return Ok(());
-    }
     if target_version == CURRENT || (!explicit && !newer(&target_version, CURRENT)) {
         println!("forkspace {CURRENT} is up to date (latest release: {target_version})");
         return Ok(());

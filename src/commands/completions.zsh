@@ -108,7 +108,6 @@ _forkspace() {
                 upgrade|update)
                     _arguments \
                         '1:version:' \
-                        '--check[Only report whether a newer release exists]' \
                         '--help[Show help]'
                     ;;
                 skill)

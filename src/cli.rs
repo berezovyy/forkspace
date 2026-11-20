@@ -228,12 +228,6 @@ pub struct UpgradeArgs {
     #[arg(help = "Version to install, e.g. 0.2.0 (defaults to the latest release)")]
     pub version: Option<String>,
 
-    #[arg(
-        long,
-        conflicts_with = "version",
-        help = "Only report whether a newer release exists"
-    )]
-    pub check: bool,
 }
 
 #[derive(Args)]
