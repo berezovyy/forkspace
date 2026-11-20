@@ -63,8 +63,8 @@ pub fn restore(args: RestoreArgs) -> Result {
         }
         let restored = checkpoint::restore(&workspace, id)?;
         print!(
-            "restored '{name}' to snapshot {id} ({} paths changed)",
-            restored.changed.len()
+            "restored '{name}' to snapshot {id} ({} changed)",
+            crate::util::count(restored.changed.len(), "file")
         );
         match restored.safety {
             Some(safety) => println!("; undo with `forkspace restore {name} {safety}`"),

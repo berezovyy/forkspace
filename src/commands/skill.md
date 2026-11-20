@@ -1,97 +1,85 @@
 ---
 name: forkspace
-description: Make disposable copies of a whole project (including node_modules, .env and other ignored files) with forkspace, work in them in isolation, then merge the result back or throw it away. Use when a task needs an isolated workspace, parallel attempts, or a risky experiment.
+description: Make throwaway copies of a whole project (including node_modules, .env and other ignored files) with forkspace, work in them in isolation, then merge the result into the project or throw it away. Use when a task needs an isolated workspace, parallel attempts, or a risky experiment.
 ---
 
 # forkspace
 
-`forkspace new <name>` forks the current project directory into a workspace: a full,
-writable view of the project, ignored files included, that the original is never written to
-until you merge. Use the workspace's absolute path for every later edit, test and command.
+`forkspace new <name>` copies the project you are in into a workspace: a full, writable copy,
+ignored files included, that leaves the user's project untouched until a merge. Use the
+workspace's absolute path for every later edit, test and command.
 
-Forkspace is a tool you drive. You stay responsible for choosing the project, the workspace
-name, what to run, and for asking before anything changes the user's project or deletes work.
+Forkspace is a tool you drive. You stay responsible for choosing the workspace name, what to
+run, and for asking before anything changes the user's project or throws work away.
 
 ## Before you start
 
-1. Run `forkspace --version` and `forkspace <command> --help` before using a flag you have not
-   seen work on this machine. Do not invent commands or flags.
-2. Run `forkspace ls` (or `forkspace ls --json`) to see existing workspaces. Do not reuse,
-   merge or drop a workspace you did not create unless the user says it is yours to use.
-3. Pick a short, unique name for each task or attempt (`fix-login`, `attempt-a`).
+1. Run `forkspace --version` and `forkspace <command> --help` before relying on something you
+   have not seen work on this machine. Do not invent commands or options.
+2. Run `forkspace ls` (or `forkspace ls --json`) to see existing workspaces. Do not use,
+   merge or drop a workspace you did not make unless the user says it is yours to use.
+3. Pick a short, unique name for each task or attempt (`fix-login`, `attempt-a`), and always
+   pass it: without a name, commands guess from the current directory.
 
-## Create and work
+## Make one and work in it
 
 ```sh
-forkspace new fix-login                 # fork the current directory; prints the workspace path
+forkspace new fix-login                 # copy the project; prints the workspace path
 forkspace enter fix-login -- npm test   # run a command inside it (exits with its status)
 ```
 
 - `new` prints `created workspace '<name>' at <path>`. Edit files at that path. Changing your
   shell's directory does not move other tools; pass the absolute path to each tool call.
 - Commands run through `forkspace enter <name> -- <command>` (and `forkspace run`) cannot
-  write to the original project or to other workspaces. Prefer it for builds, installs and
-  tests; they start in the workspace folder.
-- `--from <workspace>` stacks a workspace on another one; `--branch <name>` creates a Git branch
-  in the workspace for `forkspace land`.
-- Each workspace is sealed: later changes to the project reach it only through
-  `forkspace pull <name>`.
+  write to the user's project or to other workspaces, and start in the workspace folder.
+  Prefer it for builds, installs and tests. Run forkspace itself outside `enter`.
+- In a Git project, the workspace is on its own branch, named after it. Commit there as usual.
+- A workspace does not see later changes to the project until `forkspace pull <name>`.
+- `forkspace save <name> "<note>"` takes a snapshot; `forkspace restore <name>` lists them and
+  `forkspace restore <name> <id>` goes back to one.
 
 ## Review
 
 ```sh
-forkspace diff fix-login --stat         # summary; --full for a unified diff, --json for tools
-forkspace diff attempt-a attempt-b   # how parallel attempts differ; it never picks one
+forkspace diff fix-login                # changed files, notes, then a Git patch; --json for tools
+forkspace diff attempt-a attempt-b      # how parallel attempts differ; it never picks one
 ```
 
-Report what changed with `diff`, not from memory. `compare` lists facts; the user decides.
+Report what changed from `diff`, not from memory. Comparing lists facts; the user decides.
 
 ## Bring changes back: ask first
 
-- `forkspace merge <name> --dry-run` shows the plan without changing anything. Show it to the
-  user and ask before running `forkspace merge <name>`, which writes to their project.
-- `forkspace undo` puts the project back as it was before the latest merge.
-- `forkspace land <name>` brings the workspace's Git commits into the project's repository
-  (no working-tree changes). Ask first.
+- Show the user `forkspace diff <name>` and ask before `forkspace merge <name>`, which writes
+  the changed files into their project (uncommitted) and keeps the workspace's commits as the
+  project branch `<name>`.
+- `forkspace undo` puts the project, and that branch, back as they were before the latest
+  merge.
 - Exit code 5 means a conflict or refusal and that nothing was changed. Read the message and
-  report it; do not retry with `--overwrite-base` or `--theirs` unless the user agrees.
+  report it. When it says to pull, `forkspace pull <name>` brings the project's changes into
+  the workspace; fix any conflict markers there, then ask before merging again.
 
 ## Clean up: ask first
 
-- Ask before `forkspace drop <name>`. Never run `drop --all`, `drop --glob`, `--force` or
-  `--kill`, or `forkspace gc`, without the user's explicit approval: unmerged work in a
-  workspace exists nowhere else.
-- `drop` refuses while processes run in the workspace and lists them; stop your own
-  processes rather than adding `--kill`.
-- `forkspace enter --ephemeral -- <command>` makes a throwaway workspace that is removed when
-  the command exits: right for one-off experiments.
+- Ask before `forkspace drop <name>`: it stops what runs in the workspace and throws it away,
+  and unmerged work in a workspace exists nowhere else. Name only workspaces you made.
 
 ## Know what is in a workspace
 
-- Everything in the project directory, ignored files (`node_modules`, `.env`, build caches)
-  included, except what forks leave out: Git worktrees nested in the project (such as
-  `.claude/worktrees/*`) and whatever the project's `.forkspaceexclude` lists.
+- Everything in the project folder, ignored files (`node_modules`, `.env`, build caches)
+  included, except Git worktrees nested in the project (such as `.claude/worktrees/*`) and
+  whatever the project's `.forkspaceexclude` lists.
 - Caches outside the project (`~/.npm`, `~/.cargo`) are shared with the user's machine.
-- Disk use and speed depend on the backend (`forkspace ls` shows it); a plain copy is
-  reported when it happens. Do not promise speed or space savings.
-
-## Claude Code worktrees
-
-`forkspace hook claude-settings` prints a `settings.json` snippet that makes Claude Code's
-own worktrees (`claude --worktree`, subagents with `isolation: worktree`) forkspace
-workspaces. Ask before changing the user's settings.
+- How a workspace is made depends on the machine; a plain copy is reported when it happens.
+  Do not promise speed or space savings.
 
 ## Command summary
 
 ```text
-forkspace new [name] [--from <dir|workspace>] [--branch <b>] [--copy]
-forkspace enter [name] [--create] [--ephemeral] [-- command…]
-forkspace run <name> -- <command>          forkspace switch <name>
-forkspace diff <name> [--stat|--full|--files|--json]
-forkspace diff <a> <b>…                 forkspace ls [--json]
-forkspace merge <name> [--dry-run|--commit|--patch|--undo]
-forkspace pull <name>                      forkspace land <name>
-forkspace checkpoint <name>                forkspace restore <name> <id>
-forkspace drop <name>                      forkspace gc
-forkspace upgrade (or update)              forkspace skill
+forkspace new [name]                       forkspace enter [name] [-- command…]
+forkspace ls [--json]                      forkspace diff [name…] [--json]
+forkspace merge [name]                     forkspace undo [name]
+forkspace pull [name] [--json]             forkspace drop <name…>
+forkspace save [name] [note]               forkspace restore [name] [id]
+forkspace run [name] -- <command>          forkspace switch <name>
+forkspace setup                            forkspace upgrade [version]
 ```

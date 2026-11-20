@@ -22,15 +22,15 @@ and what the OS offers around it. Each row names the test that holds it. Measure
 | Line-level merge | yes | yes | yes | yes | `tests/line_merge.rs::different_lines_reach_the_project_from_both_workspaces` |
 | Merge undo | yes | yes | yes | yes | `tests/merge_undo.rs::undo_restores_the_exact_project_and_removes_what_merge_added` |
 | Pull | yes | yes | yes | yes | `tests/pull.rs::merge_after_pull_pushes_only_remaining_workspace_edits` |
-| Checkpoints | yes | yes | yes | yes | `tests/checkpoints.rs::checkpoint_then_restore_is_exact` |
+| Snapshots (`save`, `restore`) | yes | yes | yes | yes | `tests/checkpoints.rs::checkpoint_then_restore_is_exact` |
 | Commits kept as a branch on merge | yes | yes | yes | yes | `tests/merge_commits.rs::commits_are_kept_as_a_branch_and_the_project_branch_is_left_alone` |
-| Compare / signals | yes | yes | yes | yes | `tests/review_gate.rs::compare_preserves_argument_order_and_buckets_divergence` |
+| Comparing attempts (`diff a b`) | yes | yes | yes | yes | `tests/review_gate.rs::compare_preserves_argument_order_and_buckets_divergence` |
 | Dev-server watcher | native host watcher | FSEvents | native host watcher | native host watcher | `tests/macos_clone.rs::run_switch_proxy_hot_reload_and_drop_supervision` |
-| `.wh.*` names | refused at fork; cannot be created in the view | ordinary files | ordinary files | ordinary files | `tests/fork_drop.rs::a_base_with_whiteout_names_is_copied_instead_of_layered` |
+| `.wh.*` names | the project is copied instead; cannot be created in the view | ordinary files | ordinary files | ordinary files | `tests/fork_drop.rs::a_base_with_whiteout_names_is_copied_instead_of_layered` |
 | Crash reconciliation | yes | yes | yes | yes | `tests/fault_injection.rs::kill_during_copy_fork_reconciles_the_intent_and_partial_tree` |
 
-Selection is probed for each new fork and recorded permanently. Existing workspaces never
-change backend because a faster capability is installed later. The copy backend is always
+The backend is picked by itself for each new workspace and recorded for good. Existing
+workspaces never change backend because a faster one is installed later. The copy backend is always
 compiled in, and everything above the primitive that materializes a workspace is shared.
 
 ## Around the workspace
@@ -57,7 +57,7 @@ desktop (ext4 on NVMe, fuse-overlayfs 1.13, 16 CPUs, 31 GiB, no swap; 2026-11-19
 | FUSE mounts | one | `fusermount` allows 1,000 mounts in total unless root raises `mount_max` in `/etc/fuse.conf` |
 | Page cache for files read through the view | one copy per workspace, on top of the frozen copy's own | reading one 300 MB file through 3 workspaces cached 1.2 GB; the cache is reclaimable, but the copies compete for it |
 | Disk for unchanged files | none: every workspace of a project reads the same frozen copy | the first fork of a project copies it once (bytes on ext4, clones on Btrfs/XFS) |
-| `fsync` | answered without flushing (`fsync=0`) | 1,000 small write+fsync calls in 80 ms instead of 1,390 ms; `merge` still flushes what it writes into the project |
+| `fsync` | answered without flushing (`fsync=0`) | 1,000 small write+fsync calls in 80 ms instead of 1,390 ms; the last seconds of writes in a workspace can be lost on power loss, while `merge` still flushes what it writes into the project |
 | Git index | refreshed once in the frozen copy, not written per workspace | first `git status`: no hashing; about 300 ms of cold FUSE lookups for 20,000 files |
 | `state.json` | about 700 bytes | at 1,000 workspaces: 700 KB, `diff` 14 ms, `new` 40–80 ms; every command reads it whole under one lock, so a `diff` waited up to 620 ms while 30 `new` ran at once |
 | inotify | whatever watchers the agent runs | 256 inotify instances per user by default (`fs.inotify.max_user_instances`): one per watching process, the first limit file watchers reach |
@@ -77,7 +77,7 @@ processes cannot be reclaimed, and merging identical pages (KSM) needs root to e
 - APFS `clonefile` materializes directory metadata, so fork cost grows with the number of
   entries even though file blocks are shared.
 - APFS cloning needs the project and `FORKSPACE_HOME/workspaces` on the same APFS volume;
-  `--copy` is the explicit way out.
+  otherwise `new` makes a plain copy and says so.
 - Snapshot backends find changes with the fork manifest plus ctime. A tool that changes bytes
   and then restores every observable piece of metadata is outside the contract.
 - Caches outside the project, such as `~/.npm` and `~/.cargo`, are shared between workspaces,
@@ -85,5 +85,5 @@ processes cannot be reclaimed, and merging identical pages (KSM) needs root to e
 - Build caches keyed by absolute path may rebuild, because the workspace lives at another path.
 - Deep stacks of large snapshot trees multiply metadata and scan cost; stacks stop at 32
   levels.
-- `land` carries superproject commits, but not Git LFS objects or commits inside a submodule's
-  own repository.
+- The branch `merge` keeps carries superproject commits, but not Git LFS objects or commits
+  inside a submodule's own repository.

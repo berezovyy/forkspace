@@ -7,7 +7,7 @@ the binaries that machine cannot build.
 | :-- | :-- | :-- |
 | Prebuilt binary | `curl -fsSL https://github.com/berezovyy/forkspace/releases/latest/download/install.sh \| sh` | GitHub release assets |
 | crates.io | `cargo install forkspace` | `cargo publish` |
-| Upgrade | `forkspace upgrade`, `forkspace upgrade 0.2.0`, `--check` | GitHub release assets, or Cargo for a Cargo install |
+| Upgrade | `forkspace upgrade`, `forkspace upgrade 0.2.0` | GitHub release assets, or Cargo for a Cargo install |
 
 ## Once per machine
 

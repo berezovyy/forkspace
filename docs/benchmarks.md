@@ -9,7 +9,8 @@ writes. Each run starts from a fresh `FORKSPACE_HOME` and a private copy of the 
 the whole command (CLI startup to exit): `new`; a clean `diff --stat`; `diff` after one edit;
 a one-file `merge`; `ls` with one and five workspaces; and `drop`. p95 over
 five samples is the slowest sample or close to it; shared CI runners are noisy, so compare numbers only within
-one report.
+one report. The reports below were measured with forkspace 0.2.0, which still had
+`diff --stat` and `merge --dry-run`; `scripts/bench.py` now times `diff` and `merge` as they are.
 
 Two corpora are used:
 

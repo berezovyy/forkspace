@@ -1,8 +1,7 @@
 # Architecture
 
 Forkspace keeps the CLI and state model backend-neutral. `WorkspaceBackend` owns preflight,
-materialization, view lookup, change enumeration, destruction, capabilities and shell
-variables. The recorded `backend_kind` is sticky for the workspace's lifetime: selection probes
+materialization, view lookup, change enumeration, destruction and capabilities. The recorded `backend_kind` is sticky for the workspace's lifetime: selection probes
 capabilities only for a new fork, and commands on an existing workspace dispatch from the
 recorded kind.
 
@@ -47,7 +46,8 @@ loading parses it once, straight into the records; with 1,000 workspaces the fil
 [platform-parity.md](platform-parity.md#many-workspaces-on-linux)). Fork has an intent/commit boundary. Merge, pull and restore
 apply atomic per-path steps through resumable journals; every step is safe to apply twice, so
 progress is saved at most every 100 ms rather than after each step. Every state load sweeps
-routine leftovers (`state/recovery.rs`); an unfinished operation needs its explicit `--resume`.
+routine leftovers (`state/recovery.rs`); an unfinished operation is finished by the next run of
+the same command, and `drop` clears what nothing uses any more (`workspace/cleanup.rs`).
 Process records include a per-spawn identity, so recycled PIDs are never signalled.
 
 A new frozen copy is not flushed before the fork returns: it records the boot it was written
@@ -78,10 +78,11 @@ taken from its manifest and hard-linked without being read.
 
 ## Review and exchange
 
-`merge` transfers file state and flattens it; `land` fetches commit objects and keeps history;
-`pull` reconciles the moving base and records a new fork point. Files both sides changed go
+`merge` transfers file state and flattens it into the project's working tree, and fetches the
+workspace's commit objects into a project branch named after it, keeping history; `pull`
+reconciles the moving base and records a new fork point. Files both sides changed go
 through a line-level three-way merge (`git merge-file`) against the fork-time version, which
-`sync/ancestor.rs` keeps for snapshot backends. `compare` and the review signals are pure fact
+`sync/ancestor.rs` keeps for snapshot backends. `diff` with several names and the review signals are pure fact
 extraction over the same change sets `diff` uses; they never score or choose an attempt.
 
 ## Source layout
@@ -93,7 +94,8 @@ infrastructure layers. Nothing below `commands/` prints user-facing results.
 src/
 ├── main.rs, cli.rs        entry point and clap definitions
 ├── commands/              one thin handler per subcommand: validate args, call the domain, print
-├── workspace/             the Workspace record; create, remove, pre-command guards, private .git,
+├── workspace/             the Workspace record; create, remove, picking a workspace from the
+│                          current directory, pre-command guards, leftover cleanup, private .git,
 │                          the background Git index refresh after a fork
 ├── state/                 state.json store and flock, migrations, crash-recovery sweeps
 ├── backend/               WorkspaceBackend trait, kind selection, capability probes
@@ -105,8 +107,8 @@ src/
 │                          checkpoints, package-manager installs
 ├── review/                read-only facts: dependency/test signals, multi-workspace compare
 ├── process/               spawning, per-workspace process tracking (systemd slices, /proc,
-│                          libproc), limits, the write sandbox, dev servers, ports, proxy
-├── disk.rs                disk use per workspace and what gc can reclaim
+│                          libproc), the shared slice, the write sandbox, dev servers, ports, proxy
+├── disk.rs                disk use per workspace and of forkspace's own stores
 ├── exclude.rs             what forks leave out: nested worktrees, .forkspaceexclude
 ├── git.rs                 git subprocess helpers
 ├── paths.rs               every location under FORKSPACE_HOME

@@ -7,15 +7,79 @@ that heading into the version and date, and the section becomes the GitHub relea
 
 ## Unreleased
 
-Upgrading: the first fork after upgrading may make a new frozen copy of a project that has
-Git worktrees inside it, now that forks leave them out. Workspaces made by 0.2.0 keep working.
+This release makes the commands simpler: fewer of them, no options to learn, and the right
+behavior by default. Workspaces made by 0.2.0 keep working. The first fork after upgrading
+may make a new copy of a project that has Git worktrees inside it, now that forks leave them
+out.
 
-Removed: the environment variables that switched or tuned behavior. `FORKSPACE_BACKEND` and
-`FORKSPACE_SANDBOX=off` give way to `new --copy` and `--no-sandbox`; `FORKSPACE_TRACE`,
-`FORKSPACE_NO_LANDLOCK`, `FORKSPACE_NO_SYSTEMD`, `FORKSPACE_NO_BULK`, `FORKSPACE_CPU_WEIGHT`,
-`FORKSPACE_MEMORY_HIGH`, `FORKSPACE_BACKUP_WORKSPACES` and `FORKSPACE_RELEASES_URL` are gone
-without a replacement. `FORKSPACE_HOME` stays.
+### From 0.2 to this release
 
+| 0.2 | Now |
+| :-- | :-- |
+| `new <name> --from <dir>` | `cd <dir>`, then `new [name]`; without a name: `<project>-1`, `-2`, … |
+| `new --from <workspace>` | `new` inside that workspace |
+| `new --branch <b>` | automatic: in a Git project the workspace is on its own branch, named after it |
+| `new --copy`, `--live`, `--tmpfs`, `--no-fsync`, `--session` | gone: the fastest way that works is picked by itself |
+| `new --memory`, `--cpu`, `limit` | gone: every workspace runs under one shared `forkspace.slice` |
+| `enter --create` | `enter <name>` makes the workspace when it does not exist |
+| `enter --ephemeral` | `enter try -- <command>`, then `drop try` |
+| `enter --merge-on-exit` | `merge` after `enter` |
+| `enter --no-sandbox`, `run --no-sandbox`, `--sandbox-info` | gone: commands always run in the sandbox |
+| `diff --stat`, `--full`, `--files`, `--cumulative`, `--no-gitignore` | `diff`: changed files, notes, then a Git patch |
+| `compare a b c` | `diff a b c` |
+| `merge --dry-run` | `diff` |
+| `merge --patch` | `diff` (the patch is part of it) |
+| `merge --commit`, `-m` | `git commit` in your project after `merge` |
+| `merge --drop` | `merge`, then `drop` |
+| `merge --undo`, `--undo --list` | `undo [name]` |
+| `merge --resume`, `pull --resume`, `restore --resume` | run the same command again |
+| `merge --overwrite-base`, `pull --theirs` | gone: `pull` first, settle the conflicts in the workspace |
+| `merge --no-install`, `pull --no-install`, `restore --no-install`, `--quiet` | gone |
+| `land` | `merge` keeps the workspace's commits as the project branch named after it |
+| `pull --dry-run` | `pull --json` prints the plan of the pull it makes |
+| `checkpoint [-m <label>]` | `save [name] [note]` |
+| `checkpoints` | `restore [name]` (without a snapshot number) |
+| `restore <name> <id>` | `restore [name] <id>` |
+| `drop --all`, `--glob`, `--force`, `--kill` | `drop <names…>`: name each one, and what runs in them is stopped |
+| `gc` | gone: `drop` clears what nothing uses any more; `ls` shows each workspace's age |
+| `ls --names`, `--no-gitignore` | `ls`, or `ls --json` |
+| `upgrade --check` | `upgrade` |
+| `skill`, `hook claude-settings` | `setup` installs the skill and the hooks into Claude Code |
+| `FORKSPACE_BASE`, `FORKSPACE_VIEW`, `FORKSPACE_UPPER`, `FORKSPACE_SESSION` | the command starts in the workspace folder; `FORKSPACE_WORKSPACE` stays |
+
+Commands that take a workspace name use, without one, the workspace you are in, or the only
+one there is. `--json` stays on `ls`, `diff` and `pull`.
+
+The environment variables that switched or tuned behavior are gone: `FORKSPACE_BACKEND`,
+`FORKSPACE_SANDBOX`, `FORKSPACE_TRACE`, `FORKSPACE_NO_LANDLOCK`, `FORKSPACE_NO_SYSTEMD`,
+`FORKSPACE_NO_BULK`, `FORKSPACE_CPU_WEIGHT`, `FORKSPACE_MEMORY_HIGH`,
+`FORKSPACE_BACKUP_WORKSPACES` and `FORKSPACE_RELEASES_URL`. `FORKSPACE_HOME` stays.
+
+### Changed
+
+- `merge` keeps the workspace's commits as the project branch named after the workspace
+  (`<name>-2` and so on when that branch has moved on or is checked out), and never moves the
+  branch you have checked out; `undo` puts that branch back too. It says which files were
+  merged line by line.
+- `pull` no longer stops on files it cannot merge line by line: the workspace takes the
+  project's version, and `pull` names the snapshot that holds the workspace's.
+- `ls` shows each workspace's name, changes, age, size and what runs in it; the project
+  column only when there is more than one project.
+- Messages and help talk about your project, workspaces and folders, in plain words, and
+  counts read as words ("1 file").
+- `restore` lists snapshots with their age.
+- Overlay workspaces always answer `fsync` without flushing (fuse-overlayfs `fsync=0`):
+  1,000 small write+fsync calls take 80 ms instead of 1,390 ms on ext4, at the cost of the
+  last seconds of writes in a workspace on power loss. `merge` still flushes what it writes
+  into your project.
+
+### Added
+
+- `forkspace setup` installs the forkspace skill into Claude Code and adds the worktree hooks
+  that make its worktrees (`claude --worktree`, isolated subagents) forkspace workspaces;
+  run again, it changes nothing.
+- `forkspace undo`, `save` and `restore` (see the table above), and `forkspace update` as
+  another name for `upgrade`.
 - Forks leave out Git worktrees nested inside the project, such as Claude Code's
   `.claude/worktrees/*`, and everything under `.claude/worktrees/`. A copied nested worktree
   still pointed at the project's repository, so a commit made in it from inside a workspace
@@ -25,35 +89,29 @@ without a replacement. `FORKSPACE_HOME` stays.
   never move between a workspace and its project.
 - `new` refreshes the workspace's Git index in the background, so the first `git status` in
   it no longer hashes every tracked file again (on 20,000 files: 99 → 15 ms with a copy,
-  725 → about 120 ms on the overlay backend).
-- `forkspace skill` prints instructions for coding agents that use forkspace.
-- `forkspace hook worktree-create` and `worktree-remove` make the worktrees Claude Code
-  creates forkspace workspaces; `forkspace hook claude-settings` prints the settings.
-- `forkspace update` is another name for `forkspace upgrade`.
-- `new --no-fsync` (Linux overlay) mounts the workspace with fuse-overlayfs `fsync=0`:
-  1,000 small write+fsync calls take 80 ms instead of 1,390 ms on ext4, at the cost of the
-  last seconds of writes on power loss. `--tmpfs` and `enter --ephemeral` imply it.
-- Overlay workspaces start with a Git index refreshed once in the frozen copy every fork of
-  the project shares, so no workspace hashes its tracked files or writes its own
-  `.git/index`. The background refresh (other backends) turns fsmonitor off.
+  725 → about 120 ms on the overlay backend). Overlay workspaces start with a Git index
+  refreshed once in the copy every workspace of the project shares.
 - `enter` and `run` commands get a private `TMPDIR` (also `TMP`, `TEMP`) per workspace,
   writable inside the sandbox and removed by `drop`.
 - `enter` commands share one jobserver across all workspaces through `CARGO_MAKEFLAGS`:
-  parallel `cargo` builds take turns on one slot per CPU instead of each starting a compiler per CPU; a 12-crate build ran at most 3 compilers with
-  2 slots instead of 12.
-- Checkpoints keep changed files zstd-compressed against their fork-time version: five
-  checkpoints of an edited 300 KB file take 17 KB instead of about 1.5 MB.
-- When `new` does not use the fastest backend, or copies bytes it could have cloned, its
-  note says why, in the failing probe's words (for example `ext4 does not clone files
-  (FICLONE: Operation not supported)`).
+  parallel `cargo` builds take turns on one slot per CPU instead of each starting a compiler
+  per CPU; a 12-crate build ran at most 3 compilers with 2 slots instead of 12.
+- Snapshots keep changed files zstd-compressed against how they looked when the workspace was
+  made: five snapshots of an edited 300 KB file take 17 KB instead of about 1.5 MB.
+
+### Fixed
+
 - Forking a project while a tool deletes part of it (`git gc` packing loose objects, a
   package manager replacing a dependency) no longer fails with "failed to walk ...: No such
   file or directory"; what was deleted is simply not in the workspace.
-- Trash removal, the frozen-copy flush and the Git index refresh run at the lowest CPU and
-  disk priority.
+- A private temporary directory is no longer swept while another command is creating it, the
+  shared jobserver no longer loses its slots when the first holder exits, and temporary
+  folders inside `/tmp/forkspace-<uid>` are recognized as forkspace's own.
+- Trash removal, the background flush of project copies and the Git index refresh run at the
+  lowest CPU and disk priority.
 - Commands that change nothing no longer rewrite `state.json`, crash recovery no longer
-  checks every workspace's view on every command, and the state file is parsed once:
-  at 1,000 workspaces `diff` takes 14 ms instead of 22 ms.
+  checks every workspace's folder on every command, and the state file is parsed once: at
+  1,000 workspaces `diff` takes 14 ms instead of 22 ms.
 - The test suite no longer leaves fuse-overlayfs mounts behind.
 - Linux: writes made within one clock tick (about 1–4 ms) before or after a pull read the
   project, or before a catch-up round, were mistaken for later ones. A round could then keep
@@ -65,21 +123,20 @@ without a replacement. `FORKSPACE_HOME` stays.
   says so, instead of the whole path and "File name too long".
 - macOS: a workspace holding a user-immutable (`uchg`) file, which an APFS clone keeps from
   the project, is deleted after `drop` instead of staying in the trash.
-- `merge --patch` writes byte-exact Git patches; a patch that would be incomplete or would not
-  apply exits 5 and prints nothing.
+- The patch `diff` prints is byte-exact; files it cannot show are named instead.
 - `merge` never silently overwrites project edits (files written early in a fork, same-size
-  rewrites with a restored mtime, edits made during the merge or after a crash and
-  `--resume`), and a project `chmod` survives a line merge.
+  rewrites with a restored mtime, edits made during the merge or after a crash), and a
+  project `chmod` survives a line merge.
 - `pull` keeps workspace files in directories the project deleted, renamed or respelled, and
   keeps what an agent writes while the pull runs.
 - Merge, pull, restore and undo steps re-check their target, never act through a symlinked
   directory, and handle a path that changed between file, directory and symlink; `undo` never
   reports success without restoring.
-- Fork manifests that were lost or damaged are rebuilt, and a background builder that died is
-  restarted, so large projects no longer stay "building" forever.
-- `gc` re-checks leftovers under the lock, workspace names that collide with forkspace's own
-  files are refused, `enter --ephemeral --merge-on-exit` and `merge --drop` keep unmerged
-  work, and `diff` and `merge --patch` stream files over 32 MiB.
+- The lists of files a workspace started with, when lost or damaged, are rebuilt, and a
+  background builder that died is restarted, so large projects no longer stay "building"
+  forever.
+- Workspace names that collide with forkspace's own files are refused, and `diff` streams
+  files over 32 MiB.
 
 ## 0.2.0 - 2026-11-17
 

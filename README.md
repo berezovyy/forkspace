@@ -6,8 +6,8 @@
 </h1>
 
 <p align="center">
-  <strong>Disposable copies of your whole project, for agents, experiments and parallel work.</strong><br />
-  Fork a directory, change anything in it, then merge the result back or throw it away.
+  <strong>Throwaway copies of your whole project, for agents, experiments and parallel work.</strong><br />
+  Try anything in a copy, then keep it or throw it away. Your project is not touched until you say so.
 </p>
 
 <p align="center">
@@ -24,33 +24,37 @@
 
 ## Why forkspace?
 
-A workspace is a full view of your project, including the files Git ignores: `node_modules`,
-build caches, `.env`. Changes stay inside the workspace until you merge them, and the original
-directory is never touched in the meantime. Forkspace picks the fastest way your filesystem
-offers to make that copy: an overlay, an APFS clone, reflinks, or a plain copy as the floor.
+A workspace is a full copy of your project, including the files Git ignores: `node_modules`,
+build caches, `.env`. Change anything in it; your project stays exactly as it was until you
+merge. Making a workspace is fast because forkspace uses the cheapest copy your computer
+offers, and on most machines unchanged files take no extra disk space.
 
 |                         |  `cp -r`  |  Docker   | Git worktree |   **forkspace**   |
 | :---------------------- | :-------: | :-------: | :----------: | :-----------: |
-| **Speed**               |   Slow    |   Slow    |     Fast     | [**Backend-dependent**](docs/benchmarks.md) |
+| **Speed**               |   Slow    |   Slow    |     Fast     | [**Fast**](docs/benchmarks.md) |
 | `.env` / `node_modules` |    Yes    |    No     |      No      | [**Yes**](docs/platform-parity.md) |
 | **Isolation**           |   Full    |   Full    |   Partial    | [**Project-local**](docs/platform-parity.md#limitations) |
-| **Disk usage**          | Full copy | Full copy |   Partial    | [**CoW or disclosed copy**](docs/platform-parity.md) |
+| **Disk usage**          | Full copy | Full copy |   Partial    | [**Shared until changed**](docs/platform-parity.md) |
 | **Root required**       |    No     |   Often   |      No      | [**No**](docs/platform-parity.md) |
-| **Cleanup**             |  Manual   |  Manual   |    Manual    | [`forkspace drop`](docs/cli-reference.md) |
+| **Cleanup**             |  Manual   |  Manual   |    Manual    | [`forkspace drop`](docs/cli-reference.md#forkspace-drop-names) |
 
 ## Quick start
 
+In your project folder:
+
 ```bash
-forkspace new experiment            # an isolated workspace of this directory
-forkspace enter experiment -- sh -c 'echo "new idea" >> file.txt'
+forkspace new try-it                 # a copy of the project you are in
+forkspace enter try-it -- sh -c 'echo "new idea" >> file.txt'
 
-forkspace diff experiment           # what changed, as a patch
-
-forkspace merge experiment          # apply the changes to the original
-forkspace drop experiment           # remove the workspace
+forkspace diff try-it                # what changed
+forkspace merge try-it               # put the changes into your project
+forkspace undo                       # changed your mind: take them back out
+forkspace drop try-it                # throw the copy away
 ```
 
-Run `forkspace enter experiment` without a command to open a shell inside the workspace.
+`forkspace enter try-it` without a command opens a shell inside the workspace. Inside a
+workspace you can leave out its name: `forkspace diff`, `forkspace merge`. Without a name,
+`new` calls the workspace after your project: `shop-1`, `shop-2`, and so on.
 
 ## Install
 
@@ -62,40 +66,51 @@ curl -fsSL https://github.com/berezovyy/forkspace/releases/latest/download/insta
 # or build it from source with Cargo
 cargo install forkspace
 
-# later: move to the newest release (or `forkspace upgrade 0.2.0` for a given one)
+# let Claude Code use forkspace for its worktrees (safe to run again)
+forkspace setup
+
+# later: move to the newest release
 forkspace upgrade
 ```
 
 Forkspace runs on Linux and macOS and needs no root or daemon. On Linux, install
-[`fuse-overlayfs`](https://github.com/containers/fuse-overlayfs) for the fastest forks.
+[`fuse-overlayfs`](https://github.com/containers/fuse-overlayfs) for instant workspaces.
 `forkspace upgrade` replaces a downloaded binary in place, and a Cargo install through Cargo;
 workspaces made by an older version keep working. Releases and their notes are on the
 [releases page](https://github.com/berezovyy/forkspace/releases), and in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Working with Git
+
+In a Git project, every workspace is on its own branch, named after the workspace. Work
+there as usual: edit, run the tests, commit as often as you like.
+
+- `forkspace merge` puts the workspace's changed files into your project, where `git diff`
+  and `git status` show them and you commit them as you like. The workspace's commits are
+  kept as the project branch of the same name (`shop-1`); the branch you have checked out
+  never moves.
+- `forkspace pull` brings what changed in your project since then into the workspace, line
+  by line where both sides changed one file.
+- `forkspace undo` puts your project, and that branch, back as they were before the merge.
+- `forkspace drop` throws the workspace away. It warns when the workspace made commits that
+  were never merged.
+
 ## How it works
 
 <p align="center">
-  <img src="assets/films/how.webp" width="100%" alt="The overlay model: a workspace reads from the project, writes and deletions go to a separate changes layer, and that layer is what diff shows and merge applies." />
+  <img src="assets/films/how.webp" width="100%" alt="A workspace reads from the project, writes and deletions go to a separate changes layer, and that layer is what diff shows and merge applies." />
 </p>
 
-On Linux with `fuse-overlayfs`, a workspace is a union of two layers:
+On Linux with `fuse-overlayfs`, a workspace copies nothing when it is made. It reads from a
+copy of your project that forkspace keeps (made once per project, and shared by all of its
+workspaces), and keeps what you change in a separate place. That is why `diff` is instant,
+`merge` knows exactly what to bring back, and a branch switch in your project never reaches
+a workspace that is running an agent.
 
-- **A frozen copy of your project** is the read-only lower layer. The first fork of a project
-  copies it once into `FORKSPACE_HOME` (reflinks on Btrfs and XFS, a plain copy on ext4);
-  later forks reuse that copy, or hard-link its unchanged files into a new one, so a branch
-  switch or commit in your project never reaches a running agent. Forkspace never writes to
-  your project until you merge.
-- **The changes layer** starts empty. A file is copied into it the first time it is written,
-  new files land there, and deletions are recorded as markers.
-- **The workspace** is what you see: the changes layer on top of your project.
-
-Because every change lives in that one layer, `diff` reads it directly, `merge` applies it to
-your project, and `drop` deletes it.
-
-APFS clones, reflinks and the plain-copy floor create an ordinary directory instead, and track
-changes against a manifest written at fork time. The commands and their output are the same on
-every backend; see [Platforms](#platforms).
+On macOS (APFS) and on Linux file systems that can clone files (Btrfs, XFS), a workspace is an
+ordinary folder whose files share disk space with your project until they are changed.
+Anywhere else, it is a plain copy, and `new` says so. The commands and their output are the
+same everywhere; see [Platforms](#platforms).
 
 ## Where to use it
 
@@ -116,13 +131,13 @@ for n in a b c; do forkspace new agent-$n; done
 forkspace enter agent-a -- sh -c 'echo "export const otp = true;" > src/otp.ts'
 
 forkspace diff agent-a agent-b agent-c   # what each attempt touched
-forkspace merge agent-a                     # keep one
-forkspace drop agent-b agent-c              # discard the rest
+forkspace merge agent-a                  # keep one
+forkspace drop agent-b agent-c           # throw the rest away
 ```
 
-`forkspace skill` prints instructions an agent can follow to use forkspace safely, and
-`forkspace hook claude-settings` prints the Claude Code hooks that make its own worktrees
-(`claude --worktree`, subagents with `isolation: worktree`) forkspace workspaces.
+`forkspace setup` teaches Claude Code to use forkspace: it installs the forkspace skill and
+makes Claude Code's own worktrees (`claude --worktree`, subagents with
+`isolation: worktree`) forkspace workspaces, with `node_modules` and `.env` already inside.
 
 ### Dev servers side by side
 
@@ -130,9 +145,8 @@ forkspace drop agent-b agent-c              # discard the rest
   <img src="assets/films/servers.webp" width="100%" alt="Two workspaces run their own dev servers; forkspace switch changes which one localhost:4000 serves." />
 </p>
 
-Each workspace runs its own dev server on its own port. A small proxy on `localhost:4000`
-serves whichever one you switch to, so you can compare branches in one browser tab without
-restarting anything.
+Each workspace runs its own dev server on its own port. `localhost:4000` shows whichever one
+you switch to, so you can compare branches in one browser tab without restarting anything.
 
 <!-- notest: starts long-running host services; the proxy integration suite executes this lifecycle -->
 ```bash
@@ -142,65 +156,67 @@ forkspace new feature-b
 forkspace run feature-a -- npm run dev    # gets $PORT=3000
 forkspace run feature-b -- npm run dev    # 3000 is taken: gets a free port from 5501
 
-forkspace switch feature-a                # localhost:4000 → feature-a
-forkspace switch feature-b                # localhost:4000 → feature-b
+forkspace switch feature-a                # localhost:4000 shows feature-a
+forkspace switch feature-b                # localhost:4000 shows feature-b
 ```
 
 ### Throwaway experiments
 
 Try a risky upgrade, a large refactor or a destructive script, then throw the copy away.
+`enter` makes the workspace when it does not exist yet.
 
 ```bash
 forkspace enter try -- make test
 forkspace drop try
 ```
 
-### Stacked changes
+### Save points
 
-Run `forkspace new` inside a workspace's folder to start a workspace from that workspace, and
-build in steps; `forkspace diff --cumulative` then reviews everything from the original
-project to the top of the stack at once.
+`forkspace save` takes a snapshot of a workspace; `forkspace restore` lists the snapshots
+and goes back to one. `pull` saves one by itself before it changes anything.
+
+### Workspaces of workspaces
+
+Run `forkspace new` inside a workspace to make a workspace of it, and build in steps. Merging
+the top one puts its changes into the workspace below it.
 
 ## Commands
 
-| Command   | What it does                                                                |
-| :-------- | :-------------------------------------------------------------------------- |
-| `new`     | Create a workspace from a directory or another workspace (`--from`, `--branch`, `--copy`) |
-| `enter`   | Open a shell or run a command in a workspace (`--ephemeral`, `--merge-on-exit`) |
-| `diff`    | Show what changed (`--stat`, `--full`, `--files`, `--json`, `--cumulative`) |
-| `compare` | Compare parallel attempts by source, dependency and test changes           |
-| `merge`   | Apply a workspace's changes to its base (`--commit`, `--patch`, `--drop`)   |
-| `pull`    | Bring new base changes into a workspace                                     |
-| `land`    | Bring a workspace's Git branch and commits into the base repository         |
-| `run`     | Start a dev server in a workspace behind the `localhost:4000` proxy        |
-| `switch`  | Point the proxy at another workspace's dev server                          |
-| `checkpoint`, `restore` | Save a workspace's state and return to it later              |
-| `ls`      | List workspaces: backend, changed files, disk use, processes                |
-| `limit`   | Cap a workspace's memory and CPU (Linux)                                    |
-| `drop`    | Remove workspaces (`--kill`, `--all`, `--glob`, `--force`)                  |
-| `gc`      | Show and reclaim disk forkspace no longer needs                             |
-| `upgrade` | Install the latest release, or a given version (`--check`); also `update`   |
-| `skill`   | Print instructions for coding agents that use forkspace                     |
-| `hook`    | Make Claude Code's worktrees forkspace workspaces (`hook claude-settings`)  |
+| Command | What it does |
+| :------ | :----------- |
+| `new [name]` | Copy the project you are in into a new workspace |
+| `enter [name] [-- command]` | Open a shell, or run a command, inside a workspace (made first if needed) |
+| `ls` | List your workspaces: what changed, how old, how big, what runs |
+| `diff [names…]` | Show what changed in a workspace, or compare several |
+| `merge [name]` | Put a workspace's changes into your project |
+| `undo [name]` | Put your project back as it was before the latest merge |
+| `pull [name]` | Bring your project's newer changes into a workspace |
+| `save [name] [note]` | Save a snapshot of a workspace |
+| `restore [name] [id]` | Go back to a snapshot; without one, list them |
+| `drop <names…>` | Throw workspaces away, and stop what runs in them |
+| `run [name] -- command` | Start a dev server in a workspace, behind `localhost:4000` |
+| `switch <name>` | Point `localhost:4000` at another workspace's dev server |
+| `setup` | Set up the coding agents on this machine (Claude Code) to use forkspace |
+| `upgrade [version]` | Install the latest release, or a given version (also `update`) |
 
-Every command has `--help`; `ls`, `diff`, `compare`, `pull` and `checkpoints` also print
-`--json`. The full reference is in [docs/cli-reference.md](docs/cli-reference.md), and the rest
-of the docs are listed in [docs/README.md](docs/README.md).
+A command without a name uses the workspace you are in, or the only one there is. `ls`,
+`diff` and `pull` print `--json` for tools. The full reference is in
+[docs/cli-reference.md](docs/cli-reference.md), and the rest of the docs are listed in
+[docs/README.md](docs/README.md).
 
 ## Platforms
 
-Forkspace probes the filesystem and uses the fastest backend that works. The choice is
-recorded per workspace.
+Forkspace picks the fastest way to make a workspace that works on your machine, by itself.
 
-| Platform | Backend                        | Forking                                   |
-| :------- | :----------------------------- | :---------------------------------------- |
-| Linux    | `fuse-overlayfs`               | Nothing is copied; changes go to a layer  |
-| Linux    | Reflinks (e.g. Btrfs, XFS)     | Files share blocks until they are written |
-| macOS    | APFS clones                    | The directory is cloned copy-on-write     |
-| Both     | Plain copy (`--copy`)          | A full copy, reported when it happens     |
+| Platform | How a workspace is made | Cost |
+| :------- | :---------------------- | :--- |
+| Linux    | `fuse-overlayfs` | Nothing is copied; changes are kept apart |
+| Linux    | File clones (Btrfs, XFS) | Files share disk space until they are written |
+| macOS    | APFS clones | Files share disk space until they are written |
+| Both     | Plain copy | A full copy, and `new` says so |
 
-Measured numbers are in [docs/benchmarks.md](docs/benchmarks.md), and the behaviour and
-limitations of each backend in [docs/platform-parity.md](docs/platform-parity.md).
+Measured numbers are in [docs/benchmarks.md](docs/benchmarks.md), and what differs between
+them, and the known limitations, in [docs/platform-parity.md](docs/platform-parity.md).
 
 ## License
 
