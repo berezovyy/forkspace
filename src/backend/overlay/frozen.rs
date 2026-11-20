@@ -255,6 +255,13 @@ fn build(
             return Err(error);
         }
     };
+    // Forks of this copy see its files' inode numbers and times, so an index refreshed here
+    // once matches them in every fork: none has to hash the tracked files again or write its
+    // own `.git/index`. The manifest keeps the project's facts for `.git/index`, which the
+    // freshness check compares with the project; `settle` checks this file apart.
+    if crate::util::trace::time("index", || refresh_git_index(&tree)) {
+        let _ = fs::write(staging.join(INDEX_REFRESHED), b"");
+    }
     // Every fork of this copy records the same manifest; write it now, from what the copy
     // already knows, instead of walking the copy again (see `manifest_cache`).
     // A copy flushed in the background takes its manifest along (`settle` checks both).
@@ -530,6 +537,12 @@ pub(crate) fn settle(tree: &Path) -> Settled {
             .is_none_or(|meta| rows.len() as u64 == meta.entries)
             && rows.iter().all(|row| {
                 manifest::decode_path(row.path).is_ok_and(|relative| {
+                    // Refreshed after the copy (see `refresh_git_index`): derived data, so
+                    // only checked to be an index.
+                    if base.is_none() && relative == Path::new(GIT_INDEX) && index_refreshed(tree) {
+                        return fs::read(locate(&relative))
+                            .is_ok_and(|bytes| bytes.len() > 12 && bytes.starts_with(b"DIRC"));
+                    }
                     Entry::lstat(&locate(&relative)).is_ok_and(|entry| {
                         manifest::ManifestKind::of_entry(&entry) == row.kind
                             && (row.kind == manifest::ManifestKind::Dir
@@ -550,6 +563,51 @@ pub(crate) fn settle(tree: &Path) -> Settled {
 }
 
 const DELETED: &str = "deleted";
+
+/// Marks a frozen copy whose `.git/index` was refreshed against the copy's own files.
+const INDEX_REFRESHED: &str = "index-refreshed";
+
+/// The index a frozen copy's forks inherit.
+const GIT_INDEX: &str = ".git/index";
+
+/// Refresh the stat data of the Git index in `tree`, a frozen copy of a main checkout, so it
+/// matches the copy's files. fsmonitor and the untracked cache stay off: no daemon may start
+/// in a frozen copy. Whether the index was rewritten.
+fn refresh_git_index(tree: &Path) -> bool {
+    let index = tree.join(GIT_INDEX);
+    if !tree.join(".git").is_dir() || !index.is_file() {
+        return false;
+    }
+    let before = Entry::lstat(&index).ok();
+    let ran = std::process::Command::new("git")
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
+            "update-index",
+            "-q",
+            "--refresh",
+        ])
+        .current_dir(tree)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok();
+    // `--refresh` exits 1 when some files differ from the index (changes the user has not
+    // staged); the entries that match are refreshed and written all the same.
+    ran && Entry::lstat(&index).ok() != before
+}
+
+/// Whether the frozen copy whose tree is `tree` carries an index refreshed against its files.
+pub(crate) fn index_refreshed(tree: &Path) -> bool {
+    tree.parent()
+        .is_some_and(|dir| dir.join(INDEX_REFRESHED).exists())
+}
 
 /// What [`freeze_delta`] made.
 pub(crate) enum Delta {

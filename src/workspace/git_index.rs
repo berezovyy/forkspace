@@ -25,6 +25,23 @@ fn record_path(name: &str) -> PathBuf {
     paths::log_dir(name).join("index-refresh")
 }
 
+/// Whether `workspace` is an overlay whose lower layer is a frozen copy with an index already
+/// refreshed against it: its view shows the same inode numbers and times, so its index is
+/// fresh from the start.
+fn inherits_fresh_index(workspace: &Workspace) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        if let crate::backend::BackendState::Overlay(layers) = &workspace.backend_state {
+            return layers
+                .lower
+                .as_deref()
+                .is_some_and(crate::backend::overlay::frozen::index_refreshed);
+        }
+    }
+    let _ = workspace;
+    false
+}
+
 fn disabled() -> bool {
     std::env::var("FORKSPACE_GIT_REFRESH")
         .is_ok_and(|value| matches!(value.as_str(), "0" | "off" | "false" | "no"))
@@ -34,13 +51,20 @@ fn disabled() -> bool {
 /// repository. Best effort: a refresh that cannot start only leaves the first `git status`
 /// to do the work.
 pub fn start(workspace: &Workspace) {
-    if disabled() || !workspace.view_path.join(".git").exists() {
+    if disabled() || !workspace.view_path.join(".git").exists() || inherits_fresh_index(workspace) {
         return;
     }
     let identity = watch::new_identity();
     let mut command = Command::new("git");
     command
-        .args(["update-index", "-q", "--refresh"])
+        // No fsmonitor daemon may start in the workspace on forkspace's behalf.
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "update-index",
+            "-q",
+            "--refresh",
+        ])
         .current_dir(&workspace.view_path)
         .env(IDENTITY_ENV, &identity)
         .stdin(Stdio::null())

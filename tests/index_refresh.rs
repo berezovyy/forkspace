@@ -94,3 +94,39 @@ fn a_running_refresh_neither_blocks_drop_nor_counts_as_a_process() {
         env.ok(&["drop", &name]);
     }
 }
+
+/// An overlay workspace inherits an index refreshed once in its frozen copy: it is fresh as
+/// soon as `new` returns, no background refresh runs, and no workspace writes its own
+/// `.git/index`.
+#[test]
+#[serial]
+fn overlay_workspaces_inherit_an_index_refreshed_in_the_frozen_copy() {
+    let env = Env::new();
+    repository(&env);
+    let from = env.project();
+    for name in ["first", "second"] {
+        env.ok(&["new", name, "--from", from.to_str().unwrap()]);
+        let forkspace::backend::BackendState::Overlay(layers) = env.workspace(name).backend_state
+        else {
+            eprintln!("FORKSPACE_TEST_SKIP {{\"capability\":\"fuse-overlayfs\",\"reason\":\"no overlay backend\"}}");
+            return;
+        };
+        assert!(
+            index_is_fresh(&env.view(name)),
+            "{name}: index not fresh at once"
+        );
+        assert!(
+            !env.home
+                .path()
+                .join("logs")
+                .join(name)
+                .join("index-refresh")
+                .exists(),
+            "{name}: a per-workspace refresh ran"
+        );
+        assert!(
+            !layers.upper.join(".git/index").exists(),
+            "{name}: the index was copied up"
+        );
+    }
+}

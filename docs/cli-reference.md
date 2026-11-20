@@ -45,8 +45,10 @@ Left-out paths never move between a workspace and its project: `merge` does not 
 into the project, `pull` does not bring them into the workspace, and `diff` does not show
 them.
 
-Right after `new`, the workspace's Git index is refreshed in the background, at low priority,
-so the first `git status` in it does not hash every tracked file again. The refresh does not
+A workspace starts with a Git index that matches its files, so the first `git status` in it
+does not hash every tracked file again. On the Linux overlay backend the index is refreshed
+once, in the frozen copy every fork of the project shares; on the other backends, right after
+`new`, in the background and at low priority. The refresh does not
 count as a process using the workspace, and `drop` stops it. `FORKSPACE_GIT_REFRESH=0` turns
 it off.
 
