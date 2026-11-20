@@ -175,7 +175,10 @@ pub enum Downloaded {
 pub fn download_binary(base: &str, version: &str, target: &str, exe: &Path) -> Result<Downloaded> {
     let asset = format!("forkspace-{version}-{target}.tar.gz");
     let url = format!("{base}/download/v{version}/{asset}");
-    let scratch = env::temp_dir().join(format!("forkspace-upgrade-{}", std::process::id()));
+    // Unique per call: a program using forkspace as a library may download from two threads.
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let scratch = env::temp_dir().join(format!("forkspace-upgrade-{}-{call}", std::process::id()));
     fs::create_dir_all(&scratch)
         .io_context(|| format!("failed to create {}", scratch.display()))?;
     let result = (|| {
