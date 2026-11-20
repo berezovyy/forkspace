@@ -132,7 +132,21 @@ pub fn manifest_dir() -> PathBuf {
 pub fn private_tmp_root() -> PathBuf {
     // SAFETY: getuid cannot fail.
     let uid = unsafe { libc::getuid() };
-    std::env::temp_dir().join(format!("forkspace-{uid}"))
+    private_tmp_root_in(&std::env::temp_dir(), uid)
+}
+
+/// [`private_tmp_root`] for the temporary directory `temp`. Inside a workspace, `temp` is
+/// that workspace's own private directory, below the root: the root is then that ancestor, so
+/// forkspace run from inside a workspace finds the same directories as outside it.
+fn private_tmp_root_in(temp: &std::path::Path, uid: u32) -> PathBuf {
+    let name = format!("forkspace-{uid}");
+    temp.ancestors()
+        .find(|ancestor| {
+            ancestor
+                .file_name()
+                .is_some_and(|file| file == name.as_str())
+        })
+        .map_or_else(|| temp.join(&name), std::path::Path::to_path_buf)
 }
 
 /// Where the private temporary directories of this `FORKSPACE_HOME`'s workspaces live: one
@@ -167,6 +181,25 @@ pub fn log_dir(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_private_tmp_root_is_the_same_inside_a_workspace() {
+        let root = std::path::Path::new("/tmp/forkspace-1000");
+        assert_eq!(
+            private_tmp_root_in(std::path::Path::new("/tmp"), 1000),
+            root
+        );
+        assert_eq!(
+            private_tmp_root_in(&root.join("89a6dbda/one"), 1000),
+            root,
+            "a workspace's TMPDIR must not nest a second root"
+        );
+        assert_eq!(
+            private_tmp_root_in(std::path::Path::new("/tmp/forkspace-1001/x"), 1000),
+            std::path::Path::new("/tmp/forkspace-1001/x/forkspace-1000"),
+            "another user's directory is not ours"
+        );
+    }
 
     #[test]
     fn every_store_location_is_a_reserved_name() {
