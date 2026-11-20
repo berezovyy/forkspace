@@ -9,8 +9,7 @@ Commands:
   run          Start a process in a workspace (dev server, Electron, etc.)
   switch       Switch the active workspace (hot-swap via proxy)
   ls           List your workspaces: what changed, how old, what runs
-  diff         Show what changed in a workspace
-  compare      Compare parallel workspace attempts side by side
+  diff         Show what changed in a workspace, or compare several
   merge        Apply workspace changes back to the base directory
   pull         Bring base changes into a workspace
   land         Preserve a workspace's Git branch in the base repository

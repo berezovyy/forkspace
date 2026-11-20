@@ -113,6 +113,18 @@ pub fn view_of(home: &Path, name: &str) -> PathBuf {
     }
 }
 
+/// The paths a `diff --json` output lists, one per line, each ending in a newline.
+pub fn changed_paths(json: &[u8]) -> String {
+    let value: serde_json::Value = serde_json::from_slice(json).expect("diff --json output");
+    value["changes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|change| change["path"].as_str())
+        .map(|path| format!("{path}\n"))
+        .collect()
+}
+
 pub fn setup_test_env() -> TestHome {
     let dir = TestHome::new();
     // SAFETY: tests using setup_test_env() are serialized with #[serial],

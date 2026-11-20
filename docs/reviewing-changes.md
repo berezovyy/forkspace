@@ -3,9 +3,8 @@
 Create one disposable workspace per attempt, then use the following human review loop:
 
 ```bash
-forkspace compare attempt-a attempt-b attempt-c
-forkspace diff attempt-b --stat
-forkspace diff attempt-b --full
+forkspace diff attempt-a attempt-b attempt-c
+forkspace diff attempt-b
 forkspace merge attempt-b --dry-run
 forkspace merge attempt-b
 forkspace drop attempt-a && forkspace drop attempt-c

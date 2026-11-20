@@ -92,7 +92,7 @@ fn a_manifest_build_whose_builder_died_is_restarted_by_the_next_command() {
 
     env.ok(&["ls"]);
     assert_eq!(settled_status("ws"), ManifestStatus::Ready);
-    let files = stdout(&env.ok(&["diff", "ws", "--files"]));
+    let files = stdout(&env.ok(&["diff", "ws"]));
     assert!(
         files.contains("a.txt") && files.contains("b.txt"),
         "{files}"
@@ -129,7 +129,7 @@ fn a_command_that_needs_the_manifest_builds_it_when_its_builder_is_gone() {
     let _no_builders = NoBackgroundBuilders::new();
     manifest::settle_now("ws", true).unwrap();
     assert_eq!(status("ws"), ManifestStatus::Ready);
-    let files = stdout(&env.ok(&["diff", "ws", "--files"]));
+    let files = stdout(&env.ok(&["diff", "ws"]));
     assert!(
         files.contains("a.txt") && files.contains("b.txt"),
         "{files}"
@@ -214,7 +214,7 @@ fn a_lost_manifest_is_rebuilt_and_keeps_deletions_of_files_the_base_also_changed
 
     manifest::settle_now("ws", true).unwrap();
     assert_eq!(status("ws"), ManifestStatus::Ready);
-    let files = stdout(&env.ok(&["diff", "ws", "--files"]));
+    let files = stdout(&env.ok(&["diff", "ws"]));
     assert!(
         files.contains("x.txt") && files.contains("y.txt"),
         "{files}"
@@ -245,12 +245,12 @@ fn a_pulled_workspace_rebuilds_its_manifest_from_the_pull_not_the_view() {
     write(&view.join("a.txt"), "a edited\n");
     write(&env.project().join("c.txt"), "c from the base\n");
     env.ok(&["pull", "ws", "--no-install"]);
-    assert_eq!(stdout(&env.ok(&["diff", "ws", "--files"])).trim(), "a.txt");
+    assert_eq!(stdout(&env.ok(&["diff", "ws"])).trim(), "a.txt");
 
     lose_manifest("ws", ManifestStatus::Degraded, None);
     manifest::settle_now("ws", true).unwrap();
     assert_eq!(status("ws"), ManifestStatus::Ready);
-    assert_eq!(stdout(&env.ok(&["diff", "ws", "--files"])).trim(), "a.txt");
+    assert_eq!(stdout(&env.ok(&["diff", "ws"])).trim(), "a.txt");
 }
 
 /// UPG-01: an older forkspace that cannot read the manifest marks it degraded; the manifest

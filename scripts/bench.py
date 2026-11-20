@@ -378,7 +378,7 @@ def one_run(binary, env, project, home, args, new_flags, result):
             result["samples"].setdefault("first git status (1 s after new)", []).append(
                 (time.perf_counter() - started) * 1000)
 
-    timed("diff --stat (clean)", "diff", "ws1", "--stat")
+    timed("diff (clean)", "diff", "ws1")
     with open(view / EDIT_FILE, "a") as handle:
         handle.write("edited\n")
     timed("diff (one edit)", "diff", "ws1")

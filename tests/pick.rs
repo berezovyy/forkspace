@@ -17,7 +17,7 @@ fn inside_a_workspace_commands_need_no_name() {
     let inside = env.view("two").join("sub");
     std::fs::create_dir_all(&inside).unwrap();
     let output = env
-        .command(&["diff", "--files"])
+        .command(&["diff"])
         .current_dir(&inside)
         .output()
         .unwrap();
@@ -36,7 +36,7 @@ fn outside_the_only_workspace_is_used_and_several_must_be_named() {
 
     env.fork_copy("one");
     write(&env.view("one").join("b.txt"), "b\n");
-    let only = env.run(&["diff", "--files"]);
+    let only = env.run(&["diff"]);
     assert!(only.status.success(), "{}", stderr(&only));
     assert!(stdout(&only).contains("b.txt"));
 

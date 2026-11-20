@@ -90,7 +90,7 @@ mod macos {
                 "FORKSPACE_HOME",
                 std::env::var_os("FORKSPACE_HOME").unwrap(),
             )
-            .args(["diff", "clean-clone", "--files"])
+            .args(["diff", "clean-clone"])
             .output()
             .unwrap();
         assert!(diff.status.success());
@@ -108,7 +108,7 @@ mod macos {
                 "FORKSPACE_HOME",
                 std::env::var_os("FORKSPACE_HOME").unwrap(),
             )
-            .args(["diff", "early-delete", "--files"])
+            .args(["diff", "early-delete"])
             .output()
             .unwrap();
         assert!(diff.status.success());
@@ -741,12 +741,6 @@ mod macos {
             .output()
             .unwrap();
         assert!(String::from_utf8_lossy(&output.stdout).contains("3 files"));
-        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env("FORKSPACE_HOME", home.path())
-            .args(["ls", "--no-gitignore"])
-            .output()
-            .unwrap();
-        assert!(String::from_utf8_lossy(&output.stdout).contains("4 files"));
 
         // A manifest damaged after the workspace was written to is built again from the view,
         // the base and the fork-time copy (STATE-03): the same changes are counted afterwards.
@@ -953,7 +947,7 @@ mod macos {
         .unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
-            .args(["diff", "diff-state", "--full"])
+            .args(["diff", "diff-state"])
             .output()
             .unwrap();
         assert!(output.status.success());
@@ -1276,20 +1270,21 @@ mod macos {
         fs::write(step1.view_path.join("c"), b"late-parent-c\n").unwrap();
         assert_eq!(fs::read(step2.view_path.join("c")).unwrap(), b"base-c\n");
 
-        let cumulative = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+        let diffed = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
-            .args(["diff", "step-2", "--cumulative", "--json"])
+            .args(["diff", "step-2", "--json"])
             .output()
             .unwrap();
-        assert!(cumulative.status.success());
-        let json: serde_json::Value = serde_json::from_slice(&cumulative.stdout).unwrap();
+        assert!(diffed.status.success());
+        let json: serde_json::Value = serde_json::from_slice(&diffed.stdout).unwrap();
         let paths: Vec<_> = json["changes"]
             .as_array()
             .unwrap()
             .iter()
             .map(|change| change["path"].as_str().unwrap())
             .collect();
-        assert!(paths.contains(&"a"));
+        // Against its parent, step-2 changed only b.
+        assert!(!paths.contains(&"a"));
         assert!(paths.contains(&"b"));
         assert!(!paths.contains(&"c"));
 

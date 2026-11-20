@@ -1,15 +1,10 @@
-Show what changed in a workspace
+Show what changed in a workspace, or compare several
 
-Usage: forkspace diff [OPTIONS] [NAME]
+Usage: forkspace diff [OPTIONS] [NAMES]...
 
 Arguments:
-  [NAME]  Workspace (defaults to the one you are in)
+  [NAMES]...  Workspace (defaults to the one you are in); name two or more to compare them
 
 Options:
-      --stat          Show a compact stat summary (files changed, insertions, deletions)
-      --full          Show the full unified diff output
-      --files         List only the changed file paths
-      --cumulative    Include changes from all ancestor layers
-      --json          Output diff information as JSON
-      --no-gitignore  Show all files including gitignored paths (build artifacts, node_modules, etc.)
-  -h, --help          Print help
+      --json  Print the changes as JSON, for tools
+  -h, --help  Print help

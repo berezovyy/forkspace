@@ -46,5 +46,5 @@ fn overlay_workspaces_mount_with_fsync_off() {
     let options = daemon_options(&layers.merged).expect("the workspace's daemon");
     assert!(options.contains("fsync=0"), "{options}");
     write(&layers.merged.join("b.txt"), "b\n");
-    assert!(stdout(&env.ok(&["diff", "w", "--files"])).contains("b.txt"));
+    assert!(stdout(&env.ok(&["diff", "w"])).contains("b.txt"));
 }

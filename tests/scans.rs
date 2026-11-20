@@ -100,9 +100,6 @@ fn merge_ls_and_diff_agree_while_node_modules_is_skipped() {
     assert_eq!(listed[0]["name"], "ws");
     let table = env.ok(&["ls"]);
     assert!(table.contains("2 files"), "{table}");
-
-    // Asking for ignored paths still walks everything.
-    assert_eq!(env.changed(&["diff", "ws", "--json", "--no-gitignore"]), 6);
 }
 
 #[test]
@@ -133,9 +130,9 @@ fn pull_still_sees_ignored_files_that_transfer() {
 fn repeated_scans_give_identical_sorted_output() {
     let env = Env::new();
     edit_everywhere(&env);
-    let first = env.ok(&["diff", "ws", "--json", "--no-gitignore"]);
+    let first = env.ok(&["diff", "ws", "--json"]);
     for _ in 0..5 {
-        assert_eq!(env.ok(&["diff", "ws", "--json", "--no-gitignore"]), first);
+        assert_eq!(env.ok(&["diff", "ws", "--json"]), first);
     }
     let listed: serde_json::Value = serde_json::from_str(&first).unwrap();
     let paths: Vec<&str> = listed["changes"]

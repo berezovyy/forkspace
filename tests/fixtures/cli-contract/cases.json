@@ -8,7 +8,6 @@
   {"name":"switch-help","args":["switch","--help"]},
   {"name":"ls-help","args":["ls","--help"]},
   {"name":"diff-help","args":["diff","--help"]},
-  {"name":"compare-help","args":["compare","--help"]},
   {"name":"merge-help","args":["merge","--help"]},
   {"name":"pull-help","args":["pull","--help"]},
   {"name":"land-help","args":["land","--help"]},
@@ -38,7 +37,6 @@
   {"name":"merge-overwrite-drop","args":["merge","absent","--overwrite-base","--drop"]},
   {"name":"invalid-completion-shell","args":["completions","cmd.exe"]},
   {"name":"ls-json-empty","args":["ls","--json"]},
-  {"name":"compare-three","args":["compare","a","b","c"],"setup":"compare-three"},
-  {"name":"compare-files","args":["compare","a","b","c","--files"],"setup":"compare-three"},
-  {"name":"compare-json","args":["compare","a","b","c","--json"],"setup":"compare-three"}
+  {"name":"compare-three","args":["diff","a","b","c"],"setup":"compare-three"},
+  {"name":"compare-json","args":["diff","a","b","c","--json"],"setup":"compare-three"}
 ]

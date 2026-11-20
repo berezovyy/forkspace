@@ -110,7 +110,7 @@ MAKE
     git -C "$project" add -A
     git -C "$project" commit --quiet -m baseline
 
-    if grep -q 'forkspace compare attempt-a' "$block"; then
+    if grep -q 'forkspace diff attempt-a' "$block"; then
         for name in attempt-a attempt-b attempt-c; do
             (cd "$project" && FORKSPACE_HOME="$home" "$bin" new "$name" >/dev/null 2>/dev/null)
         done

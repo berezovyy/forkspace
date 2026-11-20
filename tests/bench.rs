@@ -31,7 +31,7 @@ fn bench_script_runs_in_short_mode() {
     let backend = &report["backends"][0];
     assert!(backend["kind"].is_string(), "{backend}");
     assert_eq!(backend["errors"], serde_json::json!([]));
-    for label in ["new", "diff --stat (clean)", "merge (one file)", "drop"] {
+    for label in ["new", "diff (clean)", "merge (one file)", "drop"] {
         assert_eq!(
             backend["summary"][label]["n"], 2,
             "missing samples for {label}"

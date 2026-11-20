@@ -200,9 +200,10 @@ fn forks_of_one_frozen_copy_share_its_manifest() {
 
     // The copied manifest is a working baseline: an edit shows in diff and merges back.
     fs::write(env.view("two").join("a.txt"), "edited\n").unwrap();
-    assert!(env
-        .stdout(&["diff", "two", "--stat"])
-        .contains("1 modified"));
+    assert_eq!(
+        common::changed_paths(env.stdout(&["diff", "two", "--json"]).as_bytes()),
+        "a.txt\n"
+    );
     env.run(&["merge", "two", "--no-install"]);
     assert_eq!(
         fs::read_to_string(env.project().join("a.txt")).unwrap(),
@@ -504,12 +505,11 @@ fn pull_records_only_what_changed_and_everything_still_measures_right() {
     );
     assert_eq!(fs::read_to_string(view.join("new.txt")).unwrap(), "new\n");
     assert!(!view.join("c.txt").exists() && !view.join("dir").exists());
-    let diff = env.stdout(&["diff", "w", "--stat"]);
-    assert!(
-        diff.contains("1 files changed, 0 added, 1 modified, 0 deleted"),
-        "{diff}"
+    assert_eq!(
+        common::changed_paths(env.stdout(&["diff", "w", "--json"]).as_bytes()),
+        "a.txt\n"
     );
-    assert!(env.stdout(&["diff", "w", "--full"]).contains("-a\n+ours"));
+    assert!(env.stdout(&["diff", "w"]).contains("-a\n+ours"));
     let made = deltas(&env);
     assert_eq!(made.len(), 1, "pull made a delta, not a full copy");
     assert!(
@@ -524,9 +524,10 @@ fn pull_records_only_what_changed_and_everything_still_measures_right() {
     let made = deltas(&env);
     assert_eq!(made.len(), 1, "{made:?}");
     assert_eq!(fs::read_to_string(view.join("new.txt")).unwrap(), "newer\n");
-    assert!(env
-        .stdout(&["diff", "w", "--stat"])
-        .contains("1 files changed"));
+    assert_eq!(
+        common::changed_paths(env.stdout(&["diff", "w", "--json"]).as_bytes()),
+        "a.txt\n"
+    );
 
     // Merging still moves only the workspace's own edit.
     let plan = env.stdout(&["merge", "w", "--dry-run"]);
@@ -600,7 +601,10 @@ fn merge_then_pull_moves_one_workspace_s_changes_into_another() {
         fs::read_to_string(env.view("ws2").join("feature.txt")).unwrap(),
         "from ws1\n"
     );
-    assert_eq!(env.stdout(&["diff", "ws2", "--files"]).trim(), "own.txt");
+    assert_eq!(
+        common::changed_paths(env.stdout(&["diff", "ws2", "--json"]).as_bytes()),
+        "own.txt\n"
+    );
 }
 
 #[test]

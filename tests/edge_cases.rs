@@ -119,7 +119,7 @@ fn set_group_id_directories_keep_the_bit_and_are_no_change() {
             .mode()
             & 0o7777;
         assert_eq!(copied, mode, "{name}");
-        let diff = env.ok(&["diff", name, "--files"]);
+        let diff = env.ok(&["diff", name]);
         let diff = String::from_utf8_lossy(&diff.stdout).into_owned();
         assert!(
             diff.trim().is_empty() || diff.contains("clean"),
@@ -158,7 +158,7 @@ fn a_fork_succeeds_while_the_project_deletes_a_directory() {
             stderr(&output)
         );
         assert!(env.view(&name).join("keep.txt").exists());
-        let diff = env.ok(&["diff", &name, "--files"]);
+        let diff = env.ok(&["diff", &name]);
         let diff = String::from_utf8_lossy(&diff.stdout).into_owned();
         assert!(
             diff.trim().is_empty() || diff.contains("clean"),

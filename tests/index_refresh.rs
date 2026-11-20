@@ -51,7 +51,7 @@ fn a_new_workspace_gets_a_refreshed_index_without_a_status() {
     }
     assert!(index_is_fresh(&view), "the index was never refreshed");
     // Only the index changed: no file of the workspace is a change.
-    let diff = env.ok(&["diff", "w", "--files"]);
+    let diff = env.ok(&["diff", "w"]);
     let diff = String::from_utf8_lossy(&diff.stdout);
     assert!(diff.trim().is_empty() || diff.contains("clean"), "{diff}");
 }

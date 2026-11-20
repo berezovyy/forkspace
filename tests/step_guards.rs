@@ -687,14 +687,9 @@ fn finish_pull(workspace: &mut Workspace, journal: &Path) -> Vec<PathBuf> {
     left
 }
 
-/// What `diff --files` lists, empty when it reports no changes.
+/// The paths `diff` lists, one per line; empty when nothing changed.
 fn diff_files(env: &Env, name: &str) -> String {
-    let listed = String::from_utf8_lossy(&env.ok(&["diff", name, "--files"]).stdout).into_owned();
-    if listed.starts_with("clean") {
-        String::new()
-    } else {
-        listed
-    }
+    common::changed_paths(&env.ok(&["diff", name, "--json"]).stdout)
 }
 
 /// PULL-23: base changes made after the pull last read the base (here: between its last step

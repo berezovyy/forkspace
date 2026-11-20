@@ -81,7 +81,7 @@ Show what changed since the fork: a list of files by default, `--stat` for a sum
 `--json` for tools. `--cumulative` compares a stacked workspace with the root project instead
 of its parent. `--no-gitignore` includes ignored paths.
 
-### `forkspace compare <name> <name>…`
+### `forkspace diff <name> <name>…`
 
 Compare two or more workspaces forked from the same place, in the order given: source,
 dependency and test changes per workspace, and which paths all, some, or one of them touched.

@@ -45,7 +45,7 @@ fn workspaces_get_separate_writable_tmpdirs_that_drop_removes() {
         !one.starts_with(env.view("one")),
         "temporary files would be workspace changes"
     );
-    let diff = stdout(&env.ok(&["diff", "one", "--files"]));
+    let diff = stdout(&env.ok(&["diff", "one"]));
     assert!(!diff.contains("made-here"), "{diff}");
 
     env.ok(&["drop", "one"]);

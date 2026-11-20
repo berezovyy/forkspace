@@ -323,7 +323,7 @@ fn cross_platform_mutation_script_has_one_normalized_json_truth() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
-        .args(["diff", "parity", "--json", "--no-gitignore"])
+        .args(["diff", "parity", "--json"])
         .output()
         .unwrap();
     assert!(
@@ -347,8 +347,6 @@ fn cross_platform_mutation_script_has_one_normalized_json_truth() {
     actual.sort();
 
     let mut expected = vec![
-        (".DS_Store", "modified", "runtime"),
-        (".git/index", "modified", "internal"),
         ("Cargo.lock", "modified", "dependency"),
         ("binary", "modified", "source"),
         ("cafe\u{301}", "modified", "source"),
@@ -356,7 +354,6 @@ fn cross_platform_mutation_script_has_one_normalized_json_truth() {
         ("edit-a", "modified", "source"),
         ("edit-b", "modified", "source"),
         ("empty", "added", "source"),
-        ("ignored/value", "modified", "source"),
         ("link", "modified", "source"),
         ("mode", "modified", "source"),
         ("recreated", "modified", "source"),
@@ -384,15 +381,13 @@ fn cross_platform_mutation_script_has_one_normalized_json_truth() {
     expected.sort();
     assert_eq!(actual, expected);
 
-    for flag in ["--stat", "--files", "--full"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env("FORKSPACE_HOME", home.path())
-            .args(["diff", "parity", flag])
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{flag}");
-        assert!(!output.stdout.is_empty(), "{flag}");
-    }
+    let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+        .env("FORKSPACE_HOME", home.path())
+        .args(["diff", "parity"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(!output.stdout.is_empty());
 
     let drop = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())

@@ -140,7 +140,7 @@ fn claude_settings_and_skill_print_what_they_document() {
     assert!(skill.starts_with("---\nname: forkspace\n"));
     // Every command the skill names exists.
     for command in [
-        "new", "enter", "diff", "compare", "merge", "pull", "land", "drop", "gc", "hook",
+        "new", "enter", "diff", "merge", "pull", "land", "drop", "gc", "hook",
     ] {
         assert!(skill.contains(&format!("forkspace {command}")), "{command}");
         let help = env.run(&[command, "--help"]);

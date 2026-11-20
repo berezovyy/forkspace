@@ -36,11 +36,8 @@ pub enum Commands {
     /// List your workspaces: what changed, how old, what runs
     Ls(LsArgs),
 
-    /// Show what changed in a workspace
+    /// Show what changed in a workspace, or compare several
     Diff(DiffArgs),
-
-    /// Compare parallel workspace attempts side by side
-    Compare(CompareArgs),
 
     /// Apply workspace changes back to the base directory
     Merge(MergeArgs),
@@ -193,41 +190,11 @@ pub struct CompletionsArgs {
 
 #[derive(Args)]
 pub struct DiffArgs {
-    #[arg(help = "Workspace (defaults to the one you are in)")]
-    pub name: Option<String>,
-
-    #[arg(long, conflicts_with_all = ["full", "files", "json"], help = "Show a compact stat summary (files changed, insertions, deletions)")]
-    pub stat: bool,
-
-    #[arg(long, conflicts_with_all = ["stat", "files", "json"], help = "Show the full unified diff output")]
-    pub full: bool,
-
-    #[arg(long, conflicts_with_all = ["stat", "full", "json"], help = "List only the changed file paths")]
-    pub files: bool,
-
-    #[arg(long, help = "Include changes from all ancestor layers")]
-    pub cumulative: bool,
-
-    #[arg(long, conflicts_with_all = ["stat", "full", "files"], help = "Output diff information as JSON")]
-    pub json: bool,
-
-    #[arg(
-        long,
-        help = "Show all files including gitignored paths (build artifacts, node_modules, etc.)"
-    )]
-    pub no_gitignore: bool,
-}
-
-#[derive(Args)]
-pub struct CompareArgs {
-    #[arg(num_args = 2.., help = "Two or more workspace names")]
+    #[arg(help = "Workspace (defaults to the one you are in); name two or more to compare them")]
     pub names: Vec<String>,
 
-    #[arg(long, conflicts_with = "files", help = "Output stable JSON")]
+    #[arg(long, help = "Print the changes as JSON, for tools")]
     pub json: bool,
-
-    #[arg(long, conflicts_with = "json", help = "Show the per-path matrix")]
-    pub files: bool,
 }
 
 #[derive(Args)]

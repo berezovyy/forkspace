@@ -41,11 +41,12 @@ fn a_file_over_the_text_diff_limit_is_not_diffed_line_by_line() {
     assert!(!big_line.contains('('), "{listed}");
     assert!(listed.contains("small.txt (+1) (-1)"), "{listed}");
 
-    let full = stdout(&env.ok(&["diff", "ws", "--full"]));
+    let diffed = env.ok(&["diff", "ws"]);
+    let full = stdout(&diffed);
     assert!(
-        full.contains("diff not shown"),
+        stderr(&diffed).contains("big.txt is not in the patch"),
         "{}",
-        &full[..full.len().min(2000)]
+        stderr(&diffed)
     );
     assert!(
         full.contains("+small edited"),

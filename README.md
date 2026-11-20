@@ -44,8 +44,7 @@ offers to make that copy: an overlay, an APFS clone, reflinks, or a plain copy a
 forkspace new experiment            # an isolated workspace of this directory
 forkspace enter experiment -- sh -c 'echo "new idea" >> file.txt'
 
-forkspace diff experiment           # what changed
-forkspace diff experiment --full    # the same, as a unified diff
+forkspace diff experiment           # what changed, as a patch
 
 forkspace merge experiment          # apply the changes to the original
 forkspace drop experiment           # remove the workspace
@@ -103,7 +102,7 @@ every backend; see [Platforms](#platforms).
 ### Parallel AI agents
 
 <p align="center">
-  <img src="assets/films/agents.webp" width="100%" alt="Three agents work on the same task in three workspaces; forkspace compare shows how the attempts differ, one is merged and the others are dropped." />
+  <img src="assets/films/agents.webp" width="100%" alt="Three agents work on the same task in three workspaces; forkspace diff shows how the attempts differ, one is merged and the others are dropped." />
 </p>
 
 Give each agent its own workspace of the same repository. They can install packages, run
@@ -116,7 +115,7 @@ for n in a b c; do forkspace new agent-$n; done
 # Start one agent per workspace, e.g. `forkspace enter agent-a -- <your agent>`.
 forkspace enter agent-a -- sh -c 'echo "export const otp = true;" > src/otp.ts'
 
-forkspace compare agent-a agent-b agent-c   # what each attempt touched
+forkspace diff agent-a agent-b agent-c   # what each attempt touched
 forkspace merge agent-a                     # keep one
 forkspace drop --all                        # discard the rest
 ```

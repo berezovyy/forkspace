@@ -55,6 +55,21 @@ pub fn git_patch(
     source: &Path,
     changes: &[FileChange],
 ) -> std::result::Result<Vec<u8>, Vec<Omission>> {
+    let (patch, omitted) = partial_patch(workspace, source, changes);
+    if omitted.is_empty() {
+        Ok(patch)
+    } else {
+        Err(omitted)
+    }
+}
+
+/// The patch of every change that a text patch can carry, and the changes it cannot (for
+/// `diff`, which shows what it can and lists the rest).
+pub fn partial_patch(
+    workspace: &Workspace,
+    source: &Path,
+    changes: &[FileChange],
+) -> (Vec<u8>, Vec<Omission>) {
     let snapshot = matches!(
         workspace.backend_state,
         BackendState::MacClone { .. } | BackendState::CowDir { .. }
@@ -78,11 +93,7 @@ pub fn git_patch(
             Err(omission) => omitted.push(omission),
         }
     }
-    if omitted.is_empty() {
-        Ok(patch)
-    } else {
-        Err(omitted)
-    }
+    (patch, omitted)
 }
 
 fn omission(path: &Path, reason: impl Into<String>) -> Omission {

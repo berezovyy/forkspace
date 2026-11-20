@@ -88,7 +88,7 @@ fn forks_leave_out_nested_worktrees_and_excluded_paths() {
     for name in ["copied", "default"] {
         let view = env.view(name);
         assert_left_out(&view);
-        let diff = stdout(&env.ok(&["diff", name, "--files"]));
+        let diff = stdout(&env.ok(&["diff", name]));
         assert!(
             diff.trim().is_empty() || diff.contains("clean"),
             "{name}: {diff}"

@@ -390,9 +390,7 @@ fn moved_base_is_flagged_but_the_independent_workspace_still_enters_and_diffs() 
         .view_path
         .clone();
     fs::write(view.join("file"), b"workspace\n").unwrap();
-    assert!(forkspace(home.path(), &["diff", "moved", "--stat"])
-        .status
-        .success());
+    assert!(forkspace(home.path(), &["diff", "moved"]).status.success());
     let merge = forkspace(home.path(), &["merge", "moved", "--no-install"]);
     assert!(!merge.status.success());
     assert!(String::from_utf8_lossy(&merge.stderr).contains("restore it before merging"));
@@ -611,7 +609,7 @@ fn sibling_cache_race_parallel_merges_and_diff_during_writes_remain_consistent()
         }
     });
     for _ in 0..20 {
-        let output = forkspace(home.path(), &["diff", "sibling-2", "--stat"]);
+        let output = forkspace(home.path(), &["diff", "sibling-2"]);
         assert!(
             output.status.success(),
             "{}",

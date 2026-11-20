@@ -41,7 +41,7 @@ forkspace enter fix-login -- npm test   # run a command inside it (exits with it
 
 ```sh
 forkspace diff fix-login --stat         # summary; --full for a unified diff, --json for tools
-forkspace compare attempt-a attempt-b   # how parallel attempts differ; it never picks one
+forkspace diff attempt-a attempt-b   # how parallel attempts differ; it never picks one
 ```
 
 Report what changed with `diff`, not from memory. `compare` lists facts; the user decides.
@@ -88,7 +88,7 @@ forkspace new [name] [--from <dir|workspace>] [--branch <b>] [--copy]
 forkspace enter [name] [--create] [--ephemeral] [-- command…]
 forkspace run <name> -- <command>          forkspace switch <name>
 forkspace diff <name> [--stat|--full|--files|--json]
-forkspace compare <a> <b>…                 forkspace ls [--json]
+forkspace diff <a> <b>…                 forkspace ls [--json]
 forkspace merge <name> [--dry-run|--commit|--patch|--undo]
 forkspace pull <name>                      forkspace land <name>
 forkspace checkpoint <name>                forkspace restore <name> <id>

@@ -16,7 +16,6 @@ _forkspace() {
         'switch:Switch the active workspace'
         'ls:List all active workspaces'
         'diff:Show what changed in a workspace'
-        'compare:Compare parallel workspaces side by side'
         'merge:Apply workspace changes back to the base directory'
         'pull:Bring base changes into a workspace'
         'land:Preserve workspace commits in the base repository'
@@ -84,20 +83,8 @@ _forkspace() {
                     ;;
                 diff)
                     _arguments \
-                        '1:workspace:_forkspace_workspaces' \
-                        '--stat[Show compact stat summary]' \
-                        '--full[Show full unified diff]' \
-                        '--files[List changed file paths]' \
-                        '--cumulative[Include ancestor layers]' \
-                        '--json[Output as JSON]' \
-                        '--no-gitignore[Include ignored files]' \
-                        '--help[Show help]'
-                    ;;
-                compare)
-                    _arguments \
                         '*:workspace:_forkspace_workspaces' \
-                        '--json[Output stable JSON]' \
-                        '--files[Show the per-path matrix]' \
+                        '--json[Print the changes as JSON]' \
                         '--help[Show help]'
                     ;;
                 merge)
