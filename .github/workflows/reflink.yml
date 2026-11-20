@@ -6,16 +6,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  copy:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: FORKSPACE_BACKEND=copy cargo test --test backend_probe --test diff_parity --test merge_parity -- --test-threads=1
-
   linux-reflink:
     strategy:
       matrix:
@@ -25,7 +15,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Install filesystem tools
-        run: sudo apt-get update && sudo apt-get install -y btrfs-progs xfsprogs
+        # Without fuse-overlayfs, new picks reflinks on the reflink volume.
+        run: |
+          sudo apt-get update && sudo apt-get install -y btrfs-progs xfsprogs
+          sudo apt-get remove -y fuse-overlayfs || true
       - name: Create reflink loop volume
         run: |
           truncate -s 2G /tmp/forkspace-reflink.img
@@ -46,5 +39,4 @@ jobs:
           TMPDIR=/mnt/forkspace-reflink/tmp \
           FORKSPACE_TEST_REFLINK_ROOT=/mnt/forkspace-reflink \
           FORKSPACE_TEST_MIXED_BASE=/mnt/forkspace-reflink/mixed-base \
-          FORKSPACE_BACKEND=linux-reflink \
           cargo test --test backend_probe --test diff_parity --test merge_parity -- --test-threads=1

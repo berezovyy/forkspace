@@ -257,10 +257,6 @@ fn building_refuses_and_dirty_rows_are_ancestor_unknown_not_conflicts() {
 #[serial]
 fn selected_directory_backend_round_trips_through_the_public_cli() {
     let home = common::setup_test_env();
-    let inherited_backend = std::env::var_os("FORKSPACE_BACKEND");
-    if inherited_backend.is_none() {
-        unsafe { std::env::set_var("FORKSPACE_BACKEND", "copy") };
-    }
     let base = tempfile::tempdir().unwrap();
     fs::write(base.path().join("edit"), b"old\n").unwrap();
     fs::write(base.path().join("delete"), b"old\n").unwrap();
@@ -272,6 +268,7 @@ fn selected_directory_backend_round_trips_through_the_public_cli() {
             "primitive-parity",
             "--from",
             base.path().to_str().unwrap(),
+            "--copy",
         ])
         .output()
         .unwrap();
@@ -307,9 +304,6 @@ fn selected_directory_backend_round_trips_through_the_public_cli() {
     assert_eq!(fs::read(base.path().join("edit")).unwrap(), b"new\n");
     assert_eq!(fs::read(base.path().join("add")).unwrap(), b"new\n");
     assert!(!base.path().join("delete").exists());
-    if inherited_backend.is_none() {
-        unsafe { std::env::remove_var("FORKSPACE_BACKEND") };
-    }
 }
 
 #[test]

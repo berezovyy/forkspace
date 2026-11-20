@@ -205,7 +205,7 @@ fn refuse_reserved_names(name: &str) -> Result<bool> {
                     "{} uses the .wh. prefix, which fuse-overlayfs reserves for deletion markers",
                     path.display()
                 ),
-                remedy: "rename that path, or fork with --copy (or FORKSPACE_BACKEND=linux-reflink on a reflink filesystem)".to_string(),
+                remedy: "rename that path, or fork with --copy".to_string(),
             });
         }
     }

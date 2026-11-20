@@ -32,7 +32,6 @@ mod macos {
         let home = tempfile::tempdir().unwrap();
         let base = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("FORKSPACE_HOME", home.path()) };
-        unsafe { std::env::remove_var("FORKSPACE_BACKEND") };
         // Background manifest builders re-run the current binary: make it forkspace, not
         // this test binary.
         forkspace::changes::manifest::set_builder_executable(
@@ -219,10 +218,8 @@ mod macos {
         assert!(env.iter().any(|(key, _)| key == "FORKSPACE_VIEW"));
         assert!(!env.iter().any(|(key, _)| key == "FORKSPACE_UPPER"));
 
-        unsafe { std::env::set_var("FORKSPACE_BACKEND", "linux") };
-        let error = select_backend(None).err().unwrap();
+        let error = select_backend(Some(BackendKind::Overlay)).err().unwrap();
         assert_eq!(error.exit_code(), 7);
-        unsafe { std::env::remove_var("FORKSPACE_BACKEND") };
     }
 
     #[test]

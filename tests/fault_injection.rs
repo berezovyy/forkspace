@@ -476,19 +476,22 @@ fn missing_or_ejected_workspace_volume_is_flagged_without_erasing_state() {
 
 #[test]
 #[serial]
-fn backend_override_is_echoed_but_other_platform_state_is_never_repaired_away() {
+fn other_platform_state_is_never_repaired_away() {
     let home = common::setup_test_env();
     let base = tempfile::tempdir().unwrap();
     fs::write(base.path().join("file"), b"old\n").unwrap();
     let forked = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
-        .env("FORKSPACE_BACKEND", "copy")
-        .args(["new", "foreign", "--from", base.path().to_str().unwrap()])
+        .args([
+            "new",
+            "foreign",
+            "--from",
+            base.path().to_str().unwrap(),
+            "--copy",
+        ])
         .output()
         .unwrap();
     assert!(forked.status.success());
-    assert!(String::from_utf8_lossy(&forked.stderr)
-        .contains("FORKSPACE_BACKEND override selected 'copy'"));
 
     let state_path = home.path().join("state.json");
     let mut state: serde_json::Value =

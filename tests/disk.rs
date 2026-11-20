@@ -26,10 +26,9 @@ impl Env {
         self.root.path().join("project")
     }
 
-    fn run(&self, args: &[&str], backend: &str) -> Output {
+    fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", self.home.path())
-            .env("FORKSPACE_BACKEND", backend)
             .env_remove("XDG_RUNTIME_DIR")
             .env("NO_COLOR", "1")
             .args(args)
@@ -38,8 +37,8 @@ impl Env {
             .unwrap()
     }
 
-    fn ok(&self, args: &[&str], backend: &str) -> String {
-        let output = self.run(args, backend);
+    fn ok(&self, args: &[&str]) -> String {
+        let output = self.run(args);
         assert!(
             output.status.success(),
             "forkspace {args:?} failed: {}",
@@ -54,17 +53,17 @@ impl Env {
         if backend == "copy" {
             args.push("--copy");
         }
-        self.ok(&args, backend);
+        self.ok(&args);
     }
 
     fn sizes(&self) -> serde_json::Value {
-        serde_json::from_str(&self.ok(&["ls", "--json"], "copy")).unwrap()
+        serde_json::from_str(&self.ok(&["ls", "--json"])).unwrap()
     }
 }
 
 impl Drop for Env {
     fn drop(&mut self) {
-        let _ = self.run(&["drop", "--all", "--kill"], "copy");
+        let _ = self.run(&["drop", "--all", "--kill"]);
     }
 }
 
@@ -89,7 +88,7 @@ fn ls_shows_private_sizes_and_a_total() {
     )
     .unwrap();
     assert!(size_of(&env.sizes(), "copied") >= 256 * 1024);
-    let table = env.ok(&["ls"], "copy");
+    let table = env.ok(&["ls"]);
     assert!(table.contains("SIZE"), "{table}");
     assert!(table.contains("forkspace uses"), "{table}");
 }
@@ -128,14 +127,14 @@ fn gc_lists_idle_workspaces_and_expired_data_but_removes_nothing_unasked() {
     let unused = env.home.path().join("frozen/deadbeef-1/tree");
     fs::create_dir_all(&unused).unwrap();
 
-    let fresh = env.ok(&["gc"], "copy");
+    let fresh = env.ok(&["gc"]);
     assert!(
         !fresh.contains("workspace 'idle'"),
         "younger than 7 days: {fresh}"
     );
     assert!(!unused.exists(), "recovery sweeps unused frozen copies");
 
-    let survey = env.ok(&["gc", "--older-than", "0s"], "copy");
+    let survey = env.ok(&["gc", "--older-than", "0s"]);
     assert!(survey.contains("workspace 'idle'"), "{survey}");
     assert_eq!(survey.matches("undo data").count(), 2, "{survey}");
     assert!(survey.contains("keeping 'busy'"), "{survey}");
@@ -143,7 +142,7 @@ fn gc_lists_idle_workspaces_and_expired_data_but_removes_nothing_unasked() {
     assert!(survey.contains("nothing removed"), "{survey}");
     assert!(env.home.path().join("workspaces/idle").exists());
 
-    let removed = env.ok(&["gc", "--older-than", "0s", "--yes"], "copy");
+    let removed = env.ok(&["gc", "--older-than", "0s", "--yes"]);
     assert!(removed.contains("freed"), "{removed}");
     assert!(!env.home.path().join("workspaces/idle").exists());
     assert!(env.home.path().join("workspaces/busy").exists());
@@ -158,10 +157,10 @@ fn every_internal_store_is_tagged_for_backups() {
     let env = Env::new();
     env.fork("ws", "copy");
     fs::write(env.home.path().join("workspaces/ws/app.txt"), "changed\n").unwrap();
-    env.ok(&["checkpoint", "ws"], "copy");
-    env.ok(&["merge", "ws", "--quiet", "--no-install"], "copy");
-    env.ok(&["drop", "ws"], "copy");
-    env.ok(&["ls"], "copy");
+    env.ok(&["checkpoint", "ws"]);
+    env.ok(&["merge", "ws", "--quiet", "--no-install"]);
+    env.ok(&["drop", "ws"]);
+    env.ok(&["ls"]);
     for store in ["undo", "checkpoints", "ancestors", "trash"] {
         let tag = env.home.path().join(store).join("CACHEDIR.TAG");
         let text = fs::read_to_string(&tag).unwrap_or_else(|_| panic!("{} missing", tag.display()));

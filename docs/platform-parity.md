@@ -10,7 +10,7 @@ and what the OS offers around it. Each row names the test that holds it. Measure
 |---|---:|---:|---|---|
 | Linux overlay (`linux`) | O(1) mount over a frozen copy: first fork of a project copies it (reflink or bytes), later forks reuse or hard-link it | first fork: one copy per project (zero on Btrfs/XFS) | upper-layer walk | `tests/diff_parity.rs::cross_platform_mutation_script_has_one_normalized_json_truth` (FUSE CI) |
 | APFS clone (`mac-clone`) | one recursive clone | approximately zero | manifest + ctime scan | `tests/macos_clone.rs::fork_is_native_isolated_and_preserves_inherited_dependencies` |
-| Linux reflink (`linux-reflink`) | O(entries) | approximately zero, except per-file fallbacks | manifest + ctime scan | `tests/backend_probe.rs::requested_real_reflink_volume_materializes_without_data_copy` |
+| Linux reflink (`linux-reflink`) | O(entries) | approximately zero, except per-file fallbacks | manifest + ctime scan | `tests/backend_probe.rs::a_real_reflink_volume_materializes_without_data_copy` |
 | Portable copy (`copy`) | O(bytes) | full tree size | manifest + ctime scan | `tests/backend_probe.rs::plain_copy_is_a_privilege_free_fidelity_floor` |
 
 | Feature | Linux overlay | APFS clone | Linux reflink | Copy | Evidence |

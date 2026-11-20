@@ -83,7 +83,7 @@ def parse_args():
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--corpus", help="project directory or .tar/.tar.gz to fork")
     source.add_argument("--synthetic", type=int, help="generate a project with this many entries")
-    parser.add_argument("--backends", default="auto", help="comma list: auto, copy, linux, linux-reflink, mac-clone")
+    parser.add_argument("--backends", default="auto", help="comma list: auto (what new picks), copy (new --copy)")
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=1, help="untimed runs before measuring")
     parser.add_argument("--workspaces", type=int, default=5, help="workspaces alive for the second ls")
@@ -310,9 +310,9 @@ def filesystem_type(path):
 
 def bench_backend(binary, backend, corpus, work, args):
     env = dict(os.environ)
-    env.pop("FORKSPACE_BACKEND", None)
-    if backend != "auto":
-        env["FORKSPACE_BACKEND"] = backend
+    if backend not in ("auto", "copy"):
+        raise SystemExit(f"unknown backend {backend!r}: use auto or copy")
+    new_flags = ("--copy",) if backend == "copy" else ()
     project = work / f"project-{backend}"
     copy_tree(corpus, project)
 
@@ -323,7 +323,7 @@ def bench_backend(binary, backend, corpus, work, args):
         home.mkdir()
         env["FORKSPACE_HOME"] = str(home)
         try:
-            one_run(binary, env, project, home, args, result if measured else None)
+            one_run(binary, env, project, home, args, new_flags, result if measured else None)
         except BenchError as error:
             result["errors"].append(str(error))
             log(f"backend {backend} run {run}: {error}")
@@ -334,7 +334,7 @@ def bench_backend(binary, backend, corpus, work, args):
         home = work / f"home-{backend}-freeze"
         home.mkdir()
         env["FORKSPACE_HOME"] = str(home)
-        result["freeze"] = freeze_probe(binary, env, project)
+        result["freeze"] = freeze_probe(binary, env, project, new_flags)
         cleanup_home(binary, env, home)
     remove_tree(project)
 
@@ -346,7 +346,7 @@ class BenchError(Exception):
     pass
 
 
-def one_run(binary, env, project, home, args, result):
+def one_run(binary, env, project, home, args, new_flags, result):
     def timed(label, *argv):
         elapsed, stdout = run(binary, env, argv)
         if result is not None:
@@ -358,7 +358,7 @@ def one_run(binary, env, project, home, args, result):
     edit_target.write_text("benchmark\n")
 
     free_before = shutil.disk_usage(home).free
-    view = created_view(timed("new", "new", "ws1", "--from", str(project)))
+    view = created_view(timed("new", "new", "ws1", "--from", str(project), *new_flags))
     kind = workspace_kind(binary, env, "ws1")
     if kind == "mac-clone":
         ready_ms = wait_for_manifest(binary, env, "ws1")
@@ -390,7 +390,7 @@ def one_run(binary, env, project, home, args, result):
     edit_target.write_text("benchmark\n")
     timed("ls (1 workspace)", "ls")
     for number in range(2, args.workspaces + 1):
-        run(binary, env, ("new", f"ws{number}", "--from", str(project)))
+        run(binary, env, ("new", f"ws{number}", "--from", str(project), *new_flags))
     timed(f"ls ({args.workspaces} workspaces)", "ls")
     timed("drop", "drop", "ws1")
 
@@ -478,7 +478,7 @@ def fusermount():
 # ---------------------------------------------------------------- freeze probe
 
 
-def freeze_probe(binary, env, project, interval=0.002):
+def freeze_probe(binary, env, project, new_flags, interval=0.002):
     """Write a small file into the project every `interval` seconds, first with nothing else
     running and then while `new` forks the project, and compare the write latencies."""
 
@@ -501,7 +501,7 @@ def freeze_probe(binary, env, project, interval=0.002):
         return latencies, elapsed
 
     def fork():
-        return run(binary, env, ("new", "freeze", "--from", str(project)))[0]
+        return run(binary, env, ("new", "freeze", "--from", str(project), *new_flags))[0]
 
     try:
         during, fork_ms = measure(fork)

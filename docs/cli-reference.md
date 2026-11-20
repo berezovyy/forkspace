@@ -267,9 +267,6 @@ Read by forkspace:
 | `FORKSPACE_HOME` | Where workspaces and state live (default `~/.forkspace`, kept owner-only). |
 | `NO_COLOR`, `CLICOLOR_FORCE` | Output is coloured only on a terminal. `NO_COLOR` (any value) turns colour off; `CLICOLOR_FORCE=1` turns it on for pipes too. |
 
-For debugging and tests only: `FORKSPACE_BACKEND=<linux|mac-clone|linux-reflink|copy>` forces
-a backend for new workspaces.
-
 ## Exit codes
 
 | Code | Meaning |

@@ -378,7 +378,6 @@ fn a_view_folder_removed_by_hand_is_reported_and_dropped_cleanly() {
     let run = |args: &[&str]| {
         std::process::Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
-            .env("FORKSPACE_BACKEND", "copy")
             .args(args)
             .output()
             .unwrap()

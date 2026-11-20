@@ -169,17 +169,6 @@ fn reflink_probe_is_ioctl_based_and_override_is_sticky() {
     assert!(source.contains("libc::ioctl"));
     assert!(source.contains("FICLONE"));
     assert!(!source.contains("f_type"));
-
-    let inherited = std::env::var_os("FORKSPACE_BACKEND");
-    unsafe { std::env::set_var("FORKSPACE_BACKEND", "copy") };
-    assert_eq!(select_backend(None).unwrap().kind(), BackendKind::PlainCopy);
-    unsafe {
-        if let Some(inherited) = inherited {
-            std::env::set_var("FORKSPACE_BACKEND", inherited);
-        } else {
-            std::env::remove_var("FORKSPACE_BACKEND");
-        }
-    }
 }
 
 #[test]
@@ -213,9 +202,16 @@ fn probe_report_is_ordered_and_uses_the_ioctl_verdict() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 #[serial]
-fn requested_real_reflink_volume_materializes_without_data_copy() {
+fn a_real_reflink_volume_materializes_without_data_copy() {
+    if forkspace::backend::overlay::mount::probe_fuse_overlayfs_fresh().is_ok() {
+        eprintln!(
+            "FORKSPACE_TEST_SKIP {{\"capability\":\"reflink-volume\",\"reason\":\"fuse-overlayfs works here, so new prefers it to reflinks\"}}"
+        );
+        return;
+    }
     let Some(root) = std::env::var_os("FORKSPACE_TEST_REFLINK_ROOT") else {
         eprintln!(
             "FORKSPACE_TEST_SKIP {{\"capability\":\"reflink-volume\",\"reason\":\"set FORKSPACE_TEST_REFLINK_ROOT to a writable Btrfs or XFS-reflink volume\"}}"
@@ -227,11 +223,7 @@ fn requested_real_reflink_volume_materializes_without_data_copy() {
     let home = root.join(format!("probe-home-{}", std::process::id()));
     fs::create_dir_all(&base).unwrap();
     fs::write(base.join("file"), vec![7_u8; 4 * 1024 * 1024]).unwrap();
-    let inherited_backend = std::env::var_os("FORKSPACE_BACKEND");
-    unsafe {
-        std::env::set_var("FORKSPACE_HOME", &home);
-        std::env::set_var("FORKSPACE_BACKEND", "linux-reflink");
-    }
+    unsafe { std::env::set_var("FORKSPACE_HOME", &home) };
     assert!(forkspace::backend::probe::reflink_supported(
         &base,
         &home.join("workspaces")
@@ -249,13 +241,6 @@ fn requested_real_reflink_volume_materializes_without_data_copy() {
     };
     assert_eq!(reflinked_files, 1);
     assert_eq!(copied_files, 0);
-    unsafe {
-        if let Some(inherited) = inherited_backend {
-            std::env::set_var("FORKSPACE_BACKEND", inherited);
-        } else {
-            std::env::remove_var("FORKSPACE_BACKEND");
-        }
-    }
     let _ = fs::remove_dir_all(base);
     let _ = fs::remove_dir_all(home);
 }
@@ -264,6 +249,12 @@ fn requested_real_reflink_volume_materializes_without_data_copy() {
 #[test]
 #[serial]
 fn reflink_mixed_submount_falls_back_per_file_without_failing_the_fork() {
+    if forkspace::backend::overlay::mount::probe_fuse_overlayfs_fresh().is_ok() {
+        eprintln!(
+            "FORKSPACE_TEST_SKIP {{\"capability\":\"reflink-volume\",\"reason\":\"fuse-overlayfs works here, so new prefers it to reflinks\"}}"
+        );
+        return;
+    }
     let Some(base) = std::env::var_os("FORKSPACE_TEST_MIXED_BASE") else {
         eprintln!(
             "FORKSPACE_TEST_SKIP {{\"capability\":\"reflink-submount\",\"reason\":\"set FORKSPACE_TEST_MIXED_BASE to a reflink-volume directory containing a mounted sub directory\"}}"
@@ -281,11 +272,7 @@ fn reflink_mixed_submount_falls_back_per_file_without_failing_the_fork() {
     fs::write(base.join("sub/inner"), vec![2_u8; 1024 * 1024]).unwrap();
     let home = Path::new(&root).join(format!("mixed-home-{}", std::process::id()));
     let inherited_home = std::env::var_os("FORKSPACE_HOME");
-    let inherited_backend = std::env::var_os("FORKSPACE_BACKEND");
-    unsafe {
-        std::env::set_var("FORKSPACE_HOME", &home);
-        std::env::set_var("FORKSPACE_BACKEND", "linux-reflink");
-    }
+    unsafe { std::env::set_var("FORKSPACE_HOME", &home) };
     let workspace =
         forkspace::workspace::create(base.to_path_buf(), "mixed", Default::default()).unwrap();
     let forkspace::backend::BackendState::CowDir {
@@ -307,10 +294,6 @@ fn reflink_mixed_submount_falls_back_per_file_without_failing_the_fork() {
         match inherited_home {
             Some(value) => std::env::set_var("FORKSPACE_HOME", value),
             None => std::env::remove_var("FORKSPACE_HOME"),
-        }
-        match inherited_backend {
-            Some(value) => std::env::set_var("FORKSPACE_BACKEND", value),
-            None => std::env::remove_var("FORKSPACE_BACKEND"),
         }
     }
     let _ = fs::remove_dir_all(home);

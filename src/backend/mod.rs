@@ -56,17 +56,6 @@ impl BackendKind {
         }
     }
 
-    /// Parses a `FORKSPACE_BACKEND` override.
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "linux" | "linux-overlay" => Some(Self::Overlay),
-            "mac-clone" => Some(Self::MacClone),
-            "linux-reflink" => Some(Self::LinuxReflink),
-            "copy" => Some(Self::PlainCopy),
-            _ => None,
-        }
-    }
-
     /// Human-readable platform whose builds can open workspaces of this kind.
     fn platform(self) -> &'static str {
         match self {
@@ -203,18 +192,15 @@ fn require_directory(base: &Path) -> Result {
     )))
 }
 
-/// Opens the backend for the `recorded` kind, falling back to the `FORKSPACE_BACKEND` override and
-/// then the platform default when no kind has been recorded.
+/// Opens the backend for the `recorded` kind, or the platform default when no kind has been
+/// recorded.
 pub fn select_backend(recorded: Option<BackendKind>) -> Result<Box<dyn WorkspaceBackend>> {
-    let kind = match recorded {
-        Some(kind) => kind,
-        None => env_override()?.unwrap_or(PLATFORM_DEFAULT),
-    };
+    let kind = recorded.unwrap_or(PLATFORM_DEFAULT);
     instantiate(kind).ok_or_else(|| unavailable(kind))
 }
 
-/// Chooses the backend for a new workspace forked from `base`: a full copy when forced, the
-/// `FORKSPACE_BACKEND` override when set, and otherwise the best primitive the platform offers.
+/// Chooses the backend for a new workspace forked from `base`: a full copy when forced, and
+/// otherwise the best primitive the platform offers.
 pub fn select_backend_for_create(
     base: &Path,
     force_copy: bool,
@@ -230,9 +216,6 @@ pub fn choose_backend_for_create(
 ) -> Result<(Box<dyn WorkspaceBackend>, Option<String>)> {
     if force_copy {
         return Ok((select_backend(Some(BackendKind::PlainCopy))?, None));
-    }
-    if std::env::var_os("FORKSPACE_BACKEND").is_some() {
-        return Ok((select_backend(None)?, None));
     }
     let (kind, skipped) = probe_create_kind(base)?;
     Ok((select_backend(Some(kind))?, skipped))
@@ -254,20 +237,6 @@ const PLATFORM_DEFAULT: BackendKind = if cfg!(target_os = "macos") {
 } else {
     BackendKind::Overlay
 };
-
-fn env_override() -> Result<Option<BackendKind>> {
-    let Ok(value) = std::env::var("FORKSPACE_BACKEND") else {
-        return Ok(None);
-    };
-    match BackendKind::parse(&value) {
-        Some(kind) => Ok(Some(kind)),
-        None => Err(ForkspaceError::BackendUnavailable {
-            diagnosis: format!("unknown backend '{value}'"),
-            remedy: "use 'linux', 'mac-clone', 'linux-reflink', or 'copy' for debug overrides"
-                .to_string(),
-        }),
-    }
-}
 
 /// The backend implementing `kind`, or `None` when this build cannot open it.
 fn instantiate(kind: BackendKind) -> Option<Box<dyn WorkspaceBackend>> {

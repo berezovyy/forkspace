@@ -42,7 +42,6 @@ impl Env {
         let mut command = Command::new(env!("CARGO_BIN_EXE_forkspace"));
         command
             .env("FORKSPACE_HOME", self.home.path())
-            .env("FORKSPACE_BACKEND", self.backend)
             .env("NO_COLOR", "1")
             .args(args);
         if let Some(path) = &self.path {

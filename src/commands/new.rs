@@ -116,10 +116,4 @@ fn print_backend_notes(ws: &Workspace) {
             eprintln!("note: {reason}");
         }
     }
-    if std::env::var_os("FORKSPACE_BACKEND").is_some() {
-        eprintln!(
-            "note: FORKSPACE_BACKEND override selected '{}'",
-            ws.backend_kind.as_str()
-        );
-    }
 }

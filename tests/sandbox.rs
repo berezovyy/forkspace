@@ -46,7 +46,6 @@ impl Env {
         let mut command = Command::new(env!("CARGO_BIN_EXE_forkspace"));
         command
             .env("FORKSPACE_HOME", self.path("home"))
-            .env("FORKSPACE_BACKEND", "copy")
             .env_remove("XDG_RUNTIME_DIR")
             .env("HOME", self.path("fake-home"))
             .args(args);

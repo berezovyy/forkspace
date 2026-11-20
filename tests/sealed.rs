@@ -45,7 +45,6 @@ impl Env {
     fn run(&self, args: &[&str]) -> Output {
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", self.home.path())
-            .env("FORKSPACE_BACKEND", "linux")
             .args(args)
             .output()
             .unwrap();
@@ -227,7 +226,6 @@ fn a_successful_fuse_probe_is_remembered() {
     let env = Env::new();
     let project = env.project();
     let fork = |name: &str| {
-        // No FORKSPACE_BACKEND: the backend is chosen by probing.
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", env.home.path())
             .args(["new", name, "--from", project.to_str().unwrap()])

@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 struct Env {
     home: common::TestHome,
     root: tempfile::TempDir,
-    backend: &'static str,
     systemd: bool,
 }
 
@@ -22,7 +21,6 @@ impl Env {
         let env = Self {
             home: common::TestHome::new(),
             root: tempfile::tempdir().unwrap(),
-            backend,
             systemd,
         };
         let project = env.root.path().join("project");
@@ -40,7 +38,6 @@ impl Env {
         let mut command = Command::new(env!("CARGO_BIN_EXE_forkspace"));
         command
             .env("FORKSPACE_HOME", self.home.path())
-            .env("FORKSPACE_BACKEND", self.backend)
             .env("NO_COLOR", "1")
             .args(args);
         if !self.systemd {

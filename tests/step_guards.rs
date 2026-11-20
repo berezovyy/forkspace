@@ -54,10 +54,7 @@ impl Env {
 
     fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_forkspace"));
-        command
-            .env("FORKSPACE_HOME", self.home.path())
-            .env("FORKSPACE_BACKEND", "copy")
-            .args(args);
+        command.env("FORKSPACE_HOME", self.home.path()).args(args);
         command
     }
 

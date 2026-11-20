@@ -45,7 +45,6 @@ impl Env {
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", self.home.path())
-            .env("FORKSPACE_BACKEND", "copy")
             .env("NO_COLOR", "1")
             .args(args)
             .output()

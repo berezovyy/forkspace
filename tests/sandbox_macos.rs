@@ -16,7 +16,6 @@ fn seatbelt_refuses_writes_to_the_project_and_allows_the_view() {
     let run = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", &home)
-            .env("FORKSPACE_BACKEND", "copy")
             .args(args)
             .output()
             .unwrap()

@@ -44,7 +44,6 @@ impl Env {
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", self.home.path())
-            .env("FORKSPACE_BACKEND", "copy")
             .args(args)
             .output()
             .unwrap()
@@ -539,7 +538,6 @@ fn pull_replaces_a_lower_layer_directory_with_a_file_on_an_overlay_view() {
     let overlay = |args: &[&str]| {
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", env.home.path())
-            .env_remove("FORKSPACE_BACKEND")
             .args(args)
             .output()
             .unwrap();
