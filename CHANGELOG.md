@@ -10,6 +10,12 @@ that heading into the version and date, and the section becomes the GitHub relea
 Upgrading: the first fork after upgrading may make a new frozen copy of a project that has
 Git worktrees inside it, now that forks leave them out. Workspaces made by 0.2.0 keep working.
 
+Removed: the environment variables that switched or tuned behavior. `FORKSPACE_BACKEND` and
+`FORKSPACE_SANDBOX=off` give way to `new --copy` and `--no-sandbox`; `FORKSPACE_TRACE`,
+`FORKSPACE_NO_LANDLOCK`, `FORKSPACE_NO_SYSTEMD`, `FORKSPACE_NO_BULK`, `FORKSPACE_CPU_WEIGHT`,
+`FORKSPACE_MEMORY_HIGH`, `FORKSPACE_BACKUP_WORKSPACES` and `FORKSPACE_RELEASES_URL` are gone
+without a replacement. `FORKSPACE_HOME` stays.
+
 - Forks leave out Git worktrees nested inside the project, such as Claude Code's
   `.claude/worktrees/*`, and everything under `.claude/worktrees/`. A copied nested worktree
   still pointed at the project's repository, so a commit made in it from inside a workspace
