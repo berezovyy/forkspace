@@ -49,14 +49,12 @@ fn remove_inner(state: &mut State, name: &str, processes: Processes, checked: bo
     super::git_index::stop(name);
     super::tmp::remove(name);
     if !checked || workspace.process.is_some() {
-        crate::util::trace::time("processes", || ensure_unused(&workspace, processes))?;
+        ensure_unused(&workspace, processes)?;
     }
 
     let backend = select_backend(Some(workspace.backend_kind))?;
     remove_after_cleanup(state, name, || {
-        crate::util::trace::time("destroy", || {
-            backend.destroy(&workspace, DestroyMode::Normal)
-        })
+        backend.destroy(&workspace, DestroyMode::Normal)
     })
 }
 

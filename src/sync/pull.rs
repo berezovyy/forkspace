@@ -410,16 +410,14 @@ pub fn build_with(workspace: &Workspace, theirs: bool, install_runs: bool) -> Re
     );
     guard.base_ns = Some(base_ns);
     let ours_delta = backend.transferable_changes(workspace)?;
-    crate::util::trace::time("plan", || {
-        plan_changes(
-            workspace,
-            theirs_delta,
-            ours_delta,
-            Mode::Plan { theirs },
-            install_runs,
-            guard,
-        )
-    })
+    plan_changes(
+        workspace,
+        theirs_delta,
+        ours_delta,
+        Mode::Plan { theirs },
+        install_runs,
+        guard,
+    )
 }
 
 /// Plan a pull from already-collected base-side (`theirs_delta`) and workspace-side
@@ -728,7 +726,6 @@ pub fn start_round(
     plan: &PullPlan,
     previous: Option<&OperationJournal>,
 ) -> Result<PathBuf> {
-    let _apply = crate::util::trace::span("apply");
     align_convergent_times(plan);
     let (earlier, held) = previous.map_or_else(Default::default, |previous| {
         (

@@ -15,7 +15,7 @@ fn main() {
         }
         return;
     }
-    let result = forkspace::util::trace::time("command", || commands::dispatch(Cli::parse()));
+    let result = commands::dispatch(Cli::parse());
     forkspace::backend::overlay::flush_pending();
     if let Err(error) = result {
         exit_with(&error);

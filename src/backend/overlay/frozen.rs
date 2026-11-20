@@ -259,7 +259,7 @@ fn build(
     // once matches them in every fork: none has to hash the tracked files again or write its
     // own `.git/index`. The manifest keeps the project's facts for `.git/index`, which the
     // freshness check compares with the project; `settle` checks this file apart.
-    if crate::util::trace::time("index", || refresh_git_index(&tree)) {
+    if refresh_git_index(&tree) {
         let _ = fs::write(staging.join(INDEX_REFRESHED), b"");
     }
     // Every fork of this copy records the same manifest; write it now, from what the copy

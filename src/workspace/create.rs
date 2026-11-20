@@ -13,7 +13,7 @@ use crate::changes::manifest::{Builder, ManifestStatus};
 use crate::error::{ForkspaceError, Result};
 use crate::process::watch;
 use crate::state::{PendingCreate, State};
-use crate::util::{trace, IoContext};
+use crate::util::IoContext;
 use crate::workspace::{guard, Workspace};
 
 /// Stacks deeper than this are refused; merge or fork from an earlier ancestor instead.
@@ -51,7 +51,6 @@ struct Origin {
 /// and inherits its backend (unless `force_copy` is set).
 pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Workspace> {
     validate_name(name)?;
-    let preflight = trace::span("preflight");
     let Origin {
         path: origin,
         parent,
@@ -64,7 +63,6 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
     let origin = origin
         .canonicalize()
         .io_context(|| format!("failed to canonicalize base path: {}", origin.display()))?;
-    drop(preflight);
 
     record_intent(name, backend.as_ref())?;
     let request = CreateReq {
@@ -116,17 +114,15 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
     // it never waits for the record (STATE-02); its process is recorded so a builder that dies
     // is restarted. Without a builder the manifest is built here instead.
     let in_background = workspace.manifest_status == ManifestStatus::Building;
-    let build_here = trace::time("state", || {
-        State::with_state(|state| {
-            clear_intent(state, name);
-            state.add_workspace(workspace.clone())?;
-            if in_background && crate::changes::manifest::start_background(state, name).is_err() {
-                state.require_workspace_mut(name)?.manifest_builder =
-                    Some(Builder::of(std::process::id()));
-                return Ok(true);
-            }
-            Ok(false)
-        })
+    let build_here = State::with_state(|state| {
+        clear_intent(state, name);
+        state.add_workspace(workspace.clone())?;
+        if in_background && crate::changes::manifest::start_background(state, name).is_err() {
+            state.require_workspace_mut(name)?.manifest_builder =
+                Some(Builder::of(std::process::id()));
+            return Ok(true);
+        }
+        Ok(false)
     })?;
     if build_here {
         if let Err(error) = crate::changes::manifest::build_here(name) {
@@ -178,9 +174,7 @@ fn record_fork_time_files(workspace: &Workspace) {
     if !workspace.backend_kind.stacking_is_snapshot() {
         return;
     }
-    let recorded = trace::time("ancestor", || {
-        crate::sync::ancestor::record(&workspace.name, &workspace.view_path)
-    });
+    let recorded = crate::sync::ancestor::record(&workspace.name, &workspace.view_path);
     if let Err(error) = recorded {
         eprintln!(
             "warning: could not keep fork-time copies for line-level merges ({error}); files both sides change will be whole-file conflicts"

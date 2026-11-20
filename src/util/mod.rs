@@ -5,7 +5,6 @@ pub mod fs;
 mod glob;
 mod queue;
 pub mod style;
-pub mod trace;
 pub mod walk;
 
 pub use fs::{ensure_parent_dir, ensure_private_dir, write_atomic, IoContext, WalkDirExt};

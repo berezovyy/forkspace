@@ -110,7 +110,7 @@ src/
 ├── exclude.rs             what forks leave out: nested worktrees, .forkspaceexclude
 ├── git.rs                 git subprocess helpers
 ├── paths.rs               every location under FORKSPACE_HOME
-├── util/                  fs helpers, parallel and bulk directory walks, glob, trace timings
+├── util/                  fs helpers, parallel and bulk directory walks, glob
 └── error.rs               ForkspaceError and exit codes
 ```
 

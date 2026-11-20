@@ -180,7 +180,7 @@ pub trait WorkspaceBackend {
     }
     /// Changes made in the base since the workspace was forked.
     fn base_changes(&self, ws: &Workspace) -> Result<Vec<FileChange>> {
-        crate::util::trace::time("scan-base", || crate::sync::pull::base_changes(ws))
+        crate::sync::pull::base_changes(ws)
     }
     /// Environment variables exported to processes run inside the workspace.
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)>;

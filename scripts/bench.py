@@ -4,8 +4,7 @@
 Every run starts from a fresh FORKSPACE_HOME and a private copy of the corpus, then times:
 `new`, the first `git status` in the new workspace, a clean `diff --stat`, `diff` after one
 edit, `merge --dry-run`, a one-file `merge`,
-`ls` with one and five workspaces, and `drop`. Each command runs with FORKSPACE_TRACE=1 so
-the per-phase timings (preflight, materialize, manifest, scan, plan, apply, ...) are kept too.
+`ls` with one and five workspaces, and `drop`.
 
 A freeze probe measures whether the project stays writable while `new` forks it, and the
 disk section records what a fork costs in free space. Standard library only, so the same
@@ -33,7 +32,6 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-TRACE_LINE = re.compile(r"^forkspace-trace: (\S+) ([0-9.]+)ms$")
 EDIT_FILE = "src/bench-edit.txt"
 SCHEMA = 1
 
@@ -313,13 +311,12 @@ def filesystem_type(path):
 def bench_backend(binary, backend, corpus, work, args):
     env = dict(os.environ)
     env.pop("FORKSPACE_BACKEND", None)
-    env["FORKSPACE_TRACE"] = "1"
     if backend != "auto":
         env["FORKSPACE_BACKEND"] = backend
     project = work / f"project-{backend}"
     copy_tree(corpus, project)
 
-    result = {"requested": backend, "kind": None, "samples": {}, "phases": {}, "errors": []}
+    result = {"requested": backend, "kind": None, "samples": {}, "errors": []}
     for run in range(args.warmup + args.runs):
         measured = run >= args.warmup
         home = work / f"home-{backend}-{run}"
@@ -342,10 +339,6 @@ def bench_backend(binary, backend, corpus, work, args):
     remove_tree(project)
 
     result["summary"] = {name: stats(values) for name, values in result["samples"].items()}
-    result["phases"] = {
-        command: {phase: stats(values) for phase, values in phases.items()}
-        for command, phases in result["phases"].items()
-    }
     return result
 
 
@@ -355,12 +348,9 @@ class BenchError(Exception):
 
 def one_run(binary, env, project, home, args, result):
     def timed(label, *argv):
-        elapsed, phases, stdout = run(binary, env, argv)
+        elapsed, stdout = run(binary, env, argv)
         if result is not None:
             result["samples"].setdefault(label, []).append(elapsed)
-            per_command = result["phases"].setdefault(label, {})
-            for phase, ms in phases.items():
-                per_command.setdefault(phase, []).append(ms)
         return stdout
 
     edit_target = project / EDIT_FILE
@@ -411,12 +401,7 @@ def run(binary, env, argv):
     elapsed = (time.perf_counter() - started) * 1000
     if done.returncode != 0:
         raise BenchError(f"`forkspace {' '.join(argv)}` exited {done.returncode}: {done.stderr.strip()}")
-    phases = {}
-    for line in done.stderr.splitlines():
-        match = TRACE_LINE.match(line)
-        if match:
-            phases[match.group(1)] = phases.get(match.group(1), 0.0) + float(match.group(2))
-    return elapsed, phases, done.stdout
+    return elapsed, done.stdout
 
 
 def created_view(stdout):

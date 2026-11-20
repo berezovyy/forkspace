@@ -1,75 +1,9 @@
-//! `FORKSPACE_TRACE` phase timings and the benchmark script that reads them.
-
-mod common;
+//! The benchmark script, in its short mode.
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Command;
 
 const BIN: &str = env!("CARGO_BIN_EXE_forkspace");
-
-fn forkspace(home: &Path, trace: bool, args: &[&str]) -> Output {
-    let mut command = Command::new(BIN);
-    command
-        .args(args)
-        .env("FORKSPACE_HOME", home)
-        .env("FORKSPACE_BACKEND", "copy")
-        .env_remove("FORKSPACE_TRACE");
-    if trace {
-        command.env("FORKSPACE_TRACE", "1");
-    }
-    let output = command.output().expect("run forkspace");
-    assert!(
-        output.status.success(),
-        "forkspace {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-}
-
-fn trace_phases(output: &Output) -> Vec<String> {
-    String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .filter_map(|line| line.strip_prefix("forkspace-trace: "))
-        .map(|rest| rest.split(' ').next().unwrap_or_default().to_string())
-        .collect()
-}
-
-#[test]
-fn trace_lines_go_to_stderr_only() {
-    let home = common::TestHome::new();
-    let project = tempfile::tempdir().unwrap();
-    std::fs::write(project.path().join("file.txt"), "one\n").unwrap();
-    let from = project.path().to_str().unwrap();
-
-    let created = forkspace(home.path(), true, &["new", "ws", "--from", from]);
-    let phases = trace_phases(&created);
-    for phase in ["preflight", "materialize", "manifest", "state", "command"] {
-        assert!(
-            phases.iter().any(|p| p == phase),
-            "missing {phase} in {phases:?}"
-        );
-    }
-
-    let view = home.path().join("workspaces/ws");
-    std::fs::write(view.join("file.txt"), "two\n").unwrap();
-    let commands: [&[&str]; 4] = [
-        &["diff", "ws"],
-        &["merge", "ws", "--dry-run"],
-        &["ls"],
-        &["drop", "ws"],
-    ];
-    for args in commands {
-        let output = forkspace(home.path(), true, args);
-        assert!(
-            !String::from_utf8_lossy(&output.stdout).contains("forkspace-trace"),
-            "trace reached stdout for {args:?}"
-        );
-        assert!(trace_phases(&output).contains(&"command".to_string()));
-    }
-
-    let quiet = forkspace(home.path(), false, &["new", "ws2", "--from", from]);
-    assert!(trace_phases(&quiet).is_empty());
-}
 
 #[test]
 fn bench_script_runs_in_short_mode() {
@@ -103,5 +37,4 @@ fn bench_script_runs_in_short_mode() {
             "missing samples for {label}"
         );
     }
-    assert!(backend["phases"]["new"]["materialize"]["p50"].is_number());
 }

@@ -32,7 +32,7 @@ use crate::changes::manifest::{self, ManifestStatus};
 use crate::changes::FileChange;
 use crate::error::{ForkspaceError, Result};
 use crate::paths;
-use crate::util::{now_unix_ns, trace, IoContext};
+use crate::util::{now_unix_ns, IoContext};
 use crate::workspace::Workspace;
 
 /// Capabilities shared by the per-file primitives (reflink and plain copy).
@@ -232,16 +232,14 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
 
         let started = Instant::now();
         let started_ns = now_unix_ns();
-        let (stats, entries) = trace::time("materialize", || {
-            self.primitive.materialize_recorded(&req.base, &destination)
-        })
-        .inspect_err(|_| {
-            let _ = fs::remove_dir_all(&destination);
-        })?;
+        let (stats, entries) = self
+            .primitive
+            .materialize_recorded(&req.base, &destination)
+            .inspect_err(|_| {
+                let _ = fs::remove_dir_all(&destination);
+            })?;
         let fork_time_ns = self.primitive.fork_time_ns(started_ns, &stats);
-        let manifest = trace::time("manifest", || {
-            self.start_manifest(&req.name, &destination, fork_time_ns, entries)
-        });
+        let manifest = self.start_manifest(&req.name, &destination, fork_time_ns, entries);
 
         let mut summary = self
             .primitive
@@ -298,26 +296,22 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
         include_ignored: bool,
         need_line_counts: bool,
     ) -> Result<Vec<FileChange>> {
-        trace::time("scan", || {
-            crate::changes::collect_clone_changes(ws, include_ignored, need_line_counts)
-        })
+        crate::changes::collect_clone_changes(ws, include_ignored, need_line_counts)
     }
 
     /// The same scan as `diff` (pruning ignored directories), counted; an unreadable
     /// manifest goes through [`manifest::change_count`]'s recovery.
     fn change_count(&self, ws: &Workspace, include_ignored: bool) -> Result<ChangeCount> {
-        trace::time("scan", || match ws.manifest_status {
+        match ws.manifest_status {
             ManifestStatus::Ready if manifest::manifest_path(&ws.name).is_file() => {
                 crate::changes::count_clone_changes(ws, include_ignored)
             }
             _ => manifest::change_count(ws, include_ignored),
-        })
+        }
     }
 
     fn transferable_changes(&self, ws: &Workspace) -> Result<Vec<FileChange>> {
-        trace::time("scan", || {
-            crate::changes::collect_transferable_clone_changes(ws)
-        })
+        crate::changes::collect_transferable_clone_changes(ws)
     }
 
     fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {

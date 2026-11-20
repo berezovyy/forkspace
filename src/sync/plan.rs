@@ -21,7 +21,7 @@ use crate::sync::three_way::{has_conflict_markers, reconcile, Favor, Policy};
 use crate::sync::{display_paths, is_transferable, order_respellings, render_plan};
 use crate::util::fs::mtime_ns;
 use crate::util::walk::Entry;
-use crate::util::{trace, IoContext};
+use crate::util::IoContext;
 use crate::workspace::Workspace;
 
 /// The changes a merge would transfer from a workspace into its base.
@@ -100,7 +100,7 @@ pub fn build_with(workspace: &Workspace, options: PlanOptions) -> Result<MergePl
     // keeps the full list, so the plan can count what it leaves out.
     let include_ignored = !workspace.backend_kind.stacking_is_snapshot();
     let all = backend.changes(workspace, include_ignored, false)?;
-    trace::time("plan", || plan_changes(workspace, source, all, options))
+    plan_changes(workspace, source, all, options)
 }
 
 /// Plan a merge from an already-collected change list, reading entries from `source`. With

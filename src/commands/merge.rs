@@ -354,7 +354,7 @@ fn run_post_merge_steps(
 ) -> Result {
     if !args.no_install && dependencies_changed {
         if let Some(manager) = install::detect_package_manager(workspace) {
-            crate::util::trace::time("install", || install::run_install(&workspace.base, manager))?;
+            install::run_install(&workspace.base, manager)?;
             println!("ran package install");
         }
     }

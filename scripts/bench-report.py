@@ -19,7 +19,6 @@ REPO = Path(__file__).resolve().parent.parent
 DOC = REPO / "docs" / "benchmarks.md"
 BEGIN = "<!-- bench:begin -->"
 END = "<!-- bench:end -->"
-PHASE_COMMANDS = ("new", "merge (one file)", "ls (5 workspaces)")
 
 
 def main():
@@ -85,7 +84,6 @@ def render_report(report):
             cells = [cell(backend["summary"].get(label)) for backend in backends]
             lines.append(f"| `{label}` | " + " | ".join(cells) + " |")
         lines.append("")
-        lines += render_phases(backends)
         lines += render_disk_and_freeze(backends)
     for backend in report["backends"]:
         for error in backend.get("errors", []):
@@ -93,24 +91,6 @@ def render_report(report):
     if any(backend.get("errors") for backend in report["backends"]):
         lines.append("")
     return "\n".join(lines) + "\n"
-
-
-def render_phases(backends):
-    lines = []
-    for backend in backends:
-        parts = []
-        for command in PHASE_COMMANDS:
-            phases = backend.get("phases", {}).get(command)
-            if not phases:
-                continue
-            inner = ", ".join(
-                f"{phase} {ms(summary['p50'])}" for phase, summary in phases.items() if phase != "command"
-            )
-            if inner:
-                parts.append(f"`{command}`: {inner}")
-        if parts:
-            lines.append(f"- Phases on `{backend['kind']}` (p50): " + "; ".join(parts) + ".")
-    return lines + ([""] if lines else [])
 
 
 def render_disk_and_freeze(backends):

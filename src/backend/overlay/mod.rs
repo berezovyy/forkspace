@@ -27,7 +27,7 @@ use crate::changes::manifest::ManifestStatus;
 use crate::changes::{self, FileChange};
 use crate::error::Result;
 use crate::paths;
-use crate::util::{trace, IoContext};
+use crate::util::IoContext;
 use crate::workspace::Workspace;
 pub use frozen::flush_pending;
 use mount::{mount_overlay, unmount_overlay, ViewHealth};
@@ -263,7 +263,7 @@ impl WorkspaceBackend for OverlayBackend {
         let frozen = if req.live {
             None
         } else {
-            Some(trace::time("freeze", || freeze_base(req))?)
+            Some(freeze_base(req)?)
         };
         let fork_time_ns = crate::util::fs::ctime_clock_ns();
         let mut layers = OverlayState::at(&root);
@@ -292,23 +292,19 @@ impl WorkspaceBackend for OverlayBackend {
             }
         }
 
-        let mounted = trace::time("materialize", || {
-            mount_overlay(
-                &lower,
-                &layers.upper,
-                &layers.work,
-                &layers.merged,
-                layers.no_fsync,
-            )
-        });
+        let mounted = mount_overlay(
+            &lower,
+            &layers.upper,
+            &layers.work,
+            &layers.merged,
+            layers.no_fsync,
+        );
         if let Err(error) = mounted {
             mount::forget_probe();
             cleanup(&layers);
             return Err(error);
         }
-        let recorded = trace::time("manifest", || {
-            record_manifest(&req.name, frozen.as_ref(), &lower, fork_time_ns)
-        });
+        let recorded = record_manifest(&req.name, frozen.as_ref(), &lower, fork_time_ns);
         if let Err(error) = recorded {
             let _ = unmount_overlay(&layers.merged);
             let _ = crate::changes::manifest::remove(&req.name);
@@ -366,7 +362,6 @@ impl WorkspaceBackend for OverlayBackend {
         include_ignored: bool,
         need_line_counts: bool,
     ) -> Result<Vec<FileChange>> {
-        let _scan = trace::span("scan");
         let changes = if need_line_counts {
             changes::collect_changes(ws)?
         } else {
