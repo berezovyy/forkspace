@@ -121,13 +121,8 @@ fn ten_parallel_public_forks_commit_without_state_or_tree_corruption() {
             barrier.wait();
             Command::new(env!("CARGO_BIN_EXE_forkspace"))
                 .env("FORKSPACE_HOME", home)
-                .args([
-                    "new",
-                    &format!("public-{index}"),
-                    "--from",
-                    base.to_str().unwrap(),
-                    "--copy",
-                ])
+                .current_dir(&base)
+                .args(["new", &format!("public-{index}"), "--copy"])
                 .output()
                 .unwrap()
         }));
@@ -163,13 +158,8 @@ fn kill_during_copy_fork_reconciles_the_intent_and_partial_tree() {
     }
     let mut child = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
-        .args([
-            "new",
-            "interrupted",
-            "--from",
-            base.path().to_str().unwrap(),
-            "--copy",
-        ])
+        .current_dir(base.path())
+        .args(["new", "interrupted", "--copy"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -207,18 +197,11 @@ fn kill_during_drop_is_inferred_from_trash_and_is_idempotent() {
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join(format!("{index:05}")), b"x").unwrap();
     }
-    assert!(forkspace(
-        home.path(),
-        &[
-            "new",
-            "drop-kill",
-            "--from",
-            base.path().to_str().unwrap(),
-            "--copy"
-        ]
-    )
-    .status
-    .success());
+    assert!(
+        common::new_in(home.path(), base.path(), &["drop-kill", "--copy"])
+            .status
+            .success()
+    );
     let view = home.path().join("workspaces/drop-kill");
     let mut child = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
@@ -245,18 +228,11 @@ fn kill_during_merge_blocks_mutations_until_explicit_resume_then_converges() {
     for index in 0..600 {
         fs::write(base.path().join(format!("file-{index:04}")), b"old\n").unwrap();
     }
-    assert!(forkspace(
-        home.path(),
-        &[
-            "new",
-            "merge-kill",
-            "--from",
-            base.path().to_str().unwrap(),
-            "--copy"
-        ]
-    )
-    .status
-    .success());
+    assert!(
+        common::new_in(home.path(), base.path(), &["merge-kill", "--copy"])
+            .status
+            .success()
+    );
     let view = State::load()
         .unwrap()
         .require_workspace("merge-kill")
@@ -352,18 +328,11 @@ fn unicode_non_utf8_case_and_long_paths_round_trip_through_copy_diff_and_merge()
         })
         .collect();
     assert!(paths.len() >= 3, "{paths:?}");
-    assert!(forkspace(
-        home.path(),
-        &[
-            "new",
-            "names",
-            "--from",
-            base.path().to_str().unwrap(),
-            "--copy"
-        ]
-    )
-    .status
-    .success());
+    assert!(
+        common::new_in(home.path(), base.path(), &["names", "--copy"])
+            .status
+            .success()
+    );
     let workspace = State::load()
         .unwrap()
         .require_workspace("names")
@@ -401,12 +370,9 @@ fn moved_base_is_flagged_but_the_independent_workspace_still_enters_and_diffs() 
     let base = root.path().join("base");
     fs::create_dir(&base).unwrap();
     fs::write(base.join("file"), b"old\n").unwrap();
-    assert!(forkspace(
-        home.path(),
-        &["new", "moved", "--from", base.to_str().unwrap(), "--copy"]
-    )
-    .status
-    .success());
+    assert!(common::new_in(home.path(), &base, &["moved", "--copy"])
+        .status
+        .success());
     let moved = root.path().join("renamed");
     fs::rename(&base, &moved).unwrap();
 
@@ -439,18 +405,11 @@ fn missing_or_ejected_workspace_volume_is_flagged_without_erasing_state() {
     let home = common::setup_test_env();
     let base = tempfile::tempdir().unwrap();
     fs::write(base.path().join("file"), b"old\n").unwrap();
-    assert!(forkspace(
-        home.path(),
-        &[
-            "new",
-            "ejected",
-            "--from",
-            base.path().to_str().unwrap(),
-            "--copy"
-        ]
-    )
-    .status
-    .success());
+    assert!(
+        common::new_in(home.path(), base.path(), &["ejected", "--copy"])
+            .status
+            .success()
+    );
     let view = State::load().unwrap().workspaces["ejected"]
         .view_path
         .clone();
@@ -482,13 +441,8 @@ fn other_platform_state_is_never_repaired_away() {
     fs::write(base.path().join("file"), b"old\n").unwrap();
     let forked = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
-        .args([
-            "new",
-            "foreign",
-            "--from",
-            base.path().to_str().unwrap(),
-            "--copy",
-        ])
+        .current_dir(base.path())
+        .args(["new", "foreign", "--copy"])
         .output()
         .unwrap();
     assert!(forked.status.success());
@@ -541,16 +495,7 @@ fn enospc_copy_fixture_cleans_partial_materialization_when_provided() {
     let home = root.join(format!("forkspace-enospc-{}", std::process::id()));
     let base = tempfile::tempdir().unwrap();
     fs::write(base.path().join("large"), vec![7_u8; 32 * 1024 * 1024]).unwrap();
-    let failed = forkspace(
-        &home,
-        &[
-            "new",
-            "no-space",
-            "--from",
-            base.path().to_str().unwrap(),
-            "--copy",
-        ],
-    );
+    let failed = common::new_in(&home, base.path(), &["no-space", "--copy"]);
     assert!(
         !failed.status.success(),
         "fixture volume was not constrained"
@@ -569,16 +514,7 @@ fn manifest_install_failure_keeps_the_view_and_reports_tracking_degraded() {
     fs::write(home.path().join("manifests"), b"not a directory").unwrap();
     let base = tempfile::tempdir().unwrap();
     fs::write(base.path().join("file"), b"payload\n").unwrap();
-    let forked = forkspace(
-        home.path(),
-        &[
-            "new",
-            "degraded-manifest",
-            "--from",
-            base.path().to_str().unwrap(),
-            "--copy",
-        ],
-    );
+    let forked = common::new_in(home.path(), base.path(), &["degraded-manifest", "--copy"]);
     assert!(
         forked.status.success(),
         "{}",
@@ -627,15 +563,10 @@ fn sibling_cache_race_parallel_merges_and_diff_during_writes_remain_consistent()
     .unwrap();
     for index in 0..4 {
         fs::write(base.path().join(format!("src/file-{index}")), b"old\n").unwrap();
-        assert!(forkspace(
+        assert!(common::new_in(
             home.path(),
-            &[
-                "new",
-                &format!("sibling-{index}"),
-                "--from",
-                base.path().to_str().unwrap(),
-                "--copy",
-            ]
+            base.path(),
+            &[&format!("sibling-{index}"), "--copy",]
         )
         .status
         .success());

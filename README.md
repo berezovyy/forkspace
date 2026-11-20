@@ -158,14 +158,9 @@ forkspace enter --ephemeral -- make test
 
 ### Stacked changes
 
-Start a workspace from another workspace to build in steps, and review everything from the
-original project to the top of the stack at once.
-
-```bash
-forkspace new step-1
-forkspace new step-2 --from step-1
-forkspace diff step-2 --cumulative
-```
+Run `forkspace new` inside a workspace's folder to start a workspace from that workspace, and
+build in steps; `forkspace diff --cumulative` then reviews everything from the original
+project to the top of the stack at once.
 
 ## Commands
 

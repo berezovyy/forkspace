@@ -44,6 +44,7 @@ impl Env {
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", self.home.path())
+            .current_dir(self.project())
             .args(args)
             .output()
             .unwrap()
@@ -60,8 +61,7 @@ impl Env {
     }
 
     fn fork(&self, name: &str) {
-        let project = self.project();
-        self.ok(&["new", name, "--from", project.to_str().unwrap(), "--copy"]);
+        self.ok(&["new", name, "--copy"]);
     }
 
     /// The journals still open in the store.
@@ -538,12 +538,13 @@ fn pull_replaces_a_lower_layer_directory_with_a_file_on_an_overlay_view() {
     let overlay = |args: &[&str]| {
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", env.home.path())
+            .current_dir(env.project())
             .args(args)
             .output()
             .unwrap();
         assert!(output.status.success(), "{args:?}: {}", stderr(&output));
     };
-    overlay(&["new", "w", "--from", env.project().to_str().unwrap()]);
+    overlay(&["new", "w"]);
     let view = env.view("w");
     after_fork();
     fs::remove_dir_all(env.project().join("dir")).unwrap();

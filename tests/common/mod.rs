@@ -85,6 +85,17 @@ fn unescape_mountinfo(field: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// `forkspace new <args>` run from `project`, the folder it copies.
+pub fn new_in(home: &Path, project: impl AsRef<Path>, args: &[&str]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_forkspace"))
+        .env("FORKSPACE_HOME", home)
+        .current_dir(project)
+        .arg("new")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
 pub fn setup_test_env() -> TestHome {
     let dir = TestHome::new();
     // SAFETY: tests using setup_test_env() are serialized with #[serial],

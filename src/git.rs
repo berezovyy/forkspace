@@ -41,6 +41,18 @@ pub fn run_git(directory: &Path, args: &[&str]) -> Result {
 }
 
 /// Whether `directory` is inside a Git work tree or repository.
+/// The top folder of the Git working tree `directory` is in, if it is in one.
+/// A folder Git ignores (a build directory, say) is not part of that tree.
+pub fn toplevel(directory: &Path) -> Option<std::path::PathBuf> {
+    let top = capture_git(directory, &["rev-parse", "--show-toplevel"])
+        .ok()
+        .map(|top| std::path::PathBuf::from(top.trim()))
+        .filter(|top| !top.as_os_str().is_empty())?;
+    let ignored = capture_output(directory, &["check-ignore", "-q", "."])
+        .is_ok_and(|output| output.status.success());
+    (!ignored).then_some(top)
+}
+
 pub fn is_repo(directory: &Path) -> bool {
     plain_git_dir(directory).is_some() || succeeds(directory, &["rev-parse", "--git-dir"])
 }

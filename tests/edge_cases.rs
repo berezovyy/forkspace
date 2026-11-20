@@ -26,7 +26,7 @@ fn a_path_too_long_for_forkspace_home_fails_cleanly_and_names_the_remedy() {
     let home = env.outside().join("h".repeat(200)).join("h".repeat(200));
     fs::create_dir_all(&home).unwrap();
     let output = env
-        .command(&["new", "deep", "--from", project.to_str().unwrap(), "--copy"])
+        .command(&["new", "deep", "--copy"])
         .env("FORKSPACE_HOME", &home)
         .output()
         .unwrap();
@@ -52,7 +52,7 @@ fn a_path_too_long_for_forkspace_home_fails_cleanly_and_names_the_remedy() {
     // Excluding the path makes the fork possible.
     write(&project.join(".forkspaceexclude"), "/d*/\n");
     let output = env
-        .command(&["new", "deep", "--from", project.to_str().unwrap(), "--copy"])
+        .command(&["new", "deep", "--copy"])
         .env("FORKSPACE_HOME", &home)
         .output()
         .unwrap();
@@ -72,13 +72,7 @@ fn a_fork_interrupted_by_a_signal_leaves_nothing_behind() {
     }
     for signal in [libc::SIGINT, libc::SIGTERM] {
         let mut child = env
-            .command(&[
-                "new",
-                "interrupted",
-                "--from",
-                project.to_str().unwrap(),
-                "--copy",
-            ])
+            .command(&["new", "interrupted", "--copy"])
             .spawn()
             .unwrap();
         std::thread::sleep(Duration::from_millis(15));
@@ -119,9 +113,8 @@ fn set_group_id_directories_keep_the_bit_and_are_no_change() {
         eprintln!("FORKSPACE_TEST_SKIP {{\"capability\":\"setgid\",\"reason\":\"filesystem drops S_ISGID\"}}");
         return;
     }
-    let from = project.to_str().unwrap();
-    env.ok(&["new", "copied", "--from", from, "--copy"]);
-    env.ok(&["new", "default", "--from", from]);
+    env.ok(&["new", "copied", "--copy"]);
+    env.ok(&["new", "default"]);
     for name in ["copied", "default"] {
         let view = env.view(name);
         let copied = fs::metadata(view.join("shared"))
@@ -161,11 +154,10 @@ fn a_fork_succeeds_while_the_project_deletes_a_directory() {
             })
         };
         let name = format!("racing-{round}");
-        let from = env.project();
         let args: Vec<&str> = if round % 2 == 0 {
-            vec!["new", &name, "--from", from.to_str().unwrap(), "--copy"]
+            vec!["new", &name, "--copy"]
         } else {
-            vec!["new", &name, "--from", from.to_str().unwrap()]
+            vec!["new", &name]
         };
         let output = env.run(&args);
         deleter.join().unwrap();

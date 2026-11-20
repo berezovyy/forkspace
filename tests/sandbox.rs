@@ -23,8 +23,7 @@ impl Env {
         }
         fs::write(env.path("project/app.txt"), "original\n").unwrap();
         for name in ["ws", "other"] {
-            let project = env.path("project");
-            let output = env.run(&["new", name, "--from", project.to_str().unwrap(), "--copy"]);
+            let output = env.run(&["new", name, "--copy"]);
             assert!(
                 output.status.success(),
                 "{}",
@@ -46,6 +45,7 @@ impl Env {
         let mut command = Command::new(env!("CARGO_BIN_EXE_forkspace"));
         command
             .env("FORKSPACE_HOME", self.path("home"))
+            .current_dir(self.path("project"))
             .env_remove("XDG_RUNTIME_DIR")
             .env("HOME", self.path("fake-home"))
             .args(args);

@@ -47,7 +47,8 @@ mod macos {
                 "FORKSPACE_HOME",
                 std::env::var_os("FORKSPACE_HOME").unwrap(),
             )
-            .args(["new", name, "--from", base.to_str().unwrap()])
+            .current_dir(&base)
+            .args(["new", name])
             .output()
             .unwrap();
         assert!(
@@ -638,7 +639,8 @@ mod macos {
                             "FORKSPACE_HOME",
                             std::env::var_os("FORKSPACE_HOME").unwrap(),
                         )
-                        .args(["new", "winner", "--from", base_path.to_str().unwrap()])
+                        .current_dir(&base_path)
+                        .args(["new", "winner"])
                         .output()
                         .unwrap()
                 })
@@ -1538,12 +1540,8 @@ S(('127.0.0.1',int(os.environ['PORT'])),H).serve_forever()
         }
         let mut child = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
-            .args([
-                "new",
-                "interrupted",
-                "--from",
-                base.path().to_str().unwrap(),
-            ])
+            .current_dir(base.path())
+            .args(["new", "interrupted"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -1592,12 +1590,8 @@ S(('127.0.0.1',int(os.environ['PORT'])),H).serve_forever()
         let before = hash_tree(base.path());
         let mut child = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
-            .args([
-                "new",
-                "sleep-resume",
-                "--from",
-                base.path().to_str().unwrap(),
-            ])
+            .current_dir(base.path())
+            .args(["new", "sleep-resume"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -1696,13 +1690,8 @@ S(('127.0.0.1',int(os.environ['PORT'])),H).serve_forever()
 
             let copied = Command::new(env!("CARGO_BIN_EXE_forkspace"))
                 .env("FORKSPACE_HOME", &home)
-                .args([
-                    "new",
-                    "non-apfs-copy",
-                    "--from",
-                    Path::new(&base).to_str().unwrap(),
-                    "--copy",
-                ])
+                .current_dir(&Path::new(&base))
+                .args(["new", "non-apfs-copy", "--copy"])
                 .output()
                 .unwrap();
             assert!(

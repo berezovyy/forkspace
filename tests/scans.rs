@@ -29,7 +29,7 @@ impl Env {
         fs::write(project.join("dist/app.js"), "built\n").unwrap();
         fs::write(project.join("node_modules/pkg/lib/index.js"), "pkg\n").unwrap();
         fs::write(project.join("node_modules/pkg/package.json"), "{}\n").unwrap();
-        let output = env.run(&["new", "ws", "--from", project.to_str().unwrap(), "--copy"]);
+        let output = env.run(&["new", "ws", "--copy"]);
         assert!(output.status.success());
         env
     }
@@ -45,6 +45,7 @@ impl Env {
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", self.home.path())
+            .current_dir(self.project())
             .env("NO_COLOR", "1")
             .args(args)
             .output()
@@ -160,7 +161,7 @@ fn deletions_next_to_a_skipped_directory_are_reported() {
     fs::write(project.join("node_modules-extra/keep.js"), "keep\n").unwrap();
     fs::write(project.join("node_modules.js"), "shim\n").unwrap();
     assert!(env.run(&["drop", "ws"]).status.success());
-    let forked = env.run(&["new", "ws", "--from", project.to_str().unwrap(), "--copy"]);
+    let forked = env.run(&["new", "ws", "--copy"]);
     assert!(forked.status.success());
 
     let view = env.view();

@@ -87,9 +87,8 @@ fn a_running_refresh_neither_blocks_drop_nor_counts_as_a_process() {
 fn overlay_workspaces_inherit_an_index_refreshed_in_the_frozen_copy() {
     let env = Env::new();
     repository(&env);
-    let from = env.project();
     for name in ["first", "second"] {
-        env.ok(&["new", name, "--from", from.to_str().unwrap()]);
+        env.ok(&["new", name]);
         let forkspace::backend::BackendState::Overlay(layers) = env.workspace(name).backend_state
         else {
             eprintln!("FORKSPACE_TEST_SKIP {{\"capability\":\"fuse-overlayfs\",\"reason\":\"no overlay backend\"}}");

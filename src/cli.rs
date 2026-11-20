@@ -1,7 +1,5 @@
 //! Command-line grammar. Help text and flag names here are part of the CLI contract.
 
-use std::path::PathBuf;
-
 use clap::{Args, Parser, Subcommand};
 use clap_complete::Shell;
 
@@ -20,7 +18,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Create a new workspace from a directory or another workspace
+    /// Copy the project you are in into a new workspace
     New(NewArgs),
 
     /// Remove a workspace and unmount its overlay
@@ -89,19 +87,8 @@ pub enum Commands {
 
 #[derive(Args)]
 pub struct NewArgs {
-    #[arg(help = "Name for the new workspace (defaults to the source directory's name)")]
+    #[arg(help = "Name for the new workspace (defaults to <project>-1, <project>-2, ...)")]
     pub name: Option<String>,
-
-    #[arg(
-        long,
-        value_name = "SOURCE",
-        default_value = ".",
-        help = "Directory or workspace to start from"
-    )]
-    pub from: PathBuf,
-
-    #[arg(long, help = "Session identifier for grouping related workspaces")]
-    pub session: Option<String>,
 
     #[arg(
         long,
@@ -114,9 +101,6 @@ pub struct NewArgs {
         help = "Do not flush the workspace's writes on fsync (Linux overlay only; faster installs and builds, recent writes lost on power loss)"
     )]
     pub no_fsync: bool,
-
-    #[arg(long, help = "Create and record a Git branch in the workspace")]
-    pub branch: Option<String>,
 
     #[arg(long, help = "Consent to a full directory copy backend")]
     pub copy: bool,

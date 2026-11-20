@@ -42,7 +42,7 @@ pub fn pick(name: Option<String>) -> Result<String> {
 
 /// The workspace whose folder holds `directory` (the deepest one, for a workspace inside
 /// another's folder).
-fn containing(state: &State, directory: &Path) -> Option<String> {
+pub fn containing(state: &State, directory: &Path) -> Option<String> {
     state
         .workspaces
         .values()

@@ -42,6 +42,7 @@ impl Env {
         let mut command = Command::new(env!("CARGO_BIN_EXE_forkspace"));
         command
             .env("FORKSPACE_HOME", self.home.path())
+            .current_dir(self.project())
             .env("NO_COLOR", "1")
             .args(args);
         if let Some(path) = &self.path {
@@ -61,8 +62,7 @@ impl Env {
     }
 
     fn fork(&self, name: &str) {
-        let project = self.project();
-        self.ok(&["new", name, "--from", project.to_str().unwrap(), "--copy"]);
+        self.ok(&["new", name, "--copy"]);
     }
 
     fn read(&self, path: &Path) -> String {
@@ -95,8 +95,7 @@ fn different_lines_reach_the_project_from_both_workspaces(backend: &'static str)
     let env = Env::new(backend);
     fs::write(env.project().join("app.txt"), numbered(20)).unwrap();
     for name in ["ws1", "ws2", "ws3"] {
-        let project = env.project();
-        let mut args = vec!["new", name, "--from", project.to_str().unwrap()];
+        let mut args = vec!["new", name];
         if backend == "copy" {
             args.push("--copy");
         }

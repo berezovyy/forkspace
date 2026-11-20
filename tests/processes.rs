@@ -26,7 +26,7 @@ impl Env {
         let project = env.root.path().join("project");
         fs::create_dir(&project).unwrap();
         fs::write(project.join("a.txt"), "a\n").unwrap();
-        let mut args = vec!["new", "ws", "--from", project.to_str().unwrap()];
+        let mut args = vec!["new", "ws"];
         if backend == "copy" {
             args.push("--copy");
         }
@@ -38,6 +38,7 @@ impl Env {
         let mut command = Command::new(env!("CARGO_BIN_EXE_forkspace"));
         command
             .env("FORKSPACE_HOME", self.home.path())
+            .current_dir(self.root.path().join("project"))
             .env("NO_COLOR", "1")
             .args(args);
         if !self.systemd {
@@ -160,11 +161,7 @@ fn processes_that_leave_the_workspace_directory_are_still_killed_through_the_sli
 #[test]
 fn drop_all_refuses_and_removes_nothing_while_one_workspace_is_in_use() {
     let env = Env::new("copy", false);
-    let project = env.root.path().join("project");
-    assert!(env
-        .run(&["new", "idle", "--from", project.to_str().unwrap(), "--copy"])
-        .status
-        .success());
+    assert!(env.run(&["new", "idle", "--copy"]).status.success());
     env.start("nohup sleep 3106 >/dev/null 2>&1 & exit 0");
 
     let refused = env.run(&["drop", "--all"]);
@@ -246,17 +243,8 @@ fn workspace_processes_run_under_forkspace_slice_with_limits() {
     }
     let env = Env::new("copy", true);
     // A distinct workspace name, so the slice can be told apart from parallel tests'.
-    let project = env.root.path().join("project");
     let created = env.run(&[
-        "new",
-        "limited",
-        "--from",
-        project.to_str().unwrap(),
-        "--copy",
-        "--memory",
-        "1G",
-        "--cpu",
-        "150%",
+        "new", "limited", "--copy", "--memory", "1G", "--cpu", "150%",
     ]);
     assert!(
         created.status.success(),

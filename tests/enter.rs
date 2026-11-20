@@ -347,14 +347,12 @@ fn enter_exits_with_the_command_status() {
     let forkspace = |args: &[&str]| {
         Command::new(forkspace_bin())
             .env("FORKSPACE_HOME", &home)
+            .current_dir(base.path())
             .args(args)
             .output()
             .unwrap()
     };
-    let base = base.path().to_str().unwrap();
-    assert!(forkspace(&["new", "status-ws", "--from", base, "--copy"])
-        .status
-        .success());
+    assert!(forkspace(&["new", "status-ws", "--copy"]).status.success());
 
     let failed = forkspace(&["enter", "status-ws", "--", "sh", "-c", "exit 3"]);
     assert_eq!(failed.status.code(), Some(3), "{failed:?}");
@@ -367,7 +365,7 @@ fn enter_exits_with_the_command_status() {
 
     let ephemeral = Command::new(forkspace_bin())
         .env("FORKSPACE_HOME", &home)
-        .current_dir(base)
+        .current_dir(base.path())
         .args(["enter", "--ephemeral", "--copy", "--", "sh", "-c", "exit 4"])
         .output()
         .unwrap();

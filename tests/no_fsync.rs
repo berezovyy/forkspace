@@ -45,14 +45,12 @@ fn overlay(env: &Env, name: &str) -> Option<forkspace::backend::OverlayState> {
 fn no_fsync_mounts_with_fsync_off_and_default_workspaces_do_not() {
     let env = Env::new();
     write(&env.project().join("a.txt"), "a\n");
-    let from = env.project();
-    let from = from.to_str().unwrap();
-    env.ok(&["new", "durable", "--from", from]);
+    env.ok(&["new", "durable"]);
     let Some(durable) = overlay(&env, "durable") else {
         eprintln!("FORKSPACE_TEST_SKIP {{\"capability\":\"fuse-overlayfs\",\"reason\":\"no overlay backend\"}}");
         return;
     };
-    env.ok(&["new", "fast", "--from", from, "--no-fsync"]);
+    env.ok(&["new", "fast", "--no-fsync"]);
     let fast = overlay(&env, "fast").unwrap();
 
     assert!(!durable.no_fsync);

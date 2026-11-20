@@ -120,15 +120,8 @@ fn public_fork_branch_then_land_preserves_the_workspace_commits() {
 
     let forked = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
-        .args([
-            "new",
-            "public",
-            "--from",
-            base.to_str().unwrap(),
-            "--branch",
-            "feature/public",
-            "--copy",
-        ])
+        .current_dir(&base)
+        .args(["new", "public", "--copy"])
         .output()
         .unwrap();
     assert!(
@@ -138,7 +131,7 @@ fn public_fork_branch_then_land_preserves_the_workspace_commits() {
     );
     let state = State::load().unwrap();
     let view = state.require_workspace("public").unwrap().view_path.clone();
-    assert_eq!(git(&view, &["branch", "--show-current"]), "feature/public");
+    assert_eq!(git(&view, &["branch", "--show-current"]), "public");
     commit(&view, "workspace one", "one\n");
     commit(&view, "workspace two", "two\n");
     let expected = git(&view, &["rev-parse", "HEAD"]);
@@ -153,14 +146,8 @@ fn public_fork_branch_then_land_preserves_the_workspace_commits() {
         "{}",
         String::from_utf8_lossy(&landed.stderr)
     );
-    assert_eq!(
-        git(&base, &["rev-parse", "refs/heads/feature/public"]),
-        expected
-    );
-    assert_eq!(
-        git(&base, &["rev-list", "--count", "main..feature/public"]),
-        "2"
-    );
+    assert_eq!(git(&base, &["rev-parse", "refs/heads/public"]), expected);
+    assert_eq!(git(&base, &["rev-list", "--count", "main..public"]), "2");
 }
 
 #[test]
@@ -300,22 +287,6 @@ fn default_branch_requires_as_and_branch_preflight_is_clone_free() {
         git(&fixture.base, &["rev-parse", "topic"]),
         git(&fixture.view, &["rev-parse", "HEAD"])
     );
-
-    let non_repo = tempfile::tempdir().unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-        .args(["new", "never-created", "--branch", "topic", "--from"])
-        .arg(non_repo.path())
-        .env(
-            "FORKSPACE_HOME",
-            std::env::var_os("FORKSPACE_HOME").unwrap(),
-        )
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(6));
-    assert!(!State::load()
-        .unwrap()
-        .workspaces
-        .contains_key("never-created"));
 }
 
 #[test]
@@ -481,19 +452,11 @@ fn a_git_worktree_base_gets_a_private_repository() {
     let worktree_head = git(&worktree, &["rev-parse", "HEAD"]);
     let worktree_branch = git(&worktree, &["branch", "--show-current"]);
 
-    let created = forkspace(&[
-        "new",
-        "agent",
-        "--from",
-        worktree.to_str().unwrap(),
-        "--branch",
-        "topic",
-        "--copy",
-    ]);
+    let created = common::new_in(home.path(), &worktree, &["topic", "--copy"]);
     assert!(created.status.success(), "{}", stderr(&created));
     assert_eq!(git(&main, &["show-ref"]), refs_before);
 
-    let view = home.path().join("workspaces/agent");
+    let view = home.path().join("workspaces/topic");
     assert!(view.join(".git").is_dir());
     fs::write(view.join("tracked.txt"), "agent\n").unwrap();
     git(&view, &["add", "tracked.txt"]);
@@ -507,7 +470,7 @@ fn a_git_worktree_base_gets_a_private_repository() {
     assert_eq!(git(&worktree, &["status", "--porcelain"]), "");
     assert_eq!(git(&main, &["show-ref"]), refs_before);
 
-    let landed = forkspace(&["land", "agent"]);
+    let landed = forkspace(&["land", "topic"]);
     assert!(landed.status.success(), "{}", stderr(&landed));
     assert_eq!(
         git(&main, &["log", "-1", "--format=%s", "topic"]).trim(),

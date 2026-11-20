@@ -33,6 +33,7 @@ impl Env {
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", self.home.path())
+            .current_dir(self.project())
             .args(args)
             .output()
             .unwrap()
@@ -49,8 +50,7 @@ impl Env {
     }
 
     fn fork(&self, name: &str) {
-        let project = self.project();
-        self.ok(&["new", name, "--from", project.to_str().unwrap(), "--copy"]);
+        self.ok(&["new", name, "--copy"]);
     }
 
     fn merge(&self, name: &str) {

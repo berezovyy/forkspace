@@ -54,7 +54,10 @@ impl Env {
 
     fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_forkspace"));
-        command.env("FORKSPACE_HOME", self.home.path()).args(args);
+        command
+            .env("FORKSPACE_HOME", self.home.path())
+            .current_dir(self.project())
+            .args(args);
         command
     }
 
@@ -73,8 +76,7 @@ impl Env {
     }
 
     fn fork(&self, name: &str) {
-        let project = self.project();
-        self.ok(&["new", name, "--from", project.to_str().unwrap(), "--copy"]);
+        self.ok(&["new", name, "--copy"]);
     }
 
     /// Start a command whose journal steps each wait about `delay_ms` first; `None` where

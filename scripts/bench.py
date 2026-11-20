@@ -347,8 +347,8 @@ class BenchError(Exception):
 
 
 def one_run(binary, env, project, home, args, new_flags, result):
-    def timed(label, *argv):
-        elapsed, stdout = run(binary, env, argv)
+    def timed(label, *argv, cwd=None):
+        elapsed, stdout = run(binary, env, argv, cwd)
         if result is not None:
             result["samples"].setdefault(label, []).append(elapsed)
         return stdout
@@ -358,7 +358,7 @@ def one_run(binary, env, project, home, args, new_flags, result):
     edit_target.write_text("benchmark\n")
 
     free_before = shutil.disk_usage(home).free
-    view = created_view(timed("new", "new", "ws1", "--from", str(project), *new_flags))
+    view = created_view(timed("new", "new", "ws1", *new_flags, cwd=project))
     kind = workspace_kind(binary, env, "ws1")
     if kind == "mac-clone":
         ready_ms = wait_for_manifest(binary, env, "ws1")
@@ -390,14 +390,14 @@ def one_run(binary, env, project, home, args, new_flags, result):
     edit_target.write_text("benchmark\n")
     timed("ls (1 workspace)", "ls")
     for number in range(2, args.workspaces + 1):
-        run(binary, env, ("new", f"ws{number}", "--from", str(project), *new_flags))
+        run(binary, env, ("new", f"ws{number}", *new_flags), project)
     timed(f"ls ({args.workspaces} workspaces)", "ls")
     timed("drop", "drop", "ws1")
 
 
-def run(binary, env, argv):
+def run(binary, env, argv, cwd=None):
     started = time.perf_counter()
-    done = subprocess.run([str(binary), *argv], env=env, capture_output=True, text=True)
+    done = subprocess.run([str(binary), *argv], env=env, cwd=cwd, capture_output=True, text=True)
     elapsed = (time.perf_counter() - started) * 1000
     if done.returncode != 0:
         raise BenchError(f"`forkspace {' '.join(argv)}` exited {done.returncode}: {done.stderr.strip()}")
@@ -501,7 +501,7 @@ def freeze_probe(binary, env, project, new_flags, interval=0.002):
         return latencies, elapsed
 
     def fork():
-        return run(binary, env, ("new", "freeze", "--from", str(project), *new_flags))[0]
+        return run(binary, env, ("new", "freeze", *new_flags), project)[0]
 
     try:
         during, fork_ms = measure(fork)

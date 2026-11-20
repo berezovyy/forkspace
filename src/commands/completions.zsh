@@ -46,11 +46,8 @@ _forkspace() {
                 new)
                     _arguments \
                         '1:workspace name:' \
-                        '--from=[Directory or workspace to start from]:source:_files -/' \
-                        '--session=[Session identifier]:session:' \
                         '--tmpfs[Keep changes in RAM]' \
                         '--no-fsync[Do not flush writes on fsync]' \
-                        '--branch=[Create a Git branch]:branch:' \
                         '--copy[Consent to a full directory copy]' \
                         '--live[Show later source changes (no frozen copy)]' \
                         '--memory=[Memory above which the workspace is throttled]:size:' \

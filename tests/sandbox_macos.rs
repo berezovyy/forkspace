@@ -16,15 +16,12 @@ fn seatbelt_refuses_writes_to_the_project_and_allows_the_view() {
     let run = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", &home)
+            .current_dir(&project)
             .args(args)
             .output()
             .unwrap()
     };
-    assert!(
-        run(&["new", "ws", "--from", project.to_str().unwrap(), "--copy"])
-            .status
-            .success()
-    );
+    assert!(run(&["new", "ws", "--copy"]).status.success());
     let script = format!(
         "echo agent > '{}'; echo inside > app.txt",
         project.join("app.txt").display()

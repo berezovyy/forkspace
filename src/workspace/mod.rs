@@ -9,9 +9,10 @@ mod private_git;
 pub mod remove;
 pub mod tmp;
 
+pub(crate) use create::validate_name;
 pub use create::{create, CreateOptions};
 pub use env::{inherited_venvs, process_env, InheritedVenv};
-pub use pick::pick;
+pub use pick::{containing, pick};
 pub use remove::remove;
 
 use std::path::{Path, PathBuf};

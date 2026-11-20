@@ -379,11 +379,12 @@ fn a_view_folder_removed_by_hand_is_reported_and_dropped_cleanly() {
         std::process::Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
             .args(args)
+            .current_dir(&project)
             .output()
             .unwrap()
     };
     for name in ["aa", "ws", "zz"] {
-        let output = run(&["new", name, "--from", project.to_str().unwrap(), "--copy"]);
+        let output = run(&["new", name, "--copy"]);
         assert!(output.status.success(), "{output:?}");
     }
     let view = State::load()
@@ -419,6 +420,6 @@ fn a_view_folder_removed_by_hand_is_reported_and_dropped_cleanly() {
         );
     }
     assert!(!forkspace::changes::manifest::manifest_path("ws").exists());
-    let again = run(&["new", "ws", "--from", project.to_str().unwrap(), "--copy"]);
+    let again = run(&["new", "ws", "--copy"]);
     assert!(again.status.success(), "{again:?}");
 }

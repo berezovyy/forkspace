@@ -43,8 +43,14 @@ impl Env {
     }
 
     fn run(&self, args: &[&str]) -> Output {
+        self.run_in(&self.project(), args)
+    }
+
+    /// `forkspace args` run from `directory`.
+    fn run_in(&self, directory: &std::path::Path, args: &[&str]) -> Output {
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", self.home.path())
+            .current_dir(directory)
             .args(args)
             .output()
             .unwrap();
@@ -57,8 +63,7 @@ impl Env {
     }
 
     fn new_workspace(&self, name: &str, extra: &[&str]) {
-        let project = self.project();
-        let mut args = vec!["new", name, "--from", project.to_str().unwrap()];
+        let mut args = vec!["new", name];
         args.extend_from_slice(extra);
         self.run(&args);
     }
@@ -127,7 +132,8 @@ fn branch_switches_and_commits_in_the_base_do_not_reach_the_workspace() {
 
     assert_eq!(fs::read_to_string(view.join("a.txt")).unwrap(), "a\n");
     assert_eq!(fs::read_to_string(view.join("b.txt")).unwrap(), "b\n");
-    assert_eq!(git(&view, &["branch", "--show-current"]).trim(), "main");
+    // The workspace has a branch of its own, made where the project was at the fork.
+    assert_eq!(git(&view, &["branch", "--show-current"]).trim(), "ws");
     assert_eq!(git(&view, &["status", "--porcelain"]), "");
     assert_eq!(git(&view, &["rev-list", "--count", "HEAD"]).trim(), "1");
     assert!(!git(&view, &["branch", "--list"]).contains("base-only"));
@@ -228,7 +234,8 @@ fn a_successful_fuse_probe_is_remembered() {
     let fork = |name: &str| {
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", env.home.path())
-            .args(["new", name, "--from", project.to_str().unwrap()])
+            .current_dir(&project)
+            .args(["new", name])
             .output()
             .unwrap();
         assert!(
@@ -434,7 +441,7 @@ fn a_stacked_copy_matches_its_parent_view_after_every_kind_of_change() {
 
     let parent = view.to_str().unwrap().to_string();
     let _ = parent;
-    env.run(&["new", "child", "--from", "parent"]);
+    env.run_in(&env.view("parent"), &["new", "child"]);
     assert_eq!(snapshot_tree(&env.view("child")), snapshot_tree(&view));
     assert_eq!(env.stdout(&["diff", "child"]).trim(), "clean — no changes");
 }
@@ -602,7 +609,7 @@ fn a_stacked_workspace_is_sealed_against_its_parent() {
     let env = Env::new();
     env.new_workspace("parent", &[]);
     fs::write(env.view("parent").join("before.txt"), "before\n").unwrap();
-    env.run(&["new", "child", "--from", "parent"]);
+    env.run_in(&env.view("parent"), &["new", "child"]);
     fs::write(env.view("parent").join("after.txt"), "after\n").unwrap();
 
     assert!(env.view("child").join("before.txt").is_file());

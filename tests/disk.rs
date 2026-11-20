@@ -29,6 +29,7 @@ impl Env {
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", self.home.path())
+            .current_dir(self.project())
             .env_remove("XDG_RUNTIME_DIR")
             .env("NO_COLOR", "1")
             .args(args)
@@ -48,8 +49,7 @@ impl Env {
     }
 
     fn fork(&self, name: &str, backend: &str) {
-        let project = self.project();
-        let mut args = vec!["new", name, "--from", project.to_str().unwrap()];
+        let mut args = vec!["new", name];
         if backend == "copy" {
             args.push("--copy");
         }

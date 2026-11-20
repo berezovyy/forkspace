@@ -57,8 +57,7 @@ impl Env {
     }
 
     pub fn fork_copy(&self, name: &str) {
-        let project = self.project();
-        self.ok(&["new", name, "--from", project.to_str().unwrap(), "--copy"]);
+        self.ok(&["new", name, "--copy"]);
     }
 
     pub fn workspace(&self, name: &str) -> Workspace {
@@ -67,6 +66,13 @@ impl Env {
             .require_workspace(name)
             .unwrap()
             .clone()
+    }
+
+    /// The names of every workspace, sorted.
+    pub fn workspaces(&self) -> Vec<String> {
+        let mut names: Vec<String> = State::load().unwrap().workspaces.into_keys().collect();
+        names.sort();
+        names
     }
 
     pub fn view(&self, name: &str) -> PathBuf {

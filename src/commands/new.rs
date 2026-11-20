@@ -11,23 +11,37 @@ use crate::workspace::{self, CreateOptions, Workspace};
 
 pub fn exec(args: NewArgs) -> Result {
     let limits = super::limit::from_flags(args.memory.as_deref(), args.cpu.as_deref())?;
-    if let Some(branch) = args.branch.as_deref() {
-        ensure_branch_creatable(&branch_base(&args.from)?, branch)?;
-    }
+    let source = Source::here()?;
+    // Only a project whose own folder holds `.git` gets a branch: the copy then has a
+    // repository of its own. A folder inside some other repository (one Git ignores, say)
+    // must never have `git switch` run in that outer repository.
+    let repository = source.directory.join(".git").exists()
+        && git::toplevel(&source.directory).is_some_and(|top| top == source.directory);
     let name = match args.name {
-        Some(name) => name,
-        None => default_name(&args.from)?,
+        Some(name) => {
+            workspace::validate_name(&name)?;
+            if repository {
+                ensure_branch_free(&source.directory, &name)?;
+            }
+            name
+        }
+        None => next_free_name(&source, repository)?,
     };
+    let branch = (repository && git::validate_branch(&source.directory, &name).is_ok())
+        .then(|| name.clone());
+    if repository && branch.is_none() {
+        eprintln!("note: '{name}' is not a valid Git branch name, so the workspace stays on the project's branch");
+    }
     let ws = workspace::create(
-        args.from,
+        source.from,
         &name,
         CreateOptions {
-            session: args.session,
             tmpfs: args.tmpfs,
             force_copy: args.copy,
             live: args.live,
-            branch: args.branch,
+            branch,
             no_fsync: args.no_fsync,
+            ..Default::default()
         },
     )?;
     if !limits.is_empty() {
@@ -53,41 +67,67 @@ pub fn exec(args: NewArgs) -> Result {
     Ok(())
 }
 
-/// The repository a `--branch` workspace branches from: the parent's view when stacking.
-fn branch_base(base: &Path) -> Result<PathBuf> {
-    let state = State::load()?;
-    Ok(state
-        .workspaces
-        .get(base.to_str().unwrap_or(""))
-        .map_or_else(|| base.to_path_buf(), |parent| parent.view_path.clone()))
+/// What `new` copies: the workspace you are in, else the Git project you are in (its top
+/// folder), else the folder you are in.
+struct Source {
+    /// Passed to [`workspace::create`]: a workspace's name or a directory.
+    from: PathBuf,
+    /// The directory holding those files, for Git.
+    directory: PathBuf,
+    /// The start of a name made up for the new workspace.
+    label: String,
 }
 
-/// Check `--branch` before creating anything, so a bad branch never leaves a workspace.
-fn ensure_branch_creatable(base: &Path, branch: &str) -> Result {
-    if !git::is_repo(base) {
-        return Err(ForkspaceError::CapabilityUnsupported {
-            diagnosis: format!("{} is not a Git repository", base.display()),
-            remedy: "omit --branch, or run `git init` first".to_string(),
-        });
+impl Source {
+    fn here() -> Result<Self> {
+        let here = std::env::current_dir()
+            .and_then(|directory| directory.canonicalize())
+            .map_err(|error| ForkspaceError::InvalidArgument(format!("current folder: {error}")))?;
+        let state = State::peek()?;
+        if let Some(name) = workspace::containing(&state, &here) {
+            let directory = state.require_workspace(&name)?.view_path.clone();
+            return Ok(Self {
+                from: PathBuf::from(&name),
+                directory,
+                label: name,
+            });
+        }
+        let directory = git::toplevel(&here).unwrap_or(here);
+        let label = directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("workspace")
+            .to_string();
+        Ok(Self {
+            from: directory.clone(),
+            directory,
+            label,
+        })
     }
-    git::validate_branch(base, branch)?;
-    if git::ref_exists(base, &format!("refs/heads/{branch}")) {
+}
+
+/// `<label>-1`, `<label>-2`, ...: the first name no workspace has and, in a Git project, no
+/// branch has either, since the workspace gets a branch of that name.
+fn next_free_name(source: &Source, repository: bool) -> Result<String> {
+    let state = State::peek()?;
+    (1..)
+        .map(|number| format!("{}-{number}", source.label))
+        .find(|name| {
+            !state.name_in_use(name)
+                && !(repository
+                    && git::ref_exists(&source.directory, &format!("refs/heads/{name}")))
+        })
+        .ok_or_else(|| ForkspaceError::InvalidArgument("no free workspace name".to_string()))
+}
+
+/// A workspace of a Git project gets a branch of its name, so that name must be free.
+fn ensure_branch_free(directory: &Path, name: &str) -> Result {
+    if git::ref_exists(directory, &format!("refs/heads/{name}")) {
         return Err(ForkspaceError::BranchExists(format!(
-            "'{branch}' already exists; choose another branch name"
+            "the project already has a branch '{name}'; pick another workspace name"
         )));
     }
     Ok(())
-}
-
-fn default_name(base: &Path) -> Result<String> {
-    base.file_name()
-        .and_then(|name| name.to_str())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            ForkspaceError::InvalidArgument(
-                "cannot derive a workspace name from the source path; pass a name".to_string(),
-            )
-        })
 }
 
 /// Warn about Python virtual environments the fork copied whose scripts still point at the

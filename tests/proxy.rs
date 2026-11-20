@@ -35,14 +35,12 @@ fn the_proxy_serves_the_dev_server_and_exits_when_it_stops() {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
             .env_remove("XDG_RUNTIME_DIR")
+            .current_dir(project.path())
             .args(args)
             .output()
             .unwrap()
     };
-    let project_path = project.path().to_str().unwrap();
-    assert!(forkspace(&["new", "web", "--from", project_path, "--copy"])
-        .status
-        .success());
+    assert!(forkspace(&["new", "web", "--copy"]).status.success());
     let started = forkspace(&[
         "run",
         "web",

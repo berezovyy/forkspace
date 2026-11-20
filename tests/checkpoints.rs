@@ -26,7 +26,7 @@ impl Env {
         fs::write(project.join("edit.txt"), "fork\n").unwrap();
         fs::write(project.join("gone.txt"), "gone\n").unwrap();
         fs::write(project.join("later.txt"), "fork version\n").unwrap();
-        let mut args = vec!["new", "ws", "--from", project.to_str().unwrap()];
+        let mut args = vec!["new", "ws"];
         if backend == "copy" {
             args.push("--copy");
         }
@@ -45,6 +45,7 @@ impl Env {
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", self.home.path())
+            .current_dir(self.root.path().join("project"))
             .args(args)
             .output()
             .unwrap()

@@ -77,14 +77,13 @@ fn a_small_edit_is_kept_as_a_small_delta_and_restored_exactly() {
         })
         .collect();
     fs::write(env.project().join("noise.bin"), &random).unwrap();
-    let from = env.project();
     for flags in [&["--copy"][..], &[][..]] {
         let name = if flags.is_empty() {
             "default"
         } else {
             "copied"
         };
-        let mut args = vec!["new", name, "--from", from.to_str().unwrap()];
+        let mut args = vec!["new", name];
         args.extend_from_slice(flags);
         env.ok(&args);
         let view = env.view(name);

@@ -159,6 +159,12 @@ fn create_branch(workspace: &mut Workspace, branch: Option<&str>) -> Result {
     let Some(branch) = branch else {
         return Ok(());
     };
+    // Without a `.git` of its own, git would act on whatever repository holds the view.
+    if !workspace.view_path.join(".git").exists() {
+        return Err(ForkspaceError::BranchExists(format!(
+            "'{branch}' was not created: the workspace has no Git repository of its own"
+        )));
+    }
     if crate::git::switch_new_branch(&workspace.view_path, branch).is_err() {
         return Err(ForkspaceError::BranchExists(format!(
             "'{branch}' could not be created; no workspace was kept"
@@ -261,7 +267,7 @@ fn ensure_name_free(state: &State, name: &str) -> Result {
     Ok(())
 }
 
-fn validate_name(name: &str) -> Result {
+pub(crate) fn validate_name(name: &str) -> Result {
     let invalid = name.is_empty()
         || name == "."
         || name == ".."

@@ -15,6 +15,9 @@ struct Case {
     state_fixture: Option<String>,
     #[serde(default)]
     setup: Option<String>,
+    /// The folder the command runs in (`<FORKSPACE_HOME>` is replaced); the repository by default.
+    #[serde(default)]
+    cwd: Option<String>,
 }
 
 fn setup_case(case: &Case, home: &Path) {
@@ -165,9 +168,15 @@ fn golden_cli_contract() {
             .iter()
             .map(|arg| arg.replace("<FORKSPACE_HOME>", &home.path().display().to_string()))
             .collect();
+        let cwd = case.cwd.as_ref().map_or_else(
+            || PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            |cwd| {
+                PathBuf::from(cwd.replace("<FORKSPACE_HOME>", &home.path().display().to_string()))
+            },
+        );
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .args(&args)
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .current_dir(cwd)
             .env("FORKSPACE_HOME", home.path())
             .env("TZ", "UTC")
             .env("NO_COLOR", "1")
