@@ -1,1 +1,1 @@
-unsupported capability: base and workspace root are on different volumes; move the project and FORKSPACE_HOME to the same APFS volume, for clones instead of a copy
+can't do that here: your project and forkspace's folder are on different disks; put your project and FORKSPACE_HOME on the same APFS disk to get clones instead of a copy

@@ -63,8 +63,9 @@ impl ForkPrimitive for ReflinkPrimitive {
         ForkSummary {
             degraded: false,
             note: Some(format!(
-                "used reflinks for {} files ({} files required copying)",
-                stats.reflinked_files, stats.copied_files
+                "cloned {} of your project ({} had to be copied)",
+                crate::util::count(stats.reflinked_files as usize, "file"),
+                stats.copied_files
             )),
         }
     }

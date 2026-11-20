@@ -196,8 +196,9 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
             .io_context(|| format!("canonicalize {}", root.display()))?;
         if root.starts_with(&base) {
             return Err(ForkspaceError::CapabilityUnsupported {
-                diagnosis: "workspace root is inside the project tree".to_string(),
-                remedy: "set FORKSPACE_HOME outside the project and retry".to_string(),
+                diagnosis: "forkspace's folder (FORKSPACE_HOME) is inside your project".to_string(),
+                remedy: "set FORKSPACE_HOME to a folder outside the project and try again"
+                    .to_string(),
             });
         }
         self.primitive.check_available(&base, &root)

@@ -50,8 +50,8 @@ impl ForkPrimitive for CopyPrimitive {
         ForkSummary {
             degraded: true,
             note: Some(format!(
-                "used a full copy ({} bytes in {elapsed_ms} ms); {}",
-                stats.copied_bytes,
+                "made a full copy of your project ({} in {elapsed_ms} ms); {}",
+                crate::disk::human(stats.copied_bytes),
                 faster_fork_remedy()
             )),
         }
@@ -60,9 +60,9 @@ impl ForkPrimitive for CopyPrimitive {
 
 fn faster_fork_remedy() -> &'static str {
     if cfg!(target_os = "macos") {
-        "place the project and FORKSPACE_HOME on the same APFS volume for faster clone forks"
+        "put your project and FORKSPACE_HOME on the same APFS disk to make workspaces instantly"
     } else {
-        "install fuse-overlayfs or use a reflink-capable volume for faster forks"
+        "install fuse-overlayfs to make workspaces instantly"
     }
 }
 

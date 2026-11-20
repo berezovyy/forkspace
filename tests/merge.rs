@@ -254,19 +254,3 @@ fn test_merge_creates_parent_dirs() {
     assert_eq!(result.added, 1);
     assert!(base.join("src/deep/nested/file.rs").exists());
 }
-
-#[test]
-fn test_merge_git_commit_not_a_repo() {
-    let tmp = tempfile::tempdir().unwrap();
-    let base = tmp.path().join("base");
-    fs::create_dir_all(&base).unwrap();
-
-    let result = merge::git_commit(&base, "test commit");
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        forkspace::error::ForkspaceError::GitFailed(msg) => {
-            assert!(msg.contains("not a git repository"));
-        }
-        other => panic!("expected GitFailed, got: {other:?}"),
-    }
-}

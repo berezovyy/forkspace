@@ -143,14 +143,3 @@ pub fn workspace_head_changed(workspace: &Workspace) -> Result<bool> {
         .iter()
         .any(|change| change.path == Path::new(".git/HEAD")))
 }
-
-/// Stage everything in `base` and commit it with `message`.
-pub fn git_commit(base: &Path, message: &str) -> Result {
-    if !crate::git::is_repo(base) {
-        return Err(ForkspaceError::GitFailed(
-            "base directory is not a git repository".to_string(),
-        ));
-    }
-    crate::git::run_git(base, &["add", "-A"])?;
-    crate::git::run_git(base, &["commit", "-m", message])
-}

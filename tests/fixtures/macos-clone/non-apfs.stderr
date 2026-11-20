@@ -1,1 +1,1 @@
-backend unavailable: <BASE> is <FILESYSTEM>; APFS clones are unavailable there; move the project and FORKSPACE_HOME to the same APFS volume, for clones instead of a copy
+can't make workspaces here: <BASE> is on <FILESYSTEM>, not APFS, so it cannot be cloned; put your project and FORKSPACE_HOME on the same APFS disk to get clones instead of a copy

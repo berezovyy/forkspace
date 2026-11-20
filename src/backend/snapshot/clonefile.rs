@@ -42,7 +42,7 @@ impl ForkPrimitive for ClonefilePrimitive {
         let (Ok(base_meta), Ok(destination_meta)) = (fs::metadata(base), fs::metadata(dest_parent))
         else {
             return Err(unavailable(
-                "base or workspace root cannot be inspected".to_string(),
+                "your project or forkspace's folder cannot be read".to_string(),
             ));
         };
         if base_meta.dev() != destination_meta.dev() {
@@ -54,7 +54,7 @@ impl ForkPrimitive for ClonefilePrimitive {
         match filesystem_type(base) {
             Ok(kind) if kind == "apfs" => Ok(()),
             Ok(kind) => Err(unavailable(format!(
-                "{} is {kind}; APFS clones are unavailable there",
+                "{} is on {kind}, not APFS, so it cannot be cloned",
                 base.display()
             ))),
             Err(error) => Err(unavailable(error.to_string())),
@@ -181,7 +181,7 @@ fn clone_one(source: &Path, target: &Path) -> Result {
 }
 
 const SAME_VOLUME_REMEDY: &str =
-    "move the project and FORKSPACE_HOME to the same APFS volume for clones instead of a copy";
+    "put your project and FORKSPACE_HOME on the same APFS disk to get clones instead of a copy";
 
 fn workspace_name(dest: &Path) -> std::borrow::Cow<'_, str> {
     dest.file_name()

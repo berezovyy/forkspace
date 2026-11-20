@@ -47,7 +47,7 @@ mod macos {
                 "FORKSPACE_HOME",
                 std::env::var_os("FORKSPACE_HOME").unwrap(),
             )
-            .current_dir(&base)
+            .current_dir(base)
             .args(["new", name])
             .output()
             .unwrap();
@@ -184,13 +184,13 @@ mod macos {
             .join(format!("{name}.stderr"));
         let mut rendered = format!("{error}\n");
         if name == "non-apfs" {
-            let prefix = "backend unavailable: ";
-            let marker = "; APFS clones are unavailable there";
+            let prefix = "can't make workspaces here: ";
+            let marker = ", not APFS, so it cannot be cloned";
             if let Some((_, tail)) = rendered
                 .strip_prefix(prefix)
                 .and_then(|value| value.split_once(marker))
             {
-                rendered = format!("{prefix}<BASE> is <FILESYSTEM>{marker}{tail}");
+                rendered = format!("{prefix}<BASE> is on <FILESYSTEM>{marker}{tail}");
             }
         }
         assert_eq!(rendered, fs::read_to_string(fixture).unwrap());
@@ -884,7 +884,7 @@ mod macos {
             .output()
             .unwrap();
         assert!(output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("pending manifest"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("not listed yet"));
         let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         let paths: Vec<_> = json["changes"]
             .as_array()
@@ -1183,7 +1183,7 @@ mod macos {
         fs::write(base.path().join("top.txt"), b"base edit\n").unwrap();
         let pulled = assert_cli(home.path(), &["pull", "dirs"]);
         assert!(
-            pulled.contains("pulled 1 files"),
+            pulled.contains("pulled 1 file"),
             "only the edit is pulled: {pulled}"
         );
 
@@ -1251,11 +1251,7 @@ mod macos {
         );
 
         commands::drop::exec(DropArgs {
-            name: Some("step-1".into()),
-            kill: false,
-            force: true,
-            all: false,
-            glob: false,
+            names: vec!["step-1".into(), "step-2".into(), "step-conflict".into()],
         })
         .unwrap();
         assert!(!manifest::manifest_path("step-1").exists());
@@ -1525,7 +1521,7 @@ S(('127.0.0.1',int(os.environ['PORT'])),H).serve_forever()
             assert_preflight_golden("cross-volume", &error);
             assert_eq!(error.exit_code(), 6);
             let message = error.to_string();
-            assert!(message.contains("different volumes"));
+            assert!(message.contains("different disks"));
             assert!(!message.contains('\n'));
             assert!(!message.contains("FUSE"));
             assert!(!message.contains("brew"));
@@ -1546,14 +1542,14 @@ S(('127.0.0.1',int(os.environ['PORT'])),H).serve_forever()
             assert_preflight_golden("non-apfs", &error);
             assert_eq!(error.exit_code(), 7);
             let message = error.to_string();
-            assert!(message.contains("APFS clones are unavailable"));
+            assert!(message.contains("not APFS"));
             assert!(!message.contains('\n'));
             assert!(!message.contains("FUSE"));
             assert!(!message.contains("brew"));
 
             let copied = Command::new(env!("CARGO_BIN_EXE_forkspace"))
                 .env("FORKSPACE_HOME", &home)
-                .current_dir(&Path::new(&base))
+                .current_dir(Path::new(&base))
                 .args(["new", "non-apfs-copy"])
                 .output()
                 .unwrap();

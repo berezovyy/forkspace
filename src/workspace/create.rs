@@ -105,8 +105,8 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
     );
     if let Some(skipped) = skipped {
         workspace.probe_reason = Some(match workspace.probe_reason.take() {
-            Some(reason) => format!("{reason} (passed over {skipped})"),
-            None => format!("passed over {skipped}"),
+            Some(reason) => format!("{reason} (faster ways failed: {skipped})"),
+            None => format!("faster ways failed: {skipped}"),
         });
     }
     record_fork_time_files(&workspace);
