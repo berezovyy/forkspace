@@ -114,6 +114,10 @@ pub struct CreateReq {
     pub live: bool,
     /// The layers of the overlay workspace `base` is the view of, when stacking.
     pub parent_layers: Option<OverlayState>,
+    /// Overlay only: answer `fsync` in the workspace without flushing to disk. Writes of
+    /// the last few seconds can be lost on power loss; the base and forkspace's own state are
+    /// still flushed.
+    pub no_fsync: bool,
 }
 
 /// What [`WorkspaceBackend::create`] produced.

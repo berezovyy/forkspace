@@ -21,7 +21,8 @@ changes for that workspace.
 | `--branch <branch>` | Create a Git branch in the workspace and record it for `land`. Invalid or existing branches fail before anything is forked. |
 | `--copy` | Agree to a full directory copy when nothing faster works. Without it, macOS refuses a project that is not on APFS; Linux falls through to a copy on its own and says so. |
 | `--live` | *Linux.* Mount the project itself instead of a frozen copy. Faster to create, but the workspace shows later project changes, with undefined results. `ls` marks it `(live)`. |
-| `--tmpfs` | *Linux.* Keep the workspace's changes on an existing tmpfs (`$XDG_RUNTIME_DIR` or `/dev/shm`). Lost on reboot. |
+| `--tmpfs` | *Linux.* Keep the workspace's changes on an existing tmpfs (`$XDG_RUNTIME_DIR` or `/dev/shm`). Lost on reboot. Implies `--no-fsync`. |
+| `--no-fsync` | *Linux overlay.* `fsync` in the workspace returns without flushing to disk: package installs, `git` and builds that flush often run much faster (1,000 small write+fsync calls: 80 ms instead of 1,390 ms on ext4), and the last few seconds of writes can be lost on power loss. The project and forkspace's own state are still flushed. Kept across remounts. |
 | `--memory <size>` | *Linux.* Throttle the workspace's processes above this much memory, e.g. `4G` or `75%`. |
 | `--cpu <percent>` | *Linux.* Cap the workspace's CPU time, as a percentage of one CPU, e.g. `200%`. |
 | `--session <id>` | Record a session identifier, to group related workspaces. |
@@ -52,7 +53,8 @@ name, `enter` uses the workspace the current directory belongs to.
 | Flag | |
 | :-- | :-- |
 | `--create` (`--new`) | Create the workspace first if it does not exist; `--from`, `--copy`, `--live` and `--tmpfs` then apply as for `new`. |
-| `--ephemeral` | Drop the workspace when the shell or command exits. |
+| `--ephemeral` | Drop the workspace when the shell or command exits. Implies `--no-fsync`. |
+| `--no-fsync` | When creating, as for `new`. |
 | `--merge-on-exit` | Merge the workspace's changes into its base when the shell exits. |
 | `--no-sandbox` | Let the shell or command write outside the workspace (see [Sandbox](#sandbox)). |
 | `--sandbox-info` | List where commands in the workspace may write, then exit. |
@@ -258,6 +260,7 @@ Read by forkspace:
 | Variable | |
 | :-- | :-- |
 | `FORKSPACE_HOME` | Where workspaces and state live (default `~/.forkspace`, kept owner-only). |
+| `FORKSPACE_FSYNC=off` | Create every overlay workspace as with `--no-fsync`. |
 | `FORKSPACE_GIT_REFRESH=0` | Do not refresh a new workspace's Git index in the background. |
 | `FORKSPACE_TRACE=1` | Print each command's timed phases to stderr, e.g. `forkspace-trace: materialize 41.203ms`. [`scripts/bench.py`](../scripts/bench.py) records them. |
 | `FORKSPACE_SANDBOX=off` | Turn the write sandbox off by default. |

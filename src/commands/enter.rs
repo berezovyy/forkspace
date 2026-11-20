@@ -140,6 +140,8 @@ fn create_for_entry(args: &EnterArgs) -> Result<String> {
             tmpfs: args.tmpfs,
             force_copy: args.copy,
             live: args.live,
+            // A workspace removed when its command exits needs no durability.
+            no_fsync: args.no_fsync || args.ephemeral,
             ..Default::default()
         },
     )?;

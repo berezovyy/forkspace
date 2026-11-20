@@ -104,6 +104,7 @@ fn fake_backend_passes_workspace_contract() {
         tmpfs: false,
         live: false,
         parent_layers: None,
+        no_fsync: false,
     };
 
     backend.preflight(root.path()).unwrap();

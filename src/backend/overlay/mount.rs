@@ -97,21 +97,32 @@ fn probe_mount() -> std::result::Result<(), String> {
             .map_err(|e| format!("cannot create probe directory {}: {e}", path.display()))?;
     }
 
-    let result = mount_overlay(&lower, &upper, &work, &merged)
+    let result = mount_overlay(&lower, &upper, &work, &merged, false)
         .map_err(|e| e.to_string())
         .and_then(|()| unmount_overlay(&merged).map_err(|e| e.to_string()));
     let _ = fs::remove_dir_all(&root);
     result
 }
 
-/// Mounts `base` (lower) + `upper` at `merged`.
-pub(crate) fn mount_overlay(base: &Path, upper: &Path, work: &Path, merged: &Path) -> Result {
-    let options = format!(
+/// Mounts `base` (lower) + `upper` at `merged`. With `no_fsync`, fuse-overlayfs answers
+/// `fsync` without flushing (`fsync=0`): on ext4, 1,000 small write+fsync calls took 80 ms
+/// instead of 1,390 ms (2026-11-19), at the cost of the last seconds of writes on power loss.
+pub(crate) fn mount_overlay(
+    base: &Path,
+    upper: &Path,
+    work: &Path,
+    merged: &Path,
+    no_fsync: bool,
+) -> Result {
+    let mut options = format!(
         "lowerdir={},upperdir={},workdir={}",
         base.display(),
         upper.display(),
         work.display()
     );
+    if no_fsync {
+        options.push_str(",fsync=0");
+    }
     let status = Command::new(find_fuse_overlayfs())
         .arg("-o")
         .arg(&options)

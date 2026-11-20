@@ -27,6 +27,7 @@ pub fn exec(args: NewArgs) -> Result {
             force_copy: args.copy,
             live: args.live,
             branch: args.branch,
+            no_fsync: args.no_fsync,
         },
     )?;
     if !limits.is_empty() {
@@ -37,6 +38,12 @@ pub fn exec(args: NewArgs) -> Result {
         })?;
     }
     print_backend_notes(&ws);
+    if args.no_fsync && ws.backend_kind != BackendKind::Overlay {
+        eprintln!(
+            "note: --no-fsync applies to the Linux overlay backend only; this '{}' workspace flushes on fsync as usual",
+            ws.backend_kind.as_str()
+        );
+    }
     warn_inherited_venvs(&ws);
     println!(
         "created workspace '{}' at {}",

@@ -109,6 +109,12 @@ pub struct NewArgs {
     )]
     pub tmpfs: bool,
 
+    #[arg(
+        long,
+        help = "Do not flush the workspace's writes on fsync (Linux overlay only; faster installs and builds, recent writes lost on power loss)"
+    )]
+    pub no_fsync: bool,
+
     #[arg(long, help = "Create and record a Git branch in the workspace")]
     pub branch: Option<String>,
 
@@ -184,6 +190,12 @@ pub struct EnterArgs {
         help = "Keep the workspace's changes in RAM (Linux overlay only; lost on reboot)"
     )]
     pub tmpfs: bool,
+
+    #[arg(
+        long,
+        help = "When creating, do not flush the workspace's writes on fsync (Linux overlay only; implied by --ephemeral)"
+    )]
+    pub no_fsync: bool,
 
     #[arg(long, help = "Consent to a full directory copy backend when creating")]
     pub copy: bool,

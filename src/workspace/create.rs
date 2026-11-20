@@ -30,6 +30,15 @@ pub struct CreateOptions {
     pub live: bool,
     /// Create this Git branch in the view and record it; the fork fails without it.
     pub branch: Option<String>,
+    /// Overlay only: do not flush the workspace's writes on `fsync` (see
+    /// [`no_fsync_by_default`]).
+    pub no_fsync: bool,
+}
+
+/// Whether `FORKSPACE_FSYNC=off` asks for workspaces that do not flush on `fsync`.
+pub fn no_fsync_by_default() -> bool {
+    std::env::var("FORKSPACE_FSYNC")
+        .is_ok_and(|value| matches!(value.as_str(), "off" | "0" | "false" | "no"))
 }
 
 /// Where a new workspace's contents come from, and the backend that will copy them.
@@ -67,6 +76,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         base: origin.clone(),
         tmpfs: options.tmpfs,
         live: options.live,
+        no_fsync: options.no_fsync || no_fsync_by_default(),
         parent_layers,
     };
     let view = match backend.create(&request) {

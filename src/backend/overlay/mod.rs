@@ -61,6 +61,10 @@ pub struct OverlayState {
     pub tmpfs: bool,
     #[serde(default)]
     pub tmpfs_size: Option<String>,
+    /// Mounted with fuse-overlayfs `fsync=0`: `fsync` in the workspace returns at once
+    /// instead of flushing to disk (see `CreateReq::no_fsync`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_fsync: bool,
     #[serde(flatten)]
     pub unknown_fields: Map<String, Value>,
 }
@@ -77,6 +81,7 @@ impl OverlayState {
             merged: root.join("merged"),
             tmpfs: false,
             tmpfs_size: None,
+            no_fsync: false,
             unknown_fields: Map::new(),
         }
     }
@@ -265,6 +270,8 @@ impl WorkspaceBackend for OverlayBackend {
             layers.work = tmpfs.work;
             layers.tmpfs = true;
         }
+        // Changes kept in RAM are lost on reboot anyway: flushing them buys nothing.
+        layers.no_fsync = req.no_fsync || req.tmpfs;
         let cleanup = |layers: &OverlayState| {
             if layers.tmpfs {
                 let _ = tmpfs::remove_layers(&layers.upper);
@@ -281,7 +288,13 @@ impl WorkspaceBackend for OverlayBackend {
         }
 
         let mounted = trace::time("materialize", || {
-            mount_overlay(&lower, &layers.upper, &layers.work, &layers.merged)
+            mount_overlay(
+                &lower,
+                &layers.upper,
+                &layers.work,
+                &layers.merged,
+                layers.no_fsync,
+            )
         });
         if let Err(error) = mounted {
             mount::forget_probe();
@@ -434,7 +447,13 @@ fn remount(ws: &Workspace, state: &OverlayState) -> Result {
         }
     }
     let lower = state.lower.as_deref().unwrap_or(&ws.base);
-    mount_overlay(lower, &state.upper, &state.work, &state.merged)?;
+    mount_overlay(
+        lower,
+        &state.upper,
+        &state.work,
+        &state.merged,
+        state.no_fsync,
+    )?;
     eprintln!("note: remounted workspace '{}'", ws.name);
     Ok(())
 }
