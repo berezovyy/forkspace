@@ -243,8 +243,8 @@ Commands started by `enter` and `run` cannot write to the original project or to
 workspaces: Landlock on Linux, `sandbox-exec` on macOS. Setuid programs such as `sudo` gain no
 privileges inside it. Temporary directories (`/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`) and the
 dot-entries of your home directory, such as `~/.npm` and `~/.cargo`, stay writable.
-Commands started by `enter` also share one jobserver across all workspaces, passed as `CARGO_MAKEFLAGS` (`-j --jobserver-auth=fifo:...`): parallel `cargo` builds in different workspaces take turns on one slot per CPU instead of each starting a compiler per CPU. `MAKEFLAGS` is left alone, so plain `make` keeps running serially. Each workspace's commands also get a private temporary directory, `$TMPDIR/forkspace-<uid>/<home>/<name>` (0700, one `<home>` directory per `FORKSPACE_HOME`), as `TMPDIR`, `TMP` and `TEMP`: parallel workspaces no longer meet in fixed `/tmp` paths, and `drop` removes what they leave there (`gc` removes those of workspaces gone in a crash). `enter <name> --sandbox-info` lists where commands may write; `--no-sandbox` or
-`FORKSPACE_SANDBOX=off` turns it off.
+Commands started by `enter` also share one jobserver across all workspaces, passed as `CARGO_MAKEFLAGS` (`-j --jobserver-auth=fifo:...`): parallel `cargo` builds in different workspaces take turns on one slot per CPU instead of each starting a compiler per CPU. `MAKEFLAGS` is left alone, so plain `make` keeps running serially. Each workspace's commands also get a private temporary directory, `$TMPDIR/forkspace-<uid>/<home>/<name>` (0700, one `<home>` directory per `FORKSPACE_HOME`), as `TMPDIR`, `TMP` and `TEMP`: parallel workspaces no longer meet in fixed `/tmp` paths, and `drop` removes what they leave there (`gc` removes those of workspaces gone in a crash). `enter <name> --sandbox-info` lists where commands may write; `--no-sandbox`
+turns it off.
 
 ## Environment
 
@@ -266,13 +266,12 @@ Read by forkspace:
 | :-- | :-- |
 | `FORKSPACE_HOME` | Where workspaces and state live (default `~/.forkspace`, kept owner-only). |
 | `FORKSPACE_TRACE=1` | Print each command's timed phases to stderr, e.g. `forkspace-trace: materialize 41.203ms`. [`scripts/bench.py`](../scripts/bench.py) records them. |
-| `FORKSPACE_SANDBOX=off` | Turn the write sandbox off by default. |
 | `FORKSPACE_NO_SYSTEMD=1` | *Linux.* Do not start commands in a systemd user slice per workspace (no process tracking by slice, no limits). |
 | `FORKSPACE_RELEASES_URL` | Where `upgrade` looks for releases (default: this repository's GitHub releases). |
 | `NO_COLOR`, `CLICOLOR_FORCE` | Output is coloured only on a terminal. `NO_COLOR` (any value) turns colour off; `CLICOLOR_FORCE=1` turns it on for pipes too. |
 
 For debugging and tests only: `FORKSPACE_BACKEND=<linux|mac-clone|linux-reflink|copy>` forces
-a backend for new workspaces, `FORKSPACE_NO_LANDLOCK=1` turns off Landlock.
+a backend for new workspaces.
 
 ## Exit codes
 

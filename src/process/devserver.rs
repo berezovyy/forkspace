@@ -219,7 +219,7 @@ fn spawn(
         .env(IDENTITY_ENV, &identity);
     // `systemd-run --scope` execs the command, so the recorded pid stays the dev server's.
     let mut launcher = super::systemd::scoped(shell, workspace, true);
-    if sandbox && !super::sandbox::disabled_by_default() {
+    if sandbox {
         launcher = super::sandbox::apply(launcher, workspace);
     }
     let child = spawn_detached(launcher.stdout(stdout).stderr(stderr))

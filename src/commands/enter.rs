@@ -46,7 +46,7 @@ pub fn exec(args: EnterArgs) -> Result {
     // A command (rather than an interactive shell) runs at background priority on macOS.
     let background = !args.command.is_empty();
     let mut command = crate::process::systemd::scoped(command, workspace, background);
-    if !args.no_sandbox && !sandbox::disabled_by_default() {
+    if !args.no_sandbox {
         command = sandbox::apply(command, workspace);
     }
     let status = command
@@ -100,7 +100,7 @@ fn exit_code(status: ExitStatus) -> i32 {
 
 /// `--sandbox-info`: where commands in `workspace` may write.
 fn print_sandbox(workspace: &workspace::Workspace, no_sandbox: bool) {
-    if no_sandbox || sandbox::disabled_by_default() {
+    if no_sandbox {
         println!("the write sandbox is off: commands may write anywhere you can");
         return;
     }

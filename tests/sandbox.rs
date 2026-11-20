@@ -24,10 +24,7 @@ impl Env {
         fs::write(env.path("project/app.txt"), "original\n").unwrap();
         for name in ["ws", "other"] {
             let project = env.path("project");
-            let output = env.run(
-                &["new", name, "--from", project.to_str().unwrap(), "--copy"],
-                &[],
-            );
+            let output = env.run(&["new", name, "--from", project.to_str().unwrap(), "--copy"]);
             assert!(
                 output.status.success(),
                 "{}",
@@ -45,19 +42,14 @@ impl Env {
         self.path("home/workspaces").join(name)
     }
 
-    fn run(&self, args: &[&str], extra_env: &[(&str, &str)]) -> Output {
+    fn run(&self, args: &[&str]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_forkspace"));
         command
             .env("FORKSPACE_HOME", self.path("home"))
             .env("FORKSPACE_BACKEND", "copy")
             .env("FORKSPACE_NO_SYSTEMD", "1")
             .env("HOME", self.path("fake-home"))
-            .env_remove("FORKSPACE_SANDBOX")
-            .env_remove("FORKSPACE_NO_LANDLOCK")
             .args(args);
-        for (key, value) in extra_env {
-            command.env(key, value);
-        }
         command.output().unwrap()
     }
 
@@ -66,13 +58,13 @@ impl Env {
         let mut args = vec!["enter", "ws"];
         args.extend_from_slice(extra_args);
         args.extend_from_slice(&["--", "sh", "-c", script]);
-        self.run(&args, &[])
+        self.run(&args)
     }
 }
 
 impl Drop for Env {
     fn drop(&mut self) {
-        let _ = self.run(&["drop", "--all", "--kill"], &[]);
+        let _ = self.run(&["drop", "--all", "--kill"]);
     }
 }
 
@@ -141,21 +133,4 @@ fn no_sandbox_restores_unrestricted_writes() {
         &["--no-sandbox"],
     );
     assert_eq!(read(&project_file), "agent\n");
-}
-
-#[test]
-fn without_landlock_the_command_runs_with_one_warning() {
-    let env = Env::new();
-    let output = env.run(
-        &["enter", "ws", "--", "sh", "-c", "echo ran > app.txt"],
-        &[("FORKSPACE_NO_LANDLOCK", "1")],
-    );
-    assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(
-        stderr.matches("write sandbox is off").count(),
-        1,
-        "{stderr}"
-    );
-    assert_eq!(read(&env.view("ws").join("app.txt")), "ran\n");
 }

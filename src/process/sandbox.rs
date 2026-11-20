@@ -11,7 +11,7 @@
 //! macOS runs the command under `sandbox-exec` with a profile that denies writes beneath the
 //! project and `FORKSPACE_HOME` and allows them beneath the workspace view.
 //!
-//! `--no-sandbox` or `FORKSPACE_SANDBOX=off` turns it off. `no_new_privs`, which Landlock
+//! `--no-sandbox` turns it off. `no_new_privs`, which Landlock
 //! requires, means setuid programs such as `sudo` gain no privileges inside the sandbox.
 
 use std::path::{Path, PathBuf};
@@ -19,12 +19,6 @@ use std::process::Command;
 
 use crate::paths;
 use crate::workspace::Workspace;
-
-/// Whether the sandbox is turned off for every command (`FORKSPACE_SANDBOX=off`).
-pub fn disabled_by_default() -> bool {
-    std::env::var("FORKSPACE_SANDBOX")
-        .is_ok_and(|value| matches!(value.as_str(), "off" | "0" | "false"))
-}
 
 /// The directories commands in `workspace` may write beneath.
 pub fn writable(workspace: &Workspace) -> Vec<PathBuf> {
@@ -160,9 +154,6 @@ mod imp {
 
     /// A ruleset allowing writes only beneath [`writable`] paths.
     fn ruleset(workspace: &Workspace) -> Result<OwnedFd, String> {
-        if std::env::var_os("FORKSPACE_NO_LANDLOCK").is_some() {
-            return Err("Landlock is disabled (FORKSPACE_NO_LANDLOCK)".to_string());
-        }
         let abi = unsafe {
             libc::syscall(
                 SYS_CREATE_RULESET,
