@@ -4,9 +4,6 @@
 //! `.sha256` beside it. A binary installed by `cargo install` is upgraded by Cargo instead, and
 //! a platform without a prebuilt binary falls back to Cargo when it is on `PATH`. Downloads go
 //! through `curl`, so the upgrade adds no HTTP client to the binary.
-//!
-//! `FORKSPACE_RELEASES_URL` replaces `<repository>/releases` as the place releases are fetched
-//! from; the tests point it at a `file://` directory.
 
 use std::env;
 use std::fs;
@@ -21,7 +18,7 @@ use crate::util::fs::IoContext;
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
 pub fn exec(args: UpgradeArgs) -> Result {
-    let base = releases_url();
+    let base = format!("{}/releases", env!("CARGO_PKG_REPOSITORY"));
     let explicit = args.version.is_some();
     let target_version = match args.version {
         Some(version) => version.trim_start_matches('v').to_string(),
@@ -140,13 +137,6 @@ fn translated_by_rosetta() -> bool {
     false
 }
 
-fn releases_url() -> String {
-    env::var("FORKSPACE_RELEASES_URL")
-        .unwrap_or_else(|_| format!("{}/releases", env!("CARGO_PKG_REPOSITORY")))
-        .trim_end_matches('/')
-        .to_string()
-}
-
 /// GitHub redirects `releases/latest` to `releases/tag/<tag>`; reading the redirect needs no
 /// API token and has no rate limit.
 fn latest_version(base: &str) -> Result<String> {
@@ -173,12 +163,16 @@ fn tag_from_url(url: &str) -> Option<String> {
     parse_version(version).map(|_| version.to_string())
 }
 
-enum Downloaded {
+#[derive(Debug, PartialEq, Eq)]
+pub enum Downloaded {
     Installed,
     NoAsset,
 }
 
-fn download_binary(base: &str, version: &str, target: &str, exe: &Path) -> Result<Downloaded> {
+/// Install release `version`'s binary for `target` over `exe`, from `base` laid out like
+/// GitHub's releases (`<base>/download/v<version>/<asset>` and its `.sha256`), after checking
+/// its checksum.
+pub fn download_binary(base: &str, version: &str, target: &str, exe: &Path) -> Result<Downloaded> {
     let asset = format!("forkspace-{version}-{target}.tar.gz");
     let url = format!("{base}/download/v{version}/{asset}");
     let scratch = env::temp_dir().join(format!("forkspace-upgrade-{}", std::process::id()));

@@ -1,14 +1,16 @@
-//! `forkspace upgrade` against a release laid out like GitHub's, served from `file://`.
+//! `forkspace upgrade`: installing a release laid out like GitHub's, served from `file://`.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use forkspace::commands::upgrade::{self, Downloaded};
+
 /// A release directory holding `download/v<version>/<asset>` and its checksum, where the
 /// "binary" is a script that reports `version`.
 fn publish(releases: &Path, version: &str, checksum: Option<&str>) {
-    let target = forkspace::commands::upgrade::release_target().unwrap();
+    let target = upgrade::release_target().unwrap();
     let staging = releases.join("staging");
     fs::create_dir_all(&staging).unwrap();
     let binary = staging.join("forkspace");
@@ -75,20 +77,14 @@ fn output(command: &mut Command) -> Output {
     panic!("{command:?} stayed busy");
 }
 
-fn upgrade(exe: &Path, releases: &Path, args: &[&str]) -> Output {
-    run_as("upgrade", exe, releases, args)
-}
-
-fn run_as(command: &str, exe: &Path, releases: &Path, args: &[&str]) -> Output {
-    output(
-        Command::new(exe)
-            .arg(command)
-            .args(args)
-            .env(
-                "FORKSPACE_RELEASES_URL",
-                format!("file://{}", releases.display()),
-            )
-            .env("CARGO_HOME", releases.join("no-cargo-home")),
+/// Install release `version` from `releases` over `exe`, as `upgrade` does after choosing it.
+fn install(exe: &Path, releases: &Path, version: &str) -> forkspace::error::Result<Downloaded> {
+    let target = upgrade::release_target().unwrap();
+    upgrade::download_binary(
+        &format!("file://{}", releases.display()),
+        version,
+        &target,
+        exe,
     )
 }
 
@@ -104,11 +100,9 @@ fn upgrade_replaces_the_binary_with_a_verified_release() {
     publish(&releases, "9.9.9", None);
     let exe = installed_copy(root.path());
 
-    let output = upgrade(&exe, &releases, &["9.9.9"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_eq!(
+        install(&exe, &releases, "9.9.9").unwrap(),
+        Downloaded::Installed
     );
     assert_eq!(version_of(&exe), "forkspace 9.9.9");
     let leftovers: Vec<_> = fs::read_dir(exe.parent().unwrap()).unwrap().collect();
@@ -117,20 +111,22 @@ fn upgrade_replaces_the_binary_with_a_verified_release() {
 
 #[test]
 fn update_is_another_name_for_upgrade() {
+    let help = |command: &str| {
+        output(Command::new(env!("CARGO_BIN_EXE_forkspace")).args([command, "--help"])).stdout
+    };
+    assert_eq!(help("update"), help("upgrade"));
+}
+
+#[test]
+fn a_release_without_a_binary_for_this_platform_is_reported() {
     let root = tempfile::tempdir().unwrap();
     let releases = root.path().join("releases");
-    publish(&releases, "9.9.9", None);
+    fs::create_dir_all(releases.join("download/v9.9.9")).unwrap();
     let exe = installed_copy(root.path());
-
-    let help = |command: &str| run_as(command, &exe, &releases, &["--help"]).stdout;
-    assert_eq!(help("update"), help("upgrade"));
-    let output = run_as("update", &exe, &releases, &["9.9.9"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_eq!(
+        install(&exe, &releases, "9.9.9").unwrap(),
+        Downloaded::NoAsset
     );
-    assert_eq!(version_of(&exe), "forkspace 9.9.9");
 }
 
 #[test]
@@ -141,9 +137,8 @@ fn upgrade_refuses_a_download_whose_checksum_does_not_match() {
     let exe = installed_copy(root.path());
     let before = version_of(&exe);
 
-    let output = upgrade(&exe, &releases, &["9.9.9"]);
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("checksum mismatch"));
+    let error = install(&exe, &releases, "9.9.9").unwrap_err();
+    assert!(error.to_string().contains("checksum mismatch"), "{error}");
     assert_eq!(version_of(&exe), before);
 }
 
@@ -153,7 +148,7 @@ fn upgrade_to_the_running_version_does_nothing() {
     let exe = installed_copy(root.path());
     let current = env!("CARGO_PKG_VERSION");
 
-    let output = upgrade(&exe, &root.path().join("missing"), &[current]);
+    let output = output(Command::new(&exe).args(["upgrade", current]));
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("up to date"));
 }

@@ -8,7 +8,7 @@
 # Upgrade later with `forkspace upgrade`.
 set -eu
 
-releases=${FORKSPACE_RELEASES_URL:-https://github.com/berezovyy/forkspace/releases}
+releases=https://github.com/berezovyy/forkspace/releases
 
 say() { printf 'forkspace: %s\n' "$*"; }
 die() {
