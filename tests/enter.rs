@@ -63,7 +63,7 @@ fn test_enter_env_vars() {
             "--",
             "sh",
             "-c",
-            "printf '%s\\n%s\\n%s\\n' \"$FORKSPACE_WORKSPACE\" \"$FORKSPACE_VIEW\" \"$FORKSPACE_UPPER\"",
+            "printf '%s\\n%s\\n' \"$FORKSPACE_WORKSPACE\" \"$PWD\"",
         ])
         .output()
         .expect("failed to run forkspace enter");
@@ -75,41 +75,6 @@ fn test_enter_env_vars() {
         stdout
     );
     assert!(stdout.contains(&ws.view_path.display().to_string()));
-    assert!(stdout.contains(&ws.upper_path().unwrap().display().to_string()));
-
-    common::cleanup_workspace(&ws);
-}
-
-#[test]
-#[serial]
-fn test_enter_env_base() {
-    skip_without_overlay!();
-    let (_dir, base) = common::setup_with_project();
-
-    let ws = common::fork_helper(base.path().to_path_buf(), "enter-base-ws").unwrap();
-
-    let base_canonical = base.path().canonicalize().unwrap();
-
-    let output = Command::new(forkspace_bin())
-        .env("FORKSPACE_HOME", std::env::var("FORKSPACE_HOME").unwrap())
-        .args([
-            "enter",
-            "enter-base-ws",
-            "--",
-            "sh",
-            "-c",
-            "echo $FORKSPACE_BASE",
-        ])
-        .output()
-        .expect("failed to run forkspace enter");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(&base_canonical.display().to_string()),
-        "expected base path '{}' in stdout, got: {}",
-        base_canonical.display(),
-        stdout
-    );
 
     common::cleanup_workspace(&ws);
 }

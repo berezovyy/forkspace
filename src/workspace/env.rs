@@ -5,25 +5,17 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use crate::backend::select_backend;
 use crate::error::Result;
 use crate::state::State;
 use crate::workspace::Workspace;
 
 /// Environment for any process forkspace starts in `workspace` (`enter` and `run`).
 ///
-/// Besides the `FORKSPACE_*` variables, `COMPOSE_PROJECT_NAME` is set (unless the user set it)
+/// Besides `FORKSPACE_WORKSPACE`, `COMPOSE_PROJECT_NAME` is set (unless the user set it)
 /// so Docker Compose gives each workspace its own containers, networks, and volumes instead
 /// of deriving one shared project name from the view directory's basename.
 pub fn process_env(state: &State, workspace: &Workspace) -> Result<Vec<(String, String)>> {
-    let mut env = vec![
-        ("FORKSPACE_WORKSPACE".to_string(), workspace.name.clone()),
-        (
-            "FORKSPACE_BASE".to_string(),
-            workspace.base.display().to_string(),
-        ),
-    ];
-    env.extend(select_backend(Some(workspace.backend_kind))?.shell_env(workspace));
+    let mut env = vec![("FORKSPACE_WORKSPACE".to_string(), workspace.name.clone())];
     if let Some(directory) = super::tmp::ensure(&workspace.name) {
         env.extend(super::tmp::env(&directory));
     }

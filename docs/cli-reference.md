@@ -253,10 +253,6 @@ Set by `enter` and `run` for the commands they start:
 | Variable | |
 | :-- | :-- |
 | `FORKSPACE_WORKSPACE` | The workspace's name. Commands that take an optional name default to it. |
-| `FORKSPACE_BASE` | The directory it was forked from. |
-| `FORKSPACE_VIEW` | The workspace directory, on every backend. Use this one in scripts. |
-| `FORKSPACE_UPPER` | Linux overlay only: the layer that holds the workspace's changes. |
-| `FORKSPACE_SESSION` | The `--session` value, when given. |
 | `COMPOSE_PROJECT_NAME` | `<project>-<workspace>`, unless already set, so Docker Compose keeps each workspace's containers apart. |
 | `PORT` | `run` only: the port the app should listen on. |
 

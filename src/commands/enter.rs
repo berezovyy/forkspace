@@ -86,9 +86,6 @@ fn shell_command(
     command
         .current_dir(backend.view_path(workspace))
         .envs(workspace::process_env(state, workspace)?);
-    if let Some(session) = workspace.session.as_ref() {
-        command.env("FORKSPACE_SESSION", session);
-    }
     Ok(command)
 }
 

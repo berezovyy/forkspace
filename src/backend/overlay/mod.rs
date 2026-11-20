@@ -349,20 +349,6 @@ impl WorkspaceBackend for OverlayBackend {
         ))
     }
 
-    fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {
-        let mut env = vec![(
-            "FORKSPACE_VIEW".to_string(),
-            ws.view_path.display().to_string(),
-        )];
-        if let Ok(state) = ws.linux_state() {
-            env.push((
-                "FORKSPACE_UPPER".to_string(),
-                state.upper.display().to_string(),
-            ));
-        }
-        env
-    }
-
     fn ensure_view(&self, ws: &Workspace) -> Result {
         let state = ws.linux_state()?;
         match mount::view_health(&state.merged) {

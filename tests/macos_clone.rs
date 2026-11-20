@@ -214,10 +214,7 @@ mod macos {
         assert_eq!(backend.kind(), BackendKind::MacClone);
         backend.preflight(base.path()).unwrap();
 
-        let workspace = fork(base.path(), "native");
-        let env = backend.shell_env(&workspace);
-        assert!(env.iter().any(|(key, _)| key == "FORKSPACE_VIEW"));
-        assert!(!env.iter().any(|(key, _)| key == "FORKSPACE_UPPER"));
+        fork(base.path(), "native");
 
         let error = select_backend(Some(BackendKind::Overlay)).err().unwrap();
         assert_eq!(error.exit_code(), 7);

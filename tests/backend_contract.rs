@@ -82,10 +82,6 @@ impl WorkspaceBackend for FakeBackend {
     fn change_count(&self, _ws: &Workspace, _include_ignored: bool) -> Result<ChangeCount> {
         Ok(ChangeCount::Ready(0))
     }
-
-    fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {
-        vec![("FORKSPACE_VIEW".into(), ws.view_path.display().to_string())]
-    }
 }
 
 #[test]
@@ -120,13 +116,6 @@ fn fake_backend_passes_workspace_contract() {
         .changes(&workspace, false, false)
         .unwrap()
         .is_empty());
-    assert_eq!(
-        backend.shell_env(&workspace),
-        vec![(
-            "FORKSPACE_VIEW".into(),
-            root.path().join("view").display().to_string()
-        )]
-    );
     backend.destroy(&workspace, DestroyMode::Normal).unwrap();
     assert_eq!(creates.load(Ordering::SeqCst), 1);
     assert_eq!(destroys.load(Ordering::SeqCst), 1);

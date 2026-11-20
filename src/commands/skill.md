@@ -31,7 +31,7 @@ forkspace enter fix-login -- npm test   # run a command inside it (exits with it
   shell's directory does not move other tools; pass the absolute path to each tool call.
 - Commands run through `forkspace enter <name> -- <command>` (and `forkspace run`) cannot
   write to the original project or to other workspaces. Prefer it for builds, installs and
-  tests. `FORKSPACE_VIEW` holds the workspace path inside such commands.
+  tests; they start in the workspace folder.
 - `--from <workspace>` stacks a workspace on another one; `--branch <name>` creates a Git branch
   in the workspace for `forkspace land`.
 - Each workspace is sealed: later changes to the project reach it only through

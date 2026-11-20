@@ -292,11 +292,4 @@ impl<P: ForkPrimitive> WorkspaceBackend for SnapshotBackend<P> {
     fn transferable_changes(&self, ws: &Workspace) -> Result<Vec<FileChange>> {
         crate::changes::collect_transferable_clone_changes(ws)
     }
-
-    fn shell_env(&self, ws: &Workspace) -> Vec<(String, String)> {
-        vec![(
-            "FORKSPACE_VIEW".to_string(),
-            ws.view_path.display().to_string(),
-        )]
-    }
 }
