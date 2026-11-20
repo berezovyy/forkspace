@@ -38,7 +38,7 @@ compiled in, and everything above the primitive that materializes a workspace is
 | Feature | Linux | macOS | Evidence |
 |---|---|---|---|
 | Processes in a workspace | systemd user slice, else a `/proc` scan | libproc scan | `tests/processes.rs::processes_that_leave_the_workspace_directory_are_still_killed_through_the_slice`; `src/process/members.rs::libproc_finds_a_process_working_in_the_view` |
-| Limits | `MemoryHigh`, `CPUQuota`, one shared `forkspace.slice` | background priority | `tests/processes.rs::workspace_processes_run_under_forkspace_slice_with_limits`; `src/process/systemd.rs::background_commands_run_at_background_priority` |
+| Limits | one shared `forkspace.slice` (CPU weight 50, 75% memory ceiling) | background priority | `tests/processes.rs::workspace_processes_run_under_the_shared_forkspace_slice`; `src/process/systemd.rs::background_commands_run_at_background_priority` |
 | Write sandbox | Landlock | `sandbox-exec` (Seatbelt) | `tests/sandbox.rs::writes_to_the_project_are_refused_and_writes_inside_succeed`; `tests/sandbox_macos.rs::seatbelt_refuses_writes_to_the_project_and_allows_the_view` |
 | Disk use | allocated blocks, stopping at mount points | APFS private size | `tests/disk.rs::ls_shows_private_sizes_and_a_total`; `src/disk.rs::apfs_clones_have_no_private_size` |
 | Directory scans | parallel `readdir` + `lstat` | `getattrlistbulk`, checked against `lstat` | `tests/scans.rs::merge_ls_and_diff_agree_while_node_modules_is_skipped`; `src/util/bulk.rs::bulk_attributes_match_lstat` |

@@ -21,7 +21,6 @@ _forkspace() {
         'pull:Bring base changes into a workspace'
         'save:Save a snapshot of a workspace to go back to'
         'restore:Go back to a snapshot (without one, list them)'
-        'limit:Show or change a workspace'"'"'s memory and CPU limits'
         'gc:Show what disk forkspace could give back, and reclaim it'
         'upgrade:Upgrade forkspace to the latest release'
         'update:Upgrade forkspace to the latest release'
@@ -44,8 +43,6 @@ _forkspace() {
                 new)
                     _arguments \
                         '1:workspace name:' \
-                        '--memory=[Memory above which the workspace is throttled]:size:' \
-                        '--cpu=[CPU time cap, percent of one CPU]:percent:' \
                         '--help[Show help]'
                     ;;
                 drop)
@@ -107,13 +104,6 @@ _forkspace() {
                     _arguments \
                         '--older-than=[Only remove unchanged workspaces older than this]:age:' \
                         '--yes[Remove without asking]' \
-                        '--help[Show help]'
-                    ;;
-                limit)
-                    _arguments \
-                        '1:workspace:_forkspace_workspaces' \
-                        '--memory=[Memory limit or none]:size:' \
-                        '--cpu=[CPU limit or none]:percent:' \
                         '--help[Show help]'
                     ;;
                 restore)

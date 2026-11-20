@@ -94,7 +94,6 @@ fn json_entry(workspace: &Workspace, processes: usize) -> serde_json::Value {
         "size_bytes": disk::workspace_bytes(workspace).ok(),
         "processes": processes,
         "memory_bytes": crate::process::systemd::memory_current(&workspace.name),
-        "limits": workspace.limits,
     })
 }
 

@@ -204,14 +204,14 @@ fn walk_procs(path: &std::path::Path) -> impl Iterator<Item = u32> {
 }
 
 #[test]
-fn workspace_processes_run_under_forkspace_slice_with_limits() {
+fn workspace_processes_run_under_the_shared_forkspace_slice() {
     if !systemd_user_available() {
         eprintln!("skipping: no systemd user manager");
         return;
     }
     let env = Env::new(true);
     // A distinct workspace name, so the slice can be told apart from parallel tests'.
-    let created = env.run(&["new", "limited", "--memory", "1G", "--cpu", "150%"]);
+    let created = env.run(&["new", "limited"]);
     assert!(
         created.status.success(),
         "{}",
@@ -231,16 +231,6 @@ fn workspace_processes_run_under_forkspace_slice_with_limits() {
     let slice = slice_cgroup("limited").expect("workspace slice with its process");
     let pid = running("3105")[0];
     assert!(walk_procs(&slice).any(|member| member == pid));
-    assert_eq!(
-        fs::read_to_string(slice.join("memory.high"))
-            .unwrap()
-            .trim(),
-        "1073741824"
-    );
-    assert_eq!(
-        fs::read_to_string(slice.join("cpu.max")).unwrap().trim(),
-        "150000 100000"
-    );
     let parent = slice.parent().unwrap();
     assert_eq!(parent.file_name().unwrap(), "forkspace.slice");
     assert_eq!(
@@ -265,22 +255,6 @@ fn workspace_processes_run_under_forkspace_slice_with_limits() {
         .find(|entry| entry["name"] == "limited")
         .unwrap();
     assert!(entry["memory_bytes"].as_u64().unwrap() > 0);
-    assert_eq!(entry["limits"]["memory"], "1G");
-
-    let changed = env.run(&["limit", "limited", "--memory", "2G"]);
-    assert!(changed.status.success());
-    assert_eq!(
-        fs::read_to_string(slice.join("memory.high"))
-            .unwrap()
-            .trim(),
-        "2147483648"
-    );
-    assert_eq!(
-        env.run(&["limit", "limited", "--cpu", "lots"])
-            .status
-            .code(),
-        Some(1)
-    );
 
     assert!(env.run(&["drop", "limited"]).status.success());
     assert!(wait_until_gone("3105"));

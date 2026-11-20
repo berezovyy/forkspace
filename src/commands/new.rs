@@ -11,16 +11,7 @@ use crate::state::State;
 use crate::workspace::{self, CreateOptions, Workspace};
 
 pub fn exec(args: NewArgs) -> Result {
-    let limits = super::limit::from_flags(args.memory.as_deref(), args.cpu.as_deref())?;
-    let ws = create(args.name)?;
-    if !limits.is_empty() {
-        super::limit::warn_without_systemd(&limits);
-        State::with_state(|state| {
-            state.require_workspace_mut(&ws.name)?.limits = limits;
-            Ok(())
-        })?;
-    }
-    Ok(())
+    create(args.name).map(|_| ())
 }
 
 /// Make workspace `name` (or the next free `<project>-N`) from where you are, and say so.

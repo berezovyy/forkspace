@@ -86,7 +86,6 @@ impl From<LegacyWorkspace> for Workspace {
             last_pull: None,
             git_head_at_fork: None,
             unresolved_conflicts: Vec::new(),
-            limits: Default::default(),
             degraded: false,
             probe_reason: None,
             unknown_fields: value.unknown_fields,

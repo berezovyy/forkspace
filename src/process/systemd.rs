@@ -7,7 +7,7 @@
 //! processes. The `-` in the slice name makes each workspace slice a child of
 //! `forkspace.slice`, which carries limits for all workspaces together: a lower CPU weight than
 //! the user's own apps and a shared memory ceiling, so parallel agents cannot freeze the
-//! machine. A workspace's own `--memory` / `--cpu` limits go on its slice. Without a user
+//! machine. Without a user
 //! manager (containers, SSH sessions without lingering) commands run directly, unlimited, and
 //! the `/proc` scan in [`super::members`] is the only way to find them.
 //!
@@ -18,7 +18,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::workspace::{Limits, Workspace};
+use crate::workspace::Workspace;
 
 /// Whether `systemd-run --user` can be used here.
 pub fn available() -> bool {
@@ -63,7 +63,6 @@ pub fn scoped(command: Command, workspace: &Workspace, background: bool) -> Comm
         return lowered(command, background);
     }
     ensure_shared_limits();
-    apply_limits(&workspace.name, &workspace.limits);
     let mut wrapped = Command::new("systemd-run");
     wrapped
         .args(["--user", "--scope", "--collect", "--quiet"])
@@ -122,21 +121,6 @@ fn ensure_shared_limits() {
     if applied {
         let _ = std::fs::write(marker, "");
     }
-}
-
-/// Put `limits` on workspace `name`'s slice (runtime-only; reapplied at every start).
-pub fn apply_limits(name: &str, limits: &Limits) {
-    if !available() || limits.is_empty() {
-        return;
-    }
-    let mut properties = Vec::new();
-    if let Some(memory) = &limits.memory {
-        properties.push(format!("MemoryHigh={memory}"));
-    }
-    if let Some(cpu) = &limits.cpu {
-        properties.push(format!("CPUQuota={cpu}"));
-    }
-    set_properties(name, &properties);
 }
 
 /// Set unit `properties` on workspace `name`'s slice for this session.

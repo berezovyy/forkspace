@@ -1,11 +1,9 @@
 Copy the project you are in into a new workspace
 
-Usage: forkspace new [OPTIONS] [NAME]
+Usage: forkspace new [NAME]
 
 Arguments:
   [NAME]  Name for the new workspace (defaults to <project>-1, <project>-2, ...)
 
 Options:
-      --memory <SIZE>  Throttle the workspace's processes above this much memory, e.g. 4G (Linux)
-      --cpu <PERCENT>  Cap the workspace's CPU time, as a percentage of one CPU, e.g. 200% (Linux)
-  -h, --help           Print help
+  -h, --help  Print help

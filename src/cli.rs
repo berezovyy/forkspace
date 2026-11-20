@@ -54,9 +54,6 @@ pub enum Commands {
     /// Go back to a snapshot (without one, list them)
     Restore(RestoreArgs),
 
-    /// Show or change a workspace's memory and CPU limits
-    Limit(LimitArgs),
-
     /// Show what disk forkspace could give back, and reclaim it
     Gc(GcArgs),
 
@@ -83,20 +80,6 @@ pub enum Commands {
 pub struct NewArgs {
     #[arg(help = "Name for the new workspace (defaults to <project>-1, <project>-2, ...)")]
     pub name: Option<String>,
-
-    #[arg(
-        long,
-        value_name = "SIZE",
-        help = "Throttle the workspace's processes above this much memory, e.g. 4G (Linux)"
-    )]
-    pub memory: Option<String>,
-
-    #[arg(
-        long,
-        value_name = "PERCENT",
-        help = "Cap the workspace's CPU time, as a percentage of one CPU, e.g. 200% (Linux)"
-    )]
-    pub cpu: Option<String>,
 }
 
 #[derive(Args)]
@@ -197,26 +180,6 @@ pub struct GcArgs {
 
     #[arg(long, help = "Remove without asking")]
     pub yes: bool,
-}
-
-#[derive(Args)]
-pub struct LimitArgs {
-    #[arg(help = "Name of the workspace")]
-    pub name: String,
-
-    #[arg(
-        long,
-        value_name = "SIZE",
-        help = "Memory above which it is throttled, e.g. 4G; `none` removes it"
-    )]
-    pub memory: Option<String>,
-
-    #[arg(
-        long,
-        value_name = "PERCENT",
-        help = "CPU time cap as a percentage of one CPU; `none` removes it"
-    )]
-    pub cpu: Option<String>,
 }
 
 #[derive(Args)]
