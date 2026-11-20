@@ -101,13 +101,7 @@ pub fn setup_test_env() -> TestHome {
 /// Background manifest builders re-run the current binary, which in a test is the test
 /// binary itself; point them at the forkspace binary instead.
 pub fn use_forkspace_for_workers() {
-    // SAFETY: as above, tests that set the environment are serialized.
-    unsafe {
-        std::env::set_var(
-            "FORKSPACE_INTERNAL_MANIFEST_EXE",
-            env!("CARGO_BIN_EXE_forkspace"),
-        )
-    };
+    forkspace::changes::manifest::set_builder_executable(env!("CARGO_BIN_EXE_forkspace").into());
 }
 
 /// `command` under strace, with every rename delayed by `delay` before it runs. Each step of a

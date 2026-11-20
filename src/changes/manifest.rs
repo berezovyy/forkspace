@@ -30,7 +30,7 @@ use crate::util::{IoContext, WalkDirExt};
 use crate::workspace::Workspace;
 
 pub(crate) use worker::can_spawn;
-pub use worker::{run_worker_from_env, spawn};
+pub use worker::{run_worker_from_env, set_builder_executable, spawn};
 
 /// Lifecycle of a workspace's fork manifest, persisted in `state.json`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -5,8 +5,8 @@
 //! through `FORKSPACE_INTERNAL_MANIFEST_*` environment variables, and `main` hands control to
 //! [`run_worker_from_env`] before parsing arguments.
 
-#[cfg(target_os = "macos")]
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use crate::error::{ForkspaceError, Result};
 
@@ -20,10 +20,18 @@ const WORKER_VIEW: &str = "FORKSPACE_INTERNAL_MANIFEST_VIEW";
 const WORKER_BASE: &str = "FORKSPACE_INTERNAL_MANIFEST_BASE";
 #[cfg(target_os = "macos")]
 const WORKER_FORK_NS: &str = "FORKSPACE_INTERNAL_MANIFEST_FORK_NS";
-/// The binary to run as the worker instead of this one. Test harnesses set it to the forkspace
-/// binary: run as a worker, a test binary would run its tests again instead.
-#[cfg(target_os = "macos")]
-const WORKER_EXE: &str = "FORKSPACE_INTERNAL_MANIFEST_EXE";
+/// The binary [`spawn`] starts as the builder, when not this one; see
+/// [`set_builder_executable`].
+static BUILDER_EXECUTABLE: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Start background builders from `forkspace`, the forkspace binary, instead of the running
+/// one. A builder re-runs its binary as forkspace, so a program that uses forkspace as a
+/// library (a test harness, an embedding tool) names forkspace's binary here.
+pub fn set_builder_executable(forkspace: PathBuf) {
+    *BUILDER_EXECUTABLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(forkspace);
+}
 
 /// Whether this process can start a background builder: on macOS, unless it is one.
 pub(crate) fn can_spawn() -> bool {
@@ -58,8 +66,12 @@ pub fn spawn(
             "a background manifest builder cannot start another".to_string(),
         ));
     }
-    let executable = match std::env::var_os(WORKER_EXE) {
-        Some(executable) => PathBuf::from(executable),
+    let configured = BUILDER_EXECUTABLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let executable = match configured {
+        Some(executable) => executable,
         None => std::env::current_exe()
             .io_context(|| "locate forkspace executable for manifest builder".to_string())?,
     };
@@ -70,7 +82,6 @@ pub fn spawn(
         .env(WORKER_VIEW, view)
         .env(WORKER_BASE, base)
         .env(WORKER_FORK_NS, fork_time_ns.to_string())
-        .env_remove(WORKER_EXE)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -100,8 +111,8 @@ pub fn spawn(
 #[cfg(not(target_os = "macos"))]
 pub fn spawn(
     _name: String,
-    _view: std::path::PathBuf,
-    _base: std::path::PathBuf,
+    _view: PathBuf,
+    _base: PathBuf,
     _fork_time_ns: u128,
 ) -> Result<super::Builder> {
     Err(ForkspaceError::CapabilityUnsupported {

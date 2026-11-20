@@ -35,12 +35,9 @@ mod macos {
         unsafe { std::env::remove_var("FORKSPACE_BACKEND") };
         // Background manifest builders re-run the current binary: make it forkspace, not
         // this test binary.
-        unsafe {
-            std::env::set_var(
-                "FORKSPACE_INTERNAL_MANIFEST_EXE",
-                env!("CARGO_BIN_EXE_forkspace"),
-            )
-        };
+        forkspace::changes::manifest::set_builder_executable(
+            env!("CARGO_BIN_EXE_forkspace").into(),
+        );
         fs::write(base.path().join("README.md"), "base\n").unwrap();
         (home, base)
     }
@@ -879,22 +876,14 @@ mod macos {
             std::os::unix::fs::PermissionsExt::from_mode(0o755),
         )
         .unwrap();
-        let forked = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env("FORKSPACE_HOME", home.path())
-            .env("FORKSPACE_INTERNAL_MANIFEST_EXE", &slow_worker)
-            .args([
-                "new",
-                "early-patch",
-                "--from",
-                base.path().to_str().unwrap(),
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            forked.status.success(),
-            "{}",
-            String::from_utf8_lossy(&forked.stderr)
+        manifest::set_builder_executable(slow_worker);
+        let forked = forkspace::workspace::create(
+            base.path().to_path_buf(),
+            "early-patch",
+            Default::default(),
         );
+        manifest::set_builder_executable(env!("CARGO_BIN_EXE_forkspace").into());
+        forked.unwrap();
         let view = State::load().unwrap().workspaces["early-patch"]
             .view_path
             .clone();

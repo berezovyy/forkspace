@@ -36,8 +36,6 @@ impl Env {
         let mut command = Command::new(env!("CARGO_BIN_EXE_forkspace"));
         command
             .env("FORKSPACE_HOME", self.home.path())
-            // A child run as a background manifest builder would not run the command.
-            .env_remove("FORKSPACE_INTERNAL_MANIFEST_WORKER")
             .current_dir(self.project())
             .args(args);
         command

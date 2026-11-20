@@ -64,6 +64,15 @@ fn dying_builder(env: &Env) -> PathBuf {
     path
 }
 
+/// Fork the project as workspace `ws` with `builder` started as its background builder.
+#[cfg(target_os = "macos")]
+fn fork_with_builder(env: &Env, builder: PathBuf) {
+    manifest::set_builder_executable(builder);
+    let forked = forkspace::workspace::create(env.project(), "ws", Default::default());
+    common::use_forkspace_for_workers();
+    forked.unwrap();
+}
+
 /// STATE-02: the builder dies (killed, crashed, or it gave up waiting for the workspace record)
 /// and the status stays `building`; the next command, of any kind, starts it again.
 #[cfg(target_os = "macos")]
@@ -74,12 +83,7 @@ fn a_manifest_build_whose_builder_died_is_restarted_by_the_next_command() {
     write(&env.project().join("a.txt"), "a\n");
     write(&env.project().join("b.txt"), "b\n");
     let project = env.project();
-    let forked = env
-        .command(&["new", "ws", "--from", project.to_str().unwrap()])
-        .env("FORKSPACE_INTERNAL_MANIFEST_EXE", dying_builder(&env))
-        .output()
-        .unwrap();
-    assert!(forked.status.success(), "{}", stderr(&forked));
+    fork_with_builder(&env, dying_builder(&env));
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(status("ws"), ManifestStatus::Building);
     let view = env.view("ws");
@@ -137,21 +141,19 @@ fn a_command_that_needs_the_manifest_builds_it_when_its_builder_is_gone() {
     assert!(!env.project().join("b.txt").exists());
 }
 
-/// Makes this test process act as a background builder, which never starts another one.
+/// Background builders of this process cannot start: their binary does not exist.
 struct NoBackgroundBuilders;
 
 impl NoBackgroundBuilders {
     fn new() -> Self {
-        // SAFETY: the tests here are serialized.
-        unsafe { std::env::set_var("FORKSPACE_INTERNAL_MANIFEST_WORKER", "1") };
+        manifest::set_builder_executable("/nonexistent/forkspace-builder".into());
         Self
     }
 }
 
 impl Drop for NoBackgroundBuilders {
     fn drop(&mut self) {
-        // SAFETY: as above.
-        unsafe { std::env::remove_var("FORKSPACE_INTERNAL_MANIFEST_WORKER") };
+        common::use_forkspace_for_workers();
     }
 }
 
@@ -180,12 +182,7 @@ fn a_base_rename_of_a_dangling_symlink_before_the_walk_leaves_the_manifest_ready
     )
     .unwrap();
     let project = env.project();
-    let forked = env
-        .command(&["new", "ws", "--from", project.to_str().unwrap()])
-        .env("FORKSPACE_INTERNAL_MANIFEST_EXE", &slow_builder)
-        .output()
-        .unwrap();
-    assert!(forked.status.success(), "{}", stderr(&forked));
+    fork_with_builder(&env, slow_builder);
     write(&env.view("ws").join("b.txt"), "eps\n");
     fs::rename(project.join("g.md/b"), project.join("h")).unwrap();
 
