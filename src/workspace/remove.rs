@@ -148,7 +148,7 @@ fn remove_after_cleanup(state: &mut State, name: &str, cleanup: impl FnOnce() ->
     Ok(())
 }
 
-/// Dropping a `--branch` workspace whose branch tip is not in the root base loses history.
+/// Dropping a workspace whose commits no branch of its project holds loses them: say so.
 fn warn_if_unlanded(state: &State, name: &str) {
     let Ok(workspace) = state.require_workspace(name) else {
         return;
@@ -156,19 +156,20 @@ fn warn_if_unlanded(state: &State, name: &str) {
     let Some(branch) = &workspace.branch else {
         return;
     };
-    let root_base = state
-        .parent_chain(name)
-        .first()
-        .map_or_else(|| workspace.base.clone(), |root| root.base.clone());
-    let reference = format!("refs/heads/{branch}");
-    let Ok(tip) = git::rev_parse(&workspace.view_path, &reference) else {
+    let Ok(tip) = git::resolve(&workspace.view_path, &format!("refs/heads/{branch}")) else {
         return;
     };
-    let landed = git::rev_parse(&root_base, &reference)
-        .is_ok_and(|base_tip| git::is_ancestor(&root_base, &tip, &base_tip).unwrap_or(false));
-    if !landed {
+    if workspace.git_head_at_fork.as_deref() == Some(tip.as_str()) {
+        return;
+    }
+    let kept = git::capture_git(
+        &workspace.base,
+        &["branch", "--contains", &tip, "--format=%(refname)"],
+    )
+    .is_ok_and(|branches| !branches.trim().is_empty());
+    if !kept {
         eprintln!(
-            "warning: workspace '{name}' has unlanded work on '{branch}' — run `forkspace land {name}` first, or accept history loss"
+            "warning: '{name}' made commits that were never merged; they go with it (`forkspace merge {name}` first keeps them as a branch)"
         );
     }
 }

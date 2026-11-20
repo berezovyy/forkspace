@@ -110,17 +110,16 @@ fn different_lines_reach_the_project_from_both_workspaces() {
         "line 10 ws3\n",
     );
 
-    env.ok(&["merge", "ws1", "--quiet", "--no-install"]);
+    env.ok(&["merge", "ws1"]);
     // Merging straight away combines the edits...
-    let plan = env.ok(&["merge", "ws2", "--dry-run"]);
-    assert!(plan.contains("merged line by line: app.txt"), "{plan}");
-    env.ok(&["merge", "ws2", "--quiet", "--no-install"]);
+    let merged = env.ok(&["merge", "ws2"]);
+    assert!(merged.contains("merged line by line: app.txt"), "{merged}");
     // ...and so does pulling first, then merging.
     let pulled = env.ok(&["pull", "ws3", "--no-install"]);
     assert!(pulled.contains("merged line by line: app.txt"), "{pulled}");
     let view = env.read(&env.view("ws3").join("app.txt"));
     assert!(view.contains("line 2 ws1\n") && view.contains("line 18 ws2\n"));
-    env.ok(&["merge", "ws3", "--quiet", "--no-install"]);
+    env.ok(&["merge", "ws3"]);
 
     let project = env.read(&env.project().join("app.txt"));
     for expected in ["line 2 ws1\n", "line 10 ws3\n", "line 18 ws2\n"] {
@@ -139,10 +138,10 @@ fn same_lines_get_markers_in_the_workspace_and_never_reach_the_project() {
     env.fork("ws2");
     edit(&env.view("ws1").join("app.txt"), "line 3\n", "line 3 ws1\n");
     edit(&env.view("ws2").join("app.txt"), "line 3\n", "line 3 ws2\n");
-    env.ok(&["merge", "ws1", "--quiet", "--no-install"]);
+    env.ok(&["merge", "ws1"]);
     let project_before = env.read(&env.project().join("app.txt"));
 
-    let refused = env.run(&["merge", "ws2", "--quiet", "--no-install"]);
+    let refused = env.run(&["merge", "ws2"]);
     assert_eq!(exit_code(&refused), Some(5));
     assert!(String::from_utf8_lossy(&refused.stderr).contains("forkspace pull ws2"));
     assert_eq!(env.read(&env.project().join("app.txt")), project_before);
@@ -159,14 +158,14 @@ fn same_lines_get_markers_in_the_workspace_and_never_reach_the_project() {
         assert!(marked.contains(marker), "missing {marker:?} in {marked}");
     }
 
-    let blocked = env.run(&["merge", "ws2", "--quiet", "--no-install"]);
+    let blocked = env.run(&["merge", "ws2"]);
     assert_eq!(exit_code(&blocked), Some(5));
     assert!(String::from_utf8_lossy(&blocked.stderr).contains("conflict markers"));
     assert_eq!(env.read(&env.project().join("app.txt")), project_before);
 
     let resolved = numbered(5).replace("line 3\n", "line 3 ws1 and ws2\n");
     fs::write(env.view("ws2").join("app.txt"), &resolved).unwrap();
-    env.ok(&["merge", "ws2", "--quiet", "--no-install"]);
+    env.ok(&["merge", "ws2"]);
     assert_eq!(env.read(&env.project().join("app.txt")), resolved);
 }
 
@@ -190,8 +189,6 @@ fn package_json_merges_and_the_lockfile_is_regenerated_not_merged() {
         "\"x\": \"1.0.0\",\n    \"y\": \"3.0.0\"\n",
     );
     fs::write(env.view("ws2").join("package-lock.json"), "{\"lock\": 2}\n").unwrap();
-    env.ok(&["merge", "ws1", "--quiet", "--no-install"]);
-
     // A stand-in `npm` that regenerates the lockfile, so the test needs no network.
     let bin = env.root.path().join("bin");
     fs::create_dir(&bin).unwrap();
@@ -206,13 +203,13 @@ fn package_json_merges_and_the_lockfile_is_regenerated_not_merged() {
         bin.display(),
         std::env::var("PATH").unwrap()
     ));
+    env.ok(&["merge", "ws1"]);
 
     let merged = env.ok(&["merge", "ws2"]);
     assert!(
         merged.contains("merged line by line: package.json"),
         "{merged}"
     );
-    assert!(merged.contains("keeping the base lockfile"), "{merged}");
     let package = env.read(&env.project().join("package.json"));
     assert!(package.contains("\"b\": \"2.0.0\"") && package.contains("\"y\": \"3.0.0\""));
     assert_eq!(
@@ -229,10 +226,10 @@ fn binary_files_both_sides_changed_stay_whole_file_conflicts() {
     env.fork("ws2");
     fs::write(env.view("ws1").join("image.bin"), b"\0one\n").unwrap();
     fs::write(env.view("ws2").join("image.bin"), b"\0two\n").unwrap();
-    env.ok(&["merge", "ws1", "--quiet", "--no-install"]);
-    let refused = env.run(&["merge", "ws2", "--quiet", "--no-install"]);
+    env.ok(&["merge", "ws1"]);
+    let refused = env.run(&["merge", "ws2"]);
     assert_eq!(exit_code(&refused), Some(5));
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("base changed since fork"));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("too since the fork"));
     assert_eq!(
         fs::read(env.project().join("image.bin")).unwrap(),
         b"\0one\n"
@@ -251,13 +248,13 @@ fn without_git_both_sides_changed_is_a_whole_file_conflict() {
         "line 18\n",
         "line 18 ws2\n",
     );
-    env.ok(&["merge", "ws1", "--quiet", "--no-install"]);
+    env.ok(&["merge", "ws1"]);
     let empty = env.root.path().join("empty-bin");
     fs::create_dir(&empty).unwrap();
     env.path = Some(empty.display().to_string());
-    let refused = env.run(&["merge", "ws2", "--quiet", "--no-install"]);
+    let refused = env.run(&["merge", "ws2"]);
     assert_eq!(exit_code(&refused), Some(5));
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("base changed since fork"));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("too since the fork"));
 }
 
 #[test]
@@ -276,7 +273,7 @@ fn an_interrupted_auto_merge_resumes_from_its_journal() {
         "line 18\n",
         "line 18 ws2\n",
     );
-    env.ok(&["merge", "ws1", "--quiet", "--no-install"]);
+    env.ok(&["merge", "ws1"]);
 
     // Record the journal a crash would leave: planned, nothing applied, merge staged.
     let state: serde_json::Value =
@@ -322,7 +319,7 @@ fn an_interrupted_auto_merge_resumes_from_its_journal() {
     };
     journal::save(&path, &journaled).unwrap();
 
-    env.ok(&["merge", "ws2", "--resume", "--no-install"]);
+    env.ok(&["merge", "ws2"]);
     assert_eq!(env.read(&target), combined);
     assert!(!path.exists() && !journal::staging_dir(&path).exists());
 }

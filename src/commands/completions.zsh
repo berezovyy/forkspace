@@ -18,7 +18,6 @@ _forkspace() {
         'diff:Show what changed in a workspace'
         'merge:Apply workspace changes back to the base directory'
         'pull:Bring base changes into a workspace'
-        'land:Preserve workspace commits in the base repository'
         'checkpoint:Save the current state of a workspace'
         'checkpoints:List a workspace'"'"'s checkpoints'
         'restore:Return a workspace to one of its checkpoints'
@@ -90,16 +89,6 @@ _forkspace() {
                 merge)
                     _arguments \
                         '1:workspace:_forkspace_workspaces' \
-                        '--commit[Create a git commit]' \
-                        '-m=[Commit message]:message:' \
-                        '--message=[Commit message]:message:' \
-                        '--patch[Generate unified patch]' \
-                        '--drop[Drop workspace after merge]' \
-                        '--no-install[Skip dependency installation]' \
-                        '--dry-run[Show the merge plan without applying]' \
-                        '--resume[Resume an interrupted merge]' \
-                        '--overwrite-base[Overwrite conflicting base changes]' \
-                        '--quiet[Suppress the pre-apply plan summary]' \
                         '--undo[Put the base back as it was before the latest merge]' \
                         '--list[With --undo, list the merges that can be undone]' \
                         '--help[Show help]'
@@ -112,14 +101,6 @@ _forkspace() {
                         '--resume[Resume an interrupted pull]' \
                         '--no-install[Skip dependency installation]' \
                         '--json[Output the pull plan as JSON]' \
-                        '--help[Show help]'
-                    ;;
-                land)
-                    _arguments \
-                        '1:workspace:_forkspace_workspaces' \
-                        '--force[Replace a divergent branch]' \
-                        '--drop[Drop after a successful land]' \
-                        '--as=[Land under another branch]:branch:' \
                         '--help[Show help]'
                     ;;
                 checkpoint)

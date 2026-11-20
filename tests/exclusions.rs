@@ -109,7 +109,7 @@ fn left_out_paths_never_move_between_a_workspace_and_its_project() {
     write(&view.join("src/b.txt"), "b\n");
     write(&view.join(".claude/worktrees/new/file.txt"), "agent\n");
     write(&view.join("big/new.bin"), "big\n");
-    env.ok(&["merge", "w", "--no-install"]);
+    env.ok(&["merge", "w"]);
     let project = env.project();
     assert_eq!(
         fs::read_to_string(project.join("src/b.txt")).unwrap(),

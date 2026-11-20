@@ -39,14 +39,11 @@ pub enum Commands {
     /// Show what changed in a workspace, or compare several
     Diff(DiffArgs),
 
-    /// Apply workspace changes back to the base directory
+    /// Put a workspace's changes into your project (and keep its commits as a branch)
     Merge(MergeArgs),
 
     /// Bring base changes into a workspace
     Pull(PullArgs),
-
-    /// Preserve a workspace's Git branch in the base repository
-    Land(LandArgs),
 
     /// Save the current state of a workspace
     Checkpoint(CheckpointArgs),
@@ -204,45 +201,7 @@ pub struct MergeArgs {
     )]
     pub name: Option<String>,
 
-    #[arg(long, help = "Create a git commit with the merged changes")]
-    pub commit: bool,
-
-    #[arg(short, long, help = "Commit message (implies --commit)")]
-    pub message: Option<String>,
-
-    #[arg(long, help = "Generate a unified patch instead of merging")]
-    pub patch: bool,
-
-    #[arg(long, help = "Drop the workspace after a successful merge")]
-    pub drop: bool,
-
-    #[arg(long, help = "Skip automatic dependency installation after merge")]
-    pub no_install: bool,
-
-    #[arg(long, help = "Show the merge plan without applying it")]
-    pub dry_run: bool,
-
-    #[arg(long, help = "Resume an interrupted merge")]
-    pub resume: bool,
-
-    #[arg(
-        long,
-        conflicts_with = "drop",
-        help = "Overwrite conflicting changes in the base"
-    )]
-    pub overwrite_base: bool,
-
-    #[arg(long, hide = true, conflicts_with = "drop")]
-    pub force: bool,
-
-    #[arg(long, help = "Suppress the pre-apply plan summary")]
-    pub quiet: bool,
-
-    #[arg(
-        long,
-        conflicts_with_all = ["commit", "message", "patch", "drop", "dry_run", "resume", "overwrite_base"],
-        help = "Put the base back as it was before the latest merge"
-    )]
+    #[arg(long, help = "Put the project back as it was before the latest merge")]
     pub undo: bool,
 
     #[arg(
@@ -348,25 +307,6 @@ pub struct PullArgs {
 
     #[arg(long, help = "Output the pull plan as JSON")]
     pub json: bool,
-}
-
-#[derive(Args)]
-pub struct LandArgs {
-    #[arg(help = "Workspace whose commits should be landed")]
-    pub name: String,
-
-    #[arg(long, help = "Replace a divergent base branch")]
-    pub force: bool,
-
-    #[arg(long, help = "Drop the workspace after a successful land")]
-    pub drop: bool,
-
-    #[arg(
-        long = "as",
-        value_name = "BRANCH",
-        help = "Land under a different branch name"
-    )]
-    pub as_branch: Option<String>,
 }
 
 #[derive(Args)]

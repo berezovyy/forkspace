@@ -1,4 +1,4 @@
-Apply workspace changes back to the base directory
+Put a workspace's changes into your project (and keep its commits as a branch)
 
 Usage: forkspace merge [OPTIONS] [NAME]
 
@@ -6,15 +6,6 @@ Arguments:
   [NAME]  Workspace (defaults to the one you are in; with --undo: whose latest merge to undo)
 
 Options:
-      --commit             Create a git commit with the merged changes
-  -m, --message <MESSAGE>  Commit message (implies --commit)
-      --patch              Generate a unified patch instead of merging
-      --drop               Drop the workspace after a successful merge
-      --no-install         Skip automatic dependency installation after merge
-      --dry-run            Show the merge plan without applying it
-      --resume             Resume an interrupted merge
-      --overwrite-base     Overwrite conflicting changes in the base
-      --quiet              Suppress the pre-apply plan summary
-      --undo               Put the base back as it was before the latest merge
-      --list               With --undo, list the merges that can be undone
-  -h, --help               Print help
+      --undo  Put the project back as it was before the latest merge
+      --list  With --undo, list the merges that can be undone
+  -h, --help  Print help

@@ -164,7 +164,7 @@ fn every_internal_store_is_tagged_for_backups() {
     )
     .unwrap();
     env.ok(&["checkpoint", "ws"]);
-    env.ok(&["merge", "ws", "--quiet", "--no-install"]);
+    env.ok(&["merge", "ws"]);
     env.ok(&["drop", "ws"]);
     env.ok(&["ls"]);
     for store in ["undo", "checkpoints", "ancestors", "trash"] {

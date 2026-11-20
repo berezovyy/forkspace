@@ -8,7 +8,6 @@ pub mod drop;
 pub(crate) mod enter;
 pub(crate) mod gc;
 pub mod hook;
-pub mod land;
 pub(crate) mod limit;
 pub mod ls;
 pub(crate) mod merge;
@@ -41,7 +40,6 @@ pub fn dispatch(cli: Cli) -> Result {
         Commands::Diff(args) => diff::exec(args),
         Commands::Merge(args) => merge::exec(args),
         Commands::Pull(args) => pull::exec(args),
-        Commands::Land(args) => land::exec(args),
         Commands::Checkpoint(args) => checkpoint::save(args),
         Commands::Checkpoints(args) => checkpoint::list(args),
         Commands::Restore(args) => checkpoint::restore(args),

@@ -84,15 +84,14 @@ fn merge_ls_and_diff_agree_while_node_modules_is_skipped() {
     let env = Env::new();
     edit_everywhere(&env);
 
-    let plan = env.ok(&["merge", "ws", "--dry-run"]);
-    assert!(plan.contains("merge plan for 'ws': 2 files"), "{plan}");
+    let diffed = env.ok(&["diff", "ws"]);
     assert!(
-        plan.contains("modify src/app.js") && plan.contains("add src/new.js"),
-        "{plan}"
+        diffed.contains("M  src/app.js") && diffed.contains("A  src/new.js"),
+        "{diffed}"
     );
     assert!(
-        !plan.contains("node_modules") && !plan.contains("dist/"),
-        "{plan}"
+        !diffed.contains("node_modules") && !diffed.contains("dist/"),
+        "{diffed}"
     );
 
     assert_eq!(env.changed(&["diff", "ws", "--json"]), 2);

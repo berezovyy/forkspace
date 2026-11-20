@@ -5,7 +5,6 @@ Create one disposable workspace per attempt, then use the following human review
 ```bash
 forkspace diff attempt-a attempt-b attempt-c
 forkspace diff attempt-b
-forkspace merge attempt-b --dry-run
 forkspace merge attempt-b
 forkspace drop attempt-a && forkspace drop attempt-c
 ```

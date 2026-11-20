@@ -416,7 +416,7 @@ mod macos {
                 "FORKSPACE_HOME",
                 std::env::var_os("FORKSPACE_HOME").unwrap(),
             )
-            .args(["merge", "names", "--no-install", "--quiet"])
+            .args(["merge", "names"])
             .output()
             .unwrap();
         assert!(
@@ -805,9 +805,8 @@ mod macos {
     }
 
     /// The batch 112 export, end to end: a file written while the background manifest walk has
-    /// not reached it yet gets a dirty row, and `merge --patch` must still carry its edit (from
-    /// the fork-time copy). With no fork-time version at all it must exit 5, print nothing, and
-    /// leave the workspace in place under `--drop`.
+    /// not reached it yet gets a dirty row, and `diff` must still show its edit (from the
+    /// fork-time copy).
     #[test]
     #[serial]
     fn merge_patch_carries_files_written_before_the_manifest_walk() {
@@ -856,15 +855,11 @@ mod macos {
             "the early edit should leave a dirty row"
         );
 
-        let patch = |extra: &[&str]| {
-            Command::new(env!("CARGO_BIN_EXE_forkspace"))
-                .env("FORKSPACE_HOME", home.path())
-                .args(["merge", "--patch", "early-patch"])
-                .args(extra)
-                .output()
-                .unwrap()
-        };
-        let output = patch(&[]);
+        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
+            .env("FORKSPACE_HOME", home.path())
+            .args(["diff", "early-patch"])
+            .output()
+            .unwrap();
         assert!(
             output.status.success(),
             "{}",
@@ -874,26 +869,6 @@ mod macos {
         assert!(text.contains("+fn early() { edited() }"), "{text}");
         assert!(text.contains("+fn late() { edited() }"), "{text}");
         assert!(!text.contains("unavailable"), "{text}");
-
-        fs::remove_file(forkspace::sync::ancestor::dir("early-patch").join("early.rs")).unwrap();
-        let output = patch(&["--drop"]);
-        assert_eq!(
-            output.status.code(),
-            Some(5),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(
-            output.stdout.is_empty(),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        assert!(String::from_utf8_lossy(&output.stderr).contains("early.rs"));
-        assert!(State::load()
-            .unwrap()
-            .workspaces
-            .contains_key("early-patch"));
-        assert!(view.join("early.rs").exists());
     }
 
     #[test]
@@ -1084,7 +1059,7 @@ mod macos {
         fs::set_permissions(workspace.view_path.join("mode"), permissions).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
-            .args(["merge", "round-trip", "--commit", "--drop", "--no-install"])
+            .args(["merge", "round-trip"])
             .output()
             .unwrap();
         assert!(
@@ -1092,7 +1067,7 @@ mod macos {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(!State::load().unwrap().workspaces.contains_key("round-trip"));
+        assert!(State::load().unwrap().workspaces.contains_key("round-trip"));
         assert!(!base.path().join("deleted").exists());
         assert!(base.path().join("added-a").exists());
         let commits = Command::new("git")
@@ -1100,7 +1075,8 @@ mod macos {
             .current_dir(base.path())
             .output()
             .unwrap();
-        assert_eq!(String::from_utf8_lossy(&commits.stdout).trim(), "2");
+        // The merge leaves committing to you.
+        assert_eq!(String::from_utf8_lossy(&commits.stdout).trim(), "1");
 
         let workspace = fork(base.path(), "conflict-merge");
         wait_for_manifest("conflict-merge");
@@ -1108,30 +1084,11 @@ mod macos {
         fs::write(workspace.view_path.join("edit-0"), b"workspace moved\n").unwrap();
         let refused = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
-            .args(["merge", "conflict-merge", "--no-install"])
+            .args(["merge", "conflict-merge"])
             .output()
             .unwrap();
         assert_eq!(refused.status.code(), Some(5));
         assert!(String::from_utf8_lossy(&refused.stderr).contains("edit-0"));
-        let forced = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env("FORKSPACE_HOME", home.path())
-            .args([
-                "merge",
-                "conflict-merge",
-                "--overwrite-base",
-                "--no-install",
-            ])
-            .output()
-            .unwrap();
-        assert!(forced.status.success());
-        assert_eq!(
-            fs::read(base.path().join("edit-0")).unwrap(),
-            b"workspace moved\n"
-        );
-        assert!(State::load()
-            .unwrap()
-            .workspaces
-            .contains_key("conflict-merge"));
     }
 
     fn cli(home: &Path, args: &[&str]) -> std::process::Output {
@@ -1190,7 +1147,7 @@ mod macos {
         let workspace = fork(base.path(), "respell");
         wait_for_manifest("respell");
         respell(&workspace.view_path);
-        assert_cli(home.path(), &["merge", "respell", "--no-install"]);
+        assert_cli(home.path(), &["merge", "respell"]);
         let respelled = names(base.path());
         assert_eq!(respelled, names(&workspace.view_path));
         assert_eq!(fs::read(base.path().join("foo.txt")).unwrap(), b"foo\n");
@@ -1242,13 +1199,6 @@ mod macos {
         let plan = assert_cli(home.path(), &["pull", "dirs", "--dry-run"]);
         assert!(plan.contains("1 files"), "only the edit is pulled: {plan}");
 
-        fs::remove_dir_all(workspace.view_path.join("gone")).unwrap();
-        let plan = assert_cli(home.path(), &["merge", "dirs", "--dry-run"]);
-        assert!(!plan.contains("conflicts"), "{plan}");
-        fs::write(base.path().join("gone/new.txt"), b"base\n").unwrap();
-        let plan = assert_cli(home.path(), &["merge", "dirs", "--dry-run"]);
-        assert!(plan.contains("conflicts: gone"), "{plan}");
-
         assert_cli(home.path(), &["drop", "dirs"]);
         assert!(!ancestor.exists());
         assert!(!workspace.view_path.exists());
@@ -1290,7 +1240,7 @@ mod macos {
 
         let merged = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
-            .args(["merge", "step-2", "--no-install"])
+            .args(["merge", "step-2"])
             .output()
             .unwrap();
         assert!(merged.status.success());
@@ -1303,7 +1253,7 @@ mod macos {
         fs::write(conflict.view_path.join("a"), b"child-later\n").unwrap();
         let refused = Command::new(env!("CARGO_BIN_EXE_forkspace"))
             .env("FORKSPACE_HOME", home.path())
-            .args(["merge", "step-conflict", "--no-install"])
+            .args(["merge", "step-conflict"])
             .output()
             .unwrap();
         assert_eq!(refused.status.code(), Some(5));

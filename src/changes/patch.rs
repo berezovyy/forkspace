@@ -696,7 +696,7 @@ mod tests {
         text
     }
 
-    /// \`old\` with random lines deleted, replaced and inserted.
+    /// `old` with random lines deleted, replaced and inserted.
     fn mutate(rng: &mut Rng, old: &[u8]) -> Vec<u8> {
         let mut lines: Vec<Vec<u8>> = old
             .split_inclusive(|&byte| byte == b'\n')
@@ -723,7 +723,7 @@ mod tests {
         text
     }
 
-    /// \`(start, len)\` of one side of a hunk header, as written.
+    /// `(start, len)` of one side of a hunk header, as written.
     fn side(text: &str) -> (usize, usize) {
         match text.split_once(',') {
             Some((start, len)) => (start.parse().unwrap(), len.parse().unwrap()),
@@ -731,7 +731,7 @@ mod tests {
         }
     }
 
-    /// Apply \`patch\` (hunks only) to \`old\` exactly where its headers say, as \`git apply\`
+    /// Apply `patch` (hunks only) to `old` exactly where its headers say, as `git apply`
     /// does without fuzz: every context and deleted line must be at its stated position, and
     /// every hunk's counts must match its body. Panics on any disagreement.
     fn apply_strictly(old: &[u8], patch: &[u8]) -> Vec<u8> {

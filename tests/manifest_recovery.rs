@@ -97,7 +97,7 @@ fn a_manifest_build_whose_builder_died_is_restarted_by_the_next_command() {
         files.contains("a.txt") && files.contains("b.txt"),
         "{files}"
     );
-    env.ok(&["merge", "ws", "--no-install"]);
+    env.ok(&["merge", "ws"]);
     assert_eq!(
         fs::read_to_string(project.join("a.txt")).unwrap(),
         "a edited\n"
@@ -134,7 +134,7 @@ fn a_command_that_needs_the_manifest_builds_it_when_its_builder_is_gone() {
         files.contains("a.txt") && files.contains("b.txt"),
         "{files}"
     );
-    env.ok(&["merge", "ws", "--no-install"]);
+    env.ok(&["merge", "ws"]);
     assert_eq!(
         fs::read_to_string(env.project().join("a.txt")).unwrap(),
         "a edited\n"
@@ -188,7 +188,7 @@ fn a_base_rename_of_a_dangling_symlink_before_the_walk_leaves_the_manifest_ready
     fs::rename(project.join("g.md/b"), project.join("h")).unwrap();
 
     assert_eq!(settled_status("ws"), ManifestStatus::Ready);
-    env.ok(&["merge", "ws", "--no-install"]);
+    env.ok(&["merge", "ws"]);
     assert_eq!(fs::read_to_string(project.join("b.txt")).unwrap(), "eps\n");
     assert!(fs::symlink_metadata(project.join("h")).is_ok());
 }
@@ -220,7 +220,7 @@ fn a_lost_manifest_is_rebuilt_and_keeps_deletions_of_files_the_base_also_changed
         "{files}"
     );
     assert!(!files.contains("keep.txt"), "{files}");
-    let merged = env.run(&["merge", "ws", "--no-install"]);
+    let merged = env.run(&["merge", "ws"]);
     assert_eq!(merged.status.code(), Some(5), "{}", stderr(&merged));
     assert!(stderr(&merged).contains("x.txt"), "{}", stderr(&merged));
     assert_eq!(
@@ -270,7 +270,7 @@ fn an_intact_manifest_marked_degraded_is_used_again() {
     .unwrap();
 
     write(&env.view("ws").join("a.txt"), "a edited\n");
-    env.ok(&["merge", "ws", "--no-install"]);
+    env.ok(&["merge", "ws"]);
     assert_eq!(fs::read(manifest::manifest_path("ws")).ok(), Some(before));
     assert_eq!(
         fs::read_to_string(env.project().join("a.txt")).unwrap(),

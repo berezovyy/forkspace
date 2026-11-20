@@ -39,11 +39,11 @@ fn a_symlink_merge_undone_merges_again() {
     let env = Env::new();
     let view = fork_with_link(&env);
     retarget(&view.join("c.md"), "target-two");
-    env.ok(&["merge", "ws", "--no-install"]);
+    env.ok(&["merge", "ws"]);
     assert_eq!(target(&env.project().join("c.md")), "target-two");
-    env.ok(&["merge", "--undo", "ws", "--no-install"]);
+    env.ok(&["merge", "--undo", "ws"]);
     assert_eq!(target(&env.project().join("c.md")), "target-one");
-    env.ok(&["merge", "ws", "--no-install"]);
+    env.ok(&["merge", "ws"]);
     assert_eq!(target(&env.project().join("c.md")), "target-two");
 }
 
@@ -55,7 +55,7 @@ fn a_base_symlink_re_created_with_the_same_target_is_unchanged() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     retarget(&env.project().join("c.md"), "target-one");
     retarget(&view.join("c.md"), "target-two");
-    env.ok(&["merge", "ws", "--no-install"]);
+    env.ok(&["merge", "ws"]);
     assert_eq!(target(&env.project().join("c.md")), "target-two");
 }
 
@@ -67,7 +67,7 @@ fn a_base_symlink_retargeted_since_the_fork_is_a_conflict() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     retarget(&env.project().join("c.md"), "target-three");
     retarget(&view.join("c.md"), "target-two");
-    let merged = env.run(&["merge", "ws", "--no-install"]);
+    let merged = env.run(&["merge", "ws"]);
     assert_eq!(merged.status.code(), Some(5), "{}", stderr(&merged));
     assert_eq!(target(&env.project().join("c.md")), "target-three");
 }

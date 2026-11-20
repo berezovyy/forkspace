@@ -289,7 +289,7 @@ fn selected_directory_backend_round_trips_through_the_public_cli() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
-        .args(["merge", "primitive-parity", "--no-install"])
+        .args(["merge", "primitive-parity"])
         .output()
         .unwrap();
     assert!(
@@ -304,7 +304,7 @@ fn selected_directory_backend_round_trips_through_the_public_cli() {
 
 #[test]
 #[serial]
-fn installer_failure_keeps_the_applied_journal_resumable_and_never_drops() {
+fn installer_failure_keeps_the_journal_and_the_next_merge_finishes_it() {
     let home = common::setup_test_env();
     let base = tempfile::tempdir().unwrap();
     fs::write(base.path().join("source"), b"old\n").unwrap();
@@ -350,7 +350,7 @@ fn installer_failure_keeps_the_applied_journal_resumable_and_never_drops() {
     let failed = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
         .env("PATH", &path)
-        .args(["merge", "install-failure", "--drop"])
+        .args(["merge", "install-failure"])
         .output()
         .unwrap();
     assert!(!failed.status.success());
@@ -372,7 +372,7 @@ fn installer_failure_keeps_the_applied_journal_resumable_and_never_drops() {
     let resumed = Command::new(env!("CARGO_BIN_EXE_forkspace"))
         .env("FORKSPACE_HOME", home.path())
         .env("PATH", path)
-        .args(["merge", "install-failure", "--resume", "--drop"])
+        .args(["merge", "install-failure"])
         .output()
         .unwrap();
     assert!(
@@ -380,7 +380,9 @@ fn installer_failure_keeps_the_applied_journal_resumable_and_never_drops() {
         "{}",
         String::from_utf8_lossy(&resumed.stderr)
     );
-    assert!(!forkspace::state::State::load()
+    assert!(String::from_utf8_lossy(&resumed.stdout).contains("finished the interrupted merge"));
+    // A merge keeps the workspace.
+    assert!(forkspace::state::State::load()
         .unwrap()
         .workspaces
         .contains_key("install-failure"));
@@ -447,7 +449,7 @@ fn merge_installs_only_when_dependencies_change() {
     };
     forkspace(&["new", "source-only"]);
     fs::write(view("source-only").join("page.tsx"), b"new\n").unwrap();
-    let merged = forkspace(&["merge", "source-only", "--drop"]);
+    let merged = forkspace(&["merge", "source-only"]);
     assert!(!merged.contains("ran package install"), "{merged}");
     assert!(!marker.exists(), "npm ran for a source-only merge");
     assert_eq!(fs::read(base.path().join("page.tsx")).unwrap(), b"new\n");
@@ -458,7 +460,7 @@ fn merge_installs_only_when_dependencies_change() {
         br#"{"name":"merge-fixture","version":"1.0.0","dependencies":{"zod":"^3.0.0"}}"#,
     )
     .unwrap();
-    let merged = forkspace(&["merge", "add-dependency", "--drop"]);
+    let merged = forkspace(&["merge", "add-dependency"]);
     assert!(merged.contains("ran package install"), "{merged}");
     assert_eq!(fs::read_to_string(&marker).unwrap(), "run\n");
 }

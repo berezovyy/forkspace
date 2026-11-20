@@ -204,7 +204,7 @@ fn forks_of_one_frozen_copy_share_its_manifest() {
         common::changed_paths(env.stdout(&["diff", "two", "--json"]).as_bytes()),
         "a.txt\n"
     );
-    env.run(&["merge", "two", "--no-install"]);
+    env.run(&["merge", "two"]);
     assert_eq!(
         fs::read_to_string(env.project().join("a.txt")).unwrap(),
         "edited\n"
@@ -530,12 +530,7 @@ fn pull_records_only_what_changed_and_everything_still_measures_right() {
     );
 
     // Merging still moves only the workspace's own edit.
-    let plan = env.stdout(&["merge", "w", "--dry-run"]);
-    assert!(
-        plan.contains("modify a.txt") && !plan.contains("b.txt"),
-        "{plan}"
-    );
-    env.run(&["merge", "w", "--no-install"]);
+    env.run(&["merge", "w"]);
     assert_eq!(fs::read_to_string(project.join("a.txt")).unwrap(), "ours\n");
 
     // A new fork of the changed project gets a whole copy of its own, never a delta.
@@ -574,7 +569,7 @@ fn line_merges_read_the_fork_time_version_through_a_delta() {
         fs::read_to_string(env.view("w").join("lines.txt")).unwrap(),
         "ONE\ntwo\nthree\nfour\nFIVE\n"
     );
-    env.run(&["merge", "w", "--no-install"]);
+    env.run(&["merge", "w"]);
     assert_eq!(
         fs::read_to_string(project.join("lines.txt")).unwrap(),
         "ONE\ntwo\nthree\nfour\nFIVE\n"
@@ -589,7 +584,7 @@ fn merge_then_pull_moves_one_workspace_s_changes_into_another() {
     env.new_workspace("ws2", &[]);
 
     fs::write(env.view("ws1").join("feature.txt"), "from ws1\n").unwrap();
-    env.run(&["merge", "ws1", "--quiet", "--no-install"]);
+    env.run(&["merge", "ws1"]);
     assert!(
         !env.view("ws2").join("feature.txt").exists(),
         "updates wait for pull"

@@ -54,7 +54,7 @@ impl Env {
     }
 
     fn merge(&self, name: &str) {
-        self.ok(&["merge", name, "--quiet", "--no-install"]);
+        self.ok(&["merge", name]);
     }
 
     /// Undo records (directories; the store also holds its backup exclusion tag).
@@ -136,7 +136,7 @@ fn undo_restores_the_exact_project_and_removes_what_merge_added() {
 
     let listed = String::from_utf8(env.ok(&["merge", "--undo", "--list"]).stdout).unwrap();
     assert!(listed.contains("  ws  "), "{listed}");
-    let undone = String::from_utf8(env.ok(&["merge", "--undo", "--no-install"]).stdout).unwrap();
+    let undone = String::from_utf8(env.ok(&["merge", "--undo"]).stdout).unwrap();
     assert!(undone.contains("undid the merge of 'ws'"), "{undone}");
     assert_eq!(snapshot(&env.project()), before);
     assert_eq!(
@@ -161,7 +161,7 @@ fn files_edited_after_the_merge_are_left_alone_and_kept() {
     )
     .unwrap();
 
-    let output = env.ok(&["merge", "--undo", "--no-install"]);
+    let output = env.ok(&["merge", "--undo"]);
     assert!(
         stderr(&output).contains("changed after the merge"),
         "{}",
@@ -192,7 +192,7 @@ fn undoing_an_older_merge_refuses_files_a_newer_merge_changed() {
     fs::write(env.view("ws2").join("shared.txt"), "2\n").unwrap();
     env.merge("ws2");
 
-    let output = env.ok(&["merge", "--undo", "ws1", "--no-install"]);
+    let output = env.ok(&["merge", "--undo", "ws1"]);
     assert!(
         stderr(&output).contains("newer merge"),
         "{}",
@@ -207,12 +207,12 @@ fn undoing_an_older_merge_refuses_files_a_newer_merge_changed() {
         "2\n"
     );
 
-    env.ok(&["merge", "--undo", "ws2", "--no-install"]);
+    env.ok(&["merge", "--undo", "ws2"]);
     assert_eq!(
         fs::read_to_string(env.project().join("shared.txt")).unwrap(),
         "1\n"
     );
-    env.ok(&["merge", "--undo", "ws1", "--no-install"]);
+    env.ok(&["merge", "--undo", "ws1"]);
     assert_eq!(
         fs::read_to_string(env.project().join("shared.txt")).unwrap(),
         "0\n"
@@ -234,7 +234,7 @@ fn a_resumed_merge_can_still_be_undone() {
     let locked = env.project().join("z");
     let mode = fs::metadata(&locked).unwrap().permissions().mode();
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
-    let failed = env.run(&["merge", "ws", "--quiet", "--no-install"]);
+    let failed = env.run(&["merge", "ws"]);
     fs::set_permissions(&locked, fs::Permissions::from_mode(mode)).unwrap();
     assert!(!failed.status.success());
     assert_eq!(
@@ -242,12 +242,12 @@ fn a_resumed_merge_can_still_be_undone() {
         "a1\n"
     );
 
-    env.ok(&["merge", "ws", "--resume", "--no-install"]);
+    env.ok(&["merge", "ws"]);
     assert_eq!(
         fs::read_to_string(env.project().join("z/b.txt")).unwrap(),
         "b1\n"
     );
-    env.ok(&["merge", "--undo", "--no-install"]);
+    env.ok(&["merge", "--undo"]);
     assert_eq!(snapshot(&env.project()), before);
 }
 

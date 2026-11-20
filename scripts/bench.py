@@ -3,7 +3,7 @@
 
 Every run starts from a fresh FORKSPACE_HOME and a private copy of the corpus, then times:
 `new`, the first `git status` in the new workspace, a clean `diff --stat`, `diff` after one
-edit, `merge --dry-run`, a one-file `merge`,
+edit, a one-file `merge`,
 `ls` with one and five workspaces, and `drop`.
 
 A freeze probe measures whether the project stays writable while `new` forks it, and the
@@ -382,8 +382,7 @@ def one_run(binary, env, project, home, args, new_flags, result):
     with open(view / EDIT_FILE, "a") as handle:
         handle.write("edited\n")
     timed("diff (one edit)", "diff", "ws1")
-    timed("merge --dry-run", "merge", "ws1", "--dry-run")
-    timed("merge (one file)", "merge", "ws1", "--quiet")
+    timed("merge (one file)", "merge", "ws1")
     edit_target.write_text("benchmark\n")
     timed("ls (1 workspace)", "ls")
     for number in range(2, args.workspaces + 1):

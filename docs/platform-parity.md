@@ -23,7 +23,7 @@ and what the OS offers around it. Each row names the test that holds it. Measure
 | Merge undo | yes | yes | yes | yes | `tests/merge_undo.rs::undo_restores_the_exact_project_and_removes_what_merge_added` |
 | Pull | yes | yes | yes | yes | `tests/pull.rs::merge_after_pull_pushes_only_remaining_workspace_edits` |
 | Checkpoints | yes | yes | yes | yes | `tests/checkpoints.rs::checkpoint_then_restore_is_exact` |
-| Branch / land | yes | yes | yes | yes | `tests/land.rs::public_fork_branch_then_land_preserves_the_workspace_commits` |
+| Commits kept as a branch on merge | yes | yes | yes | yes | `tests/merge_commits.rs::commits_are_kept_as_a_branch_and_the_project_branch_is_left_alone` |
 | Compare / signals | yes | yes | yes | yes | `tests/review_gate.rs::compare_preserves_argument_order_and_buckets_divergence` |
 | Dev-server watcher | native host watcher | FSEvents | native host watcher | native host watcher | `tests/macos_clone.rs::run_switch_proxy_hot_reload_and_drop_supervision` |
 | `.wh.*` names | refused at fork; cannot be created in the view | ordinary files | ordinary files | ordinary files | `tests/fork_drop.rs::a_base_with_whiteout_names_is_copied_instead_of_layered` |

@@ -55,17 +55,7 @@ fn a_file_over_the_text_diff_limit_is_not_diffed_line_by_line() {
     );
     assert!(full.len() < 10_000, "{} bytes of diff", full.len());
 
-    let patch = env.run(&["merge", "ws", "--patch"]);
-    assert!(!patch.status.success());
-    assert!(
-        patch.stdout.is_empty(),
-        "{} bytes of patch",
-        patch.stdout.len()
-    );
-    assert!(stderr(&patch).contains("big.txt"), "{}", stderr(&patch));
-    assert!(stderr(&patch).contains("MiB"), "{}", stderr(&patch));
-
-    env.ok(&["merge", "ws", "--no-install"]);
+    env.ok(&["merge", "ws"]);
     assert_eq!(
         fs::read(env.project().join("big.txt")).unwrap(),
         fs::read(view.join("big.txt")).unwrap()

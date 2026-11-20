@@ -93,7 +93,7 @@ impl Env {
         )
     }
 
-    /// Wait until an open journal of \`op\` records at least \`next\` applied steps.
+    /// Wait until an open journal of `op` records at least `next` applied steps.
     fn wait_for_journal(&self, op: &str, next: u64) {
         let directory = self.home.path().join("journal");
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -130,7 +130,7 @@ fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|error| format!("<{error}>"))
 }
 
-/// Every file under \`root\` with its content, sorted.
+/// Every file under `root` with its content, sorted.
 fn files(root: &Path) -> Vec<(PathBuf, String)> {
     let mut found: Vec<_> = walkdir::WalkDir::new(root)
         .min_depth(1)
@@ -164,7 +164,7 @@ fn sentinels_intact(env: &Env) {
     );
 }
 
-/// FS-01: the view replaces directory \`d\` with a symlink to a directory outside the tree
+/// FS-01: the view replaces directory `d` with a symlink to a directory outside the tree
 /// that holds entries of the same names.
 fn replace_dir_with_outside_link(env: &Env, root: &Path) {
     fs::remove_file(root.join("d/x.txt")).unwrap();
@@ -184,14 +184,14 @@ fn merge_and_undo_never_act_through_a_directory_replaced_by_a_symlink() {
     env.fork("w");
     replace_dir_with_outside_link(&env, &env.view("w"));
 
-    env.ok(&["merge", "w", "--quiet", "--no-install"]);
+    env.ok(&["merge", "w"]);
     sentinels_intact(&env);
     assert_eq!(
         fs::read_link(env.project().join("d")).unwrap(),
         env.outside()
     );
 
-    env.ok(&["merge", "--undo", "w", "--no-install"]);
+    env.ok(&["merge", "--undo", "w"]);
     sentinels_intact(&env);
     assert!(fs::symlink_metadata(env.project().join("d"))
         .unwrap()
@@ -213,7 +213,7 @@ fn merge_refuses_to_replace_a_directory_the_base_added_to() {
     fs::remove_dir(view.join("d")).unwrap();
     symlink("elsewhere", view.join("d")).unwrap();
 
-    let output = env.run(&["merge", "w", "--quiet", "--no-install"]);
+    let output = env.run(&["merge", "w"]);
     assert_eq!(output.status.code(), Some(5), "{output:?}");
     assert_eq!(read(&env.project().join("d/new.txt")), "base work\n");
 }
@@ -321,8 +321,7 @@ fn merge_leaves_base_edits_made_while_it_applies_and_keeps_the_workspace() {
     write(&view.join("b.txt"), "b1 workspace\nline 2\n");
     fs::remove_file(view.join("c.txt")).unwrap();
 
-    let Some(child) = env.spawn_slow(&["merge", "w", "--quiet", "--no-install", "--drop"], 400)
-    else {
+    let Some(child) = env.spawn_slow(&["merge", "w"], 400) else {
         return;
     };
     env.wait_for_journal("merge", 0);
@@ -341,7 +340,7 @@ fn merge_leaves_base_edits_made_while_it_applies_and_keeps_the_workspace() {
     assert_eq!(read(&env.project().join("c.txt")), "USER EDIT c\n");
     assert!(view.join("b.txt").exists(), "the workspace was dropped");
 
-    env.ok(&["merge", "--undo", "w", "--no-install"]);
+    env.ok(&["merge", "--undo", "w"]);
     assert_eq!(read(&env.project().join("a.txt")), "a0\n");
     assert_eq!(read(&env.project().join("b.txt")), "b0\nUSER EDIT\n");
     assert_eq!(read(&env.project().join("c.txt")), "USER EDIT c\n");
@@ -361,7 +360,7 @@ fn a_resumed_merge_and_its_undo_leave_base_edits_made_while_it_was_interrupted()
             "base\nworkspace\n",
         );
     }
-    let Some(mut child) = env.spawn_slow(&["merge", "w", "--quiet", "--no-install"], 300) else {
+    let Some(mut child) = env.spawn_slow(&["merge", "w"], 300) else {
         return;
     };
     env.wait_for_journal("merge", 2);
@@ -373,7 +372,7 @@ fn a_resumed_merge_and_its_undo_leave_base_edits_made_while_it_was_interrupted()
         write(&path, &format!("{text}user {index}\n"));
     }
 
-    let resumed = env.run(&["merge", "w", "--resume", "--no-install"]);
+    let resumed = env.run(&["merge", "w"]);
     assert_eq!(resumed.status.code(), Some(5), "{resumed:?}");
     for index in 1..=6 {
         let text = read(&env.project().join(format!("f{index}.txt")));
@@ -383,7 +382,7 @@ fn a_resumed_merge_and_its_undo_leave_base_edits_made_while_it_was_interrupted()
         );
     }
 
-    env.ok(&["merge", "--undo", "w", "--no-install"]);
+    env.ok(&["merge", "--undo", "w"]);
     for index in 1..=6 {
         let text = read(&env.project().join(format!("f{index}.txt")));
         assert!(
@@ -431,7 +430,7 @@ fn a_resumed_pull_also_pulls_base_changes_made_while_it_was_interrupted() {
         );
     }
 
-    env.ok(&["merge", "w", "--quiet", "--no-install"]);
+    env.ok(&["merge", "w"]);
     assert_eq!(read(&env.project().join("late.txt")), "late\n");
     assert_eq!(read(&env.project().join("a.txt")), "a0\nlate edit\n");
     assert_eq!(read(&env.project().join("sub/s.txt")), "s0\nagent\n");
@@ -471,43 +470,6 @@ fn a_pull_also_pulls_base_changes_made_while_it_applies() {
 
 #[test]
 #[serial]
-fn merge_patch_drop_refuses_whenever_the_base_changed_a_patched_file() {
-    let env = Env::new();
-    let lines: String = (1..=20).map(|n| format!("line {n}\n")).collect();
-    write(&env.project().join("src/a.ts"), &lines);
-    write(&env.project().join("other.txt"), "other\n");
-    for (name, base_line) in [("overlap", "line 8\n"), ("apart", "line 18\n")] {
-        env.fork(name);
-        let view = env.view(name);
-        write(
-            &view.join("src/a.ts"),
-            &lines.replace("line 8\n", "line 8 AGENT\n"),
-        );
-        write(&view.join("src/feature.ts"), "agent work\n");
-        let edited = read(&env.project().join("src/a.ts")).replace(base_line, "BASE\n");
-        write(&env.project().join("src/a.ts"), &edited);
-
-        let output = env.run(&["merge", name, "--patch", "--drop"]);
-        assert_eq!(output.status.code(), Some(5), "{name}: {output:?}");
-        assert!(output.stdout.is_empty(), "{name}: a patch was printed");
-        assert!(
-            env.view(name).join("src/feature.ts").exists(),
-            "{name} was dropped"
-        );
-        write(&env.project().join("src/a.ts"), &lines);
-        env.ok(&["drop", name, "--force"]);
-    }
-
-    // A base change elsewhere does not stop the handoff.
-    env.fork("clean");
-    write(&env.view("clean").join("src/feature.ts"), "agent work\n");
-    write(&env.project().join("other.txt"), "base edit\n");
-    let output = env.ok(&["merge", "clean", "--patch", "--drop"]);
-    assert!(String::from_utf8_lossy(&output.stdout).contains("src/feature.ts"));
-}
-
-#[test]
-#[serial]
 fn merge_on_its_own_still_overwrites_nothing_new() {
     // A plan applied right away holds nothing back.
     let env = Env::new();
@@ -528,13 +490,13 @@ fn undo_never_restores_through_a_directory_replaced_by_a_symlink_since() {
     write(&env.project().join("d/keep.txt"), "keep\n");
     env.fork("w");
     fs::remove_file(env.view("w").join("d/x.txt")).unwrap();
-    env.ok(&["merge", "w", "--quiet", "--no-install"]);
+    env.ok(&["merge", "w"]);
     assert!(!env.project().join("d/x.txt").exists());
 
     // After the merge, the base's directory becomes a link to one outside the project.
     fs::rename(env.project().join("d"), env.root.path().join("d.moved")).unwrap();
     symlink(env.outside(), env.project().join("d")).unwrap();
-    env.ok(&["merge", "--undo", "w", "--no-install"]);
+    env.ok(&["merge", "--undo", "w"]);
     assert!(
         files(&env.outside()).is_empty(),
         "undo wrote outside the project"
@@ -547,71 +509,11 @@ fn taking_one_side_of_a_path_both_sides_added_replaces_the_other() {
     let env = Env::new();
     write(&env.project().join("keep.txt"), "keep\n");
     env.fork("pulled");
-    env.fork("merged");
     write(&env.project().join("both.bin"), "base\0bytes\n");
     write(&env.view("pulled").join("both.bin"), "agent\0bytes\n");
-    write(&env.view("merged").join("both.bin"), "agent\0bytes\n");
 
     env.ok(&["pull", "pulled", "--theirs", "--no-install"]);
     assert_eq!(read(&env.view("pulled").join("both.bin")), "base\0bytes\n");
-
-    env.ok(&[
-        "merge",
-        "merged",
-        "--overwrite-base",
-        "--quiet",
-        "--no-install",
-    ]);
-    assert_eq!(read(&env.project().join("both.bin")), "agent\0bytes\n");
-}
-
-/// MERGE-19: `merge --drop` keeps the workspace when the agent writes in the view while the
-/// merge runs: a new file, and an edit to a file the merge transfers.
-#[test]
-#[serial]
-fn merge_drop_keeps_the_workspace_when_the_agent_writes_while_it_merges() {
-    let env = Env::new();
-    write(&env.project().join("a.txt"), "a0\n");
-    write(&env.project().join("b.txt"), "b0\n");
-    env.fork("w");
-    let view = env.view("w");
-    write(&view.join("a.txt"), "a1\n");
-    write(&view.join("b.txt"), "b1\n");
-
-    let Some(child) = env.spawn_slow(&["merge", "w", "--quiet", "--no-install", "--drop"], 400)
-    else {
-        return;
-    };
-    env.wait_for_journal("merge", 0);
-    write(&view.join("late.txt"), "AGENT late\n");
-    write(&view.join("a.txt"), "AGENT a2\n");
-    let output = child.wait_with_output().unwrap();
-
-    assert_eq!(output.status.code(), Some(5), "{output:?}");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("late.txt"), "{stderr}");
-    assert_eq!(read(&env.view("w").join("late.txt")), "AGENT late\n");
-    assert_eq!(read(&env.view("w").join("a.txt")), "AGENT a2\n");
-    assert_eq!(read(&env.project().join("b.txt")), "b1\n");
-}
-
-/// The re-check finds nothing in a quiet merge: `--drop` still drops, also when the plan
-/// keeps the base's lockfile.
-#[test]
-#[serial]
-fn merge_drop_drops_a_workspace_nobody_wrote_to() {
-    let env = Env::new();
-    write(&env.project().join("a.txt"), "a0\n");
-    write(&env.project().join("d/x.txt"), "x\n");
-    env.fork("w");
-    let view = env.view("w");
-    write(&view.join("a.txt"), "a1\n");
-    write(&view.join("new/deep/n.txt"), "n\n");
-    fs::remove_dir_all(view.join("d")).unwrap();
-
-    env.ok(&["merge", "w", "--quiet", "--no-install", "--drop"]);
-    assert!(State::load().unwrap().workspaces.is_empty());
-    assert_eq!(read(&env.project().join("new/deep/n.txt")), "n\n");
 }
 
 /// Move `notes` (a directory holding files) into `root/g`: the files keep their ctimes.
@@ -734,7 +636,7 @@ fn base_changes_after_the_pull_last_read_the_base_are_left_for_the_next_pull() {
     assert_eq!(read(&view.join("a.txt")), "a1 late\n");
     assert!(!view.join("c.txt").exists() && !view.join("d").exists());
     assert_eq!(read(&view.join("e/x.txt")), "x0\n");
-    env.ok(&["merge", "w", "--quiet", "--no-install"]);
+    env.ok(&["merge", "w"]);
     assert_eq!(read(&env.project().join("late.txt")), "late\n");
     assert_eq!(read(&env.project().join("a.txt")), "a1 late\n");
     assert_eq!(read(&env.project().join("mine.txt")), "agent\n");
@@ -899,44 +801,4 @@ fn a_base_file_touched_back_to_its_bytes_is_no_change_after_a_pull() {
     env.ok(&["pull", "w", "--no-install"]);
     assert_eq!(read(&env.view("w").join("m3.ts")), "m3 base\n");
     assert_eq!(diff_files(&env, "w"), "m1.ts\n");
-}
-
-/// MERGE-36: a file both sides changed the same way needs nothing from the patch:
-/// `merge --patch --drop` leaves it out, the patch applies, and the workspace is dropped.
-#[test]
-#[serial]
-fn merge_patch_drop_leaves_out_what_the_base_already_has() {
-    let env = Env::new();
-    let lines: String = (1..=20).map(|n| format!("line {n}\n")).collect();
-    write(&env.project().join("a.txt"), &lines);
-    env.fork("w");
-    let same = lines.replace("line 8\n", "line 8 SAME\n");
-    write(&env.view("w").join("a.txt"), &same);
-    write(&env.view("w").join("new.txt"), "new\n");
-    write(&env.project().join("a.txt"), &same);
-
-    let output = env.ok(&["merge", "w", "--patch", "--drop"]);
-    let patch = String::from_utf8_lossy(&output.stdout).into_owned();
-    assert!(patch.contains("new.txt"), "{patch}");
-    assert!(!patch.contains("a.txt"), "{patch}");
-    assert!(
-        env.run(&["diff", "w"]).status.code() != Some(0),
-        "w was kept"
-    );
-    let mut apply = Command::new("git")
-        .args(["apply", "-"])
-        .current_dir(env.project())
-        .stdin(Stdio::piped())
-        .spawn()
-        .unwrap();
-    use std::io::Write as _;
-    apply
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(patch.as_bytes())
-        .unwrap();
-    assert!(apply.wait().unwrap().success());
-    assert_eq!(read(&env.project().join("new.txt")), "new\n");
-    assert_eq!(read(&env.project().join("a.txt")), same);
 }

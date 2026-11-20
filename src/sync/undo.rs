@@ -39,6 +39,19 @@ pub struct UndoRecord {
     #[serde(default)]
     pub complete: bool,
     pub steps: Vec<UndoStep>,
+    /// The branch the merge kept the workspace's commits in, put back on undo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<SavedBranch>,
+}
+
+/// A project branch a merge created or moved to keep the workspace's commits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedBranch {
+    pub name: String,
+    /// Where the branch pointed before the merge moved it; `None` when the merge created it.
+    pub previous: Option<String>,
+    /// Where the merge left it.
+    pub tip: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +107,10 @@ pub struct UndoReport {
     pub newer_merge: Vec<PathBuf>,
     /// Paths restored or removed, in the order they were reverted.
     pub reverted: Vec<PathBuf>,
+    /// The branch the merge kept commits in, put back (removed, or moved back).
+    pub branch_reverted: Option<String>,
+    /// That branch, left alone because it moved since the merge.
+    pub branch_moved: Option<String>,
 }
 
 /// Start recording a merge of `changes` from `workspace` into `project`. Returns the
@@ -123,9 +140,39 @@ pub fn begin(workspace: &str, project: &Path, changes: &[FileChange]) -> Result<
         created_ns,
         complete: false,
         steps,
+        branch: None,
     };
     save(&dir, &record)?;
     Ok(dir)
+}
+
+/// Record in the merge's undo data the branch it kept the workspace's commits in.
+pub fn record_branch(dir: &Path, saved: &SavedBranch) -> Result {
+    let mut record = load(dir)?;
+    record.branch = Some(saved.clone());
+    save(dir, &record)
+}
+
+/// Put the branch a merge kept commits in back where it was, unless it moved since.
+fn revert_branch(project: &Path, saved: &SavedBranch, report: &mut UndoReport) {
+    let reference = format!("refs/heads/{}", saved.name);
+    let current = crate::git::resolve(project, &reference).ok();
+    if current.as_deref() != Some(saved.tip.as_str()) {
+        report.branch_moved = Some(saved.name.clone());
+        return;
+    }
+    let reverted = match &saved.previous {
+        Some(previous) => crate::git::update_ref(project, &reference, previous).is_ok(),
+        None => {
+            crate::git::delete_ref(project, &reference);
+            true
+        }
+    };
+    if reverted {
+        report.branch_reverted = Some(saved.name.clone());
+    } else {
+        report.branch_moved = Some(saved.name.clone());
+    }
 }
 
 /// Move `entry` (the pre-merge version of `relative`) into the store. The first version kept
@@ -242,6 +289,9 @@ pub fn undo(workspace: Option<&str>) -> Result<UndoReport> {
     }
     report.changed_since.sort();
     report.newer_merge.sort();
+    if let Some(saved) = record.branch.take() {
+        revert_branch(&record.project, &saved, &mut report);
+    }
     if remaining.is_empty() {
         fs::remove_dir_all(&dir).io_context(|| format!("remove {}", dir.display()))?;
     } else {

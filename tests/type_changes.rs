@@ -92,7 +92,7 @@ fn after_fork() {
     std::thread::sleep(Duration::from_millis(5));
 }
 
-/// Every entry under \`root\` but \`.git\`, with its kind and content or link target, sorted.
+/// Every entry under `root` but `.git`, with its kind and content or link target, sorted.
 fn tree(root: &Path) -> Vec<(PathBuf, String)> {
     let mut found: Vec<_> = walkdir::WalkDir::new(root)
         .min_depth(1)
@@ -136,11 +136,11 @@ fn merge_undo_turns_a_file_made_a_directory_and_a_directory_made_a_file_back() {
     write(&view.join("keep.txt"), "keep 2\n");
     let before = tree(&env.project());
 
-    env.ok(&["merge", "w", "--quiet", "--no-install"]);
+    env.ok(&["merge", "w"]);
     assert_eq!(read(&env.project().join("dir2file")), "now a file\n");
     assert_eq!(read(&env.project().join("file2dir/in.txt")), "inside\n");
 
-    env.ok(&["merge", "--undo", "w", "--no-install"]);
+    env.ok(&["merge", "--undo", "w"]);
     assert_eq!(tree(&env.project()), before);
 }
 
@@ -156,10 +156,10 @@ fn merge_undo_leaves_a_directory_written_into_since_the_merge() {
     let view = env.view("w");
     fs::remove_file(view.join("file2dir")).unwrap();
     write(&view.join("file2dir/in.txt"), "inside\n");
-    env.ok(&["merge", "w", "--quiet", "--no-install"]);
+    env.ok(&["merge", "w"]);
     write(&env.project().join("file2dir/later.txt"), "user\n");
 
-    let output = env.ok(&["merge", "--undo", "w", "--no-install"]);
+    let output = env.ok(&["merge", "--undo", "w"]);
     assert_eq!(
         read(&env.project().join("file2dir/later.txt")),
         "user\n",
@@ -174,7 +174,7 @@ fn merge_undo_leaves_a_directory_written_into_since_the_merge() {
     assert_eq!(kept.len(), 1, "the base's file is still in the undo record");
 }
 
-/// CKPT-09: a directory and a symlink deleted after a checkpoint come back with \`restore\`.
+/// CKPT-09: a directory and a symlink deleted after a checkpoint come back with `restore`.
 #[test]
 #[serial]
 fn restore_puts_back_a_deleted_directory_and_symlink() {
@@ -242,7 +242,7 @@ fn restore_swaps_a_directory_and_a_symlink_both_ways() {
     assert_eq!(tree(&view), as_dir);
 }
 
-/// CKPT-10: after \`pull --theirs\` takes a file the base put where a directory was, the
+/// CKPT-10: after `pull --theirs` takes a file the base put where a directory was, the
 /// before-pull checkpoint still brings back what the workspace added in the directory.
 #[test]
 #[serial]
@@ -274,7 +274,7 @@ fn the_before_pull_checkpoint_restores_after_the_base_turned_a_directory_into_a_
 }
 
 /// PULL-16: the workspace replaced a directory with a file, and the base added a file inside
-/// the directory: a conflict, found before anything is applied; \`--theirs\` takes the base's
+/// the directory: a conflict, found before anything is applied; `--theirs` takes the base's
 /// directory whole.
 #[test]
 #[serial]
@@ -386,51 +386,19 @@ fn merge_replaces_a_symlinked_directory_with_the_workspace_directory() {
     fs::remove_file(view.join("b")).unwrap();
     write(&view.join("b/d.txt"), "theta\ntheta\n");
 
-    let output = env.run(&["merge", "w", "--quiet", "--no-install"]);
+    let output = env.run(&["merge", "w"]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(tree(&env.project()), tree(&view));
     assert_eq!(read(&env.project().join("c/d.txt")), "eps\nbeta\ndelta");
-    env.ok(&["merge", "--undo", "w", "--no-install"]);
+    env.ok(&["merge", "--undo", "w"]);
     assert_eq!(
         fs::read_link(env.project().join("b")).unwrap(),
         Path::new("c")
     );
 }
 
-/// MERGE-35: `merge --patch --drop` where the base has a file or symlink where the patch needs
-/// a directory refuses before printing, as a direct merge does, and keeps the workspace.
-#[test]
-#[serial]
-fn merge_patch_drop_refuses_when_the_base_has_a_file_where_the_patch_needs_a_directory() {
-    for blocking in ["file", "symlink"] {
-        let env = Env::new();
-        write(&env.project().join("k.txt"), "k\n");
-        write(&env.project().join("ex/e.txt"), "e\n");
-        env.fork("w");
-        let view = env.view("w");
-        write(&view.join("ex/new.txt"), "agent work\n");
-        after_fork();
-        fs::remove_dir_all(env.project().join("ex")).unwrap();
-        if blocking == "file" {
-            write(&env.project().join("ex"), "base file\n");
-        } else {
-            symlink(env.root.path(), env.project().join("ex")).unwrap();
-        }
-
-        let output = env.run(&["merge", "w", "--patch", "--drop"]);
-        assert_eq!(
-            output.status.code(),
-            Some(5),
-            "{blocking}: {}",
-            stderr(&output)
-        );
-        assert!(output.stdout.is_empty(), "{blocking}: a patch was printed");
-        assert_eq!(read(&view.join("ex/new.txt")), "agent work\n", "{blocking}");
-    }
-}
-
 /// MERGE-28: the base put a file where the workspace added a directory: a conflict before
-/// anything is applied; \`--overwrite-base\` replaces the file, and undo puts it back.
+/// anything is applied.
 #[test]
 #[serial]
 fn merge_conflicts_when_the_base_put_a_file_where_the_workspace_added_a_directory() {
@@ -444,20 +412,14 @@ fn merge_conflicts_when_the_base_put_a_file_where_the_workspace_added_a_director
     write(&env.project().join("d"), "base file named d\n");
     let before = tree(&env.project());
 
-    let output = env.run(&["merge", "w", "--quiet", "--no-install"]);
+    let output = env.run(&["merge", "w"]);
     assert_eq!(output.status.code(), Some(5), "{}", stderr(&output));
     assert!(stderr(&output).contains("d/y"), "{}", stderr(&output));
     assert_eq!(tree(&env.project()), before, "nothing is applied");
     assert_eq!(env.open_journals(), Vec::<String>::new());
-
-    env.ok(&["merge", "w", "--quiet", "--no-install", "--overwrite-base"]);
-    assert_eq!(read(&env.project().join("d/y")), "workspace dir\n");
-    assert_eq!(read(&env.project().join("a.txt")), "a workspace\n");
-    env.ok(&["merge", "--undo", "w", "--no-install"]);
-    assert_eq!(tree(&env.project()), before);
 }
 
-/// Whether \`dir\` is on a volume that resolves names case-insensitively (APFS by default).
+/// Whether `dir` is on a volume that resolves names case-insensitively (APFS by default).
 fn case_insensitive(dir: &Path) -> bool {
     let probe = dir.join("CaseProbe");
     fs::write(&probe, "probe\n").unwrap();
@@ -466,13 +428,13 @@ fn case_insensitive(dir: &Path) -> bool {
     insensitive
 }
 
-/// Rename \`from\` to \`to\` in \`root\` when the two differ only in case.
+/// Rename `from` to `to` in `root` when the two differ only in case.
 fn respell(root: &Path, from: &str, to: &str) {
     fs::rename(root.join(from), root.join("respelling")).unwrap();
     fs::rename(root.join("respelling"), root.join(to)).unwrap();
 }
 
-/// The names directly in \`root\`, spelled as listed.
+/// The names directly in `root`, spelled as listed.
 fn names(root: &Path) -> Vec<String> {
     let mut names: Vec<String> = fs::read_dir(root)
         .unwrap()
@@ -484,9 +446,9 @@ fn names(root: &Path) -> Vec<String> {
     names
 }
 
-/// PULL-17: the base renames \`dir\` to \`Dir\` (one entry on a case-insensitive volume) while
+/// PULL-17: the base renames `dir` to `Dir` (one entry on a case-insensitive volume) while
 /// the workspace added or edited something inside: a conflict, found before anything is
-/// applied; \`--theirs\` takes the base's spelling and contents.
+/// applied; `--theirs` takes the base's spelling and contents.
 #[test]
 #[serial]
 fn pull_conflicts_when_the_base_respells_a_directory_the_workspace_changed_inside() {

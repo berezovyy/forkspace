@@ -55,7 +55,7 @@ pub enum ForkspaceError {
         expected: String,
     },
 
-    #[error("merge conflict: base changed since fork for {paths:?}; review the paths or rerun with --overwrite-base")]
+    #[error("merge conflict: the project changed {paths:?} too since the fork; bring its versions into the workspace with `forkspace pull`, settle them there, then merge again")]
     MergeConflict { paths: Vec<String> },
 
     #[error("cannot export a complete patch of '{workspace}', so none was printed: {}; apply these changes with `forkspace merge {workspace}` instead", omitted.join("; "))]

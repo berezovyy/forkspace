@@ -201,17 +201,13 @@ fn copy_stack_is_a_snapshot_and_merges_exactly_one_level_at_a_time() {
     );
     fs::write(child_view.join("child-only"), b"child\n").unwrap();
 
-    assert!(run(&["merge", "child", "--no-install", "--quiet"])
-        .status
-        .success());
+    assert!(run(&["merge", "child"]).status.success());
     assert_eq!(
         fs::read(parent_view.join("child-only")).unwrap(),
         b"child\n"
     );
     assert!(!base.path().join("child-only").exists());
-    assert!(run(&["merge", "parent", "--no-install", "--quiet"])
-        .status
-        .success());
+    assert!(run(&["merge", "parent"]).status.success());
     assert_eq!(
         fs::read(base.path().join("file")).unwrap(),
         b"after-child\n"

@@ -242,12 +242,9 @@ fn kill_during_merge_blocks_mutations_until_explicit_resume_then_converges() {
         fs::write(view.join(format!("file-{index:04}")), b"new\n").unwrap();
     }
     let mut merge = Command::new(env!("CARGO_BIN_EXE_forkspace"));
-    merge.env("FORKSPACE_HOME", home.path()).args([
-        "merge",
-        "merge-kill",
-        "--no-install",
-        "--quiet",
-    ]);
+    merge
+        .env("FORKSPACE_HOME", home.path())
+        .args(["merge", "merge-kill"]);
     let Some(mut merge) = common::with_slow_renames(&merge, Duration::from_millis(2)) else {
         return;
     };
@@ -274,10 +271,7 @@ fn kill_during_merge_blocks_mutations_until_explicit_resume_then_converges() {
     let blocked = forkspace(home.path(), &["drop", "merge-kill"]);
     assert!(!blocked.status.success());
     assert!(String::from_utf8_lossy(&blocked.stderr).contains("merge merge-kill --resume"));
-    let resumed = forkspace(
-        home.path(),
-        &["merge", "merge-kill", "--resume", "--no-install", "--quiet"],
-    );
+    let resumed = forkspace(home.path(), &["merge", "merge-kill"]);
     assert!(
         resumed.status.success(),
         "{}",
@@ -349,7 +343,7 @@ fn unicode_non_utf8_case_and_long_paths_round_trip_through_copy_diff_and_merge()
             1
         );
     }
-    let merged = forkspace(home.path(), &["merge", "names", "--no-install", "--quiet"]);
+    let merged = forkspace(home.path(), &["merge", "names"]);
     assert!(
         merged.status.success(),
         "{}",
@@ -391,7 +385,7 @@ fn moved_base_is_flagged_but_the_independent_workspace_still_enters_and_diffs() 
         .clone();
     fs::write(view.join("file"), b"workspace\n").unwrap();
     assert!(forkspace(home.path(), &["diff", "moved"]).status.success());
-    let merge = forkspace(home.path(), &["merge", "moved", "--no-install"]);
+    let merge = forkspace(home.path(), &["merge", "moved"]);
     assert!(!merge.status.success());
     assert!(String::from_utf8_lossy(&merge.stderr).contains("restore it before merging"));
 }
@@ -625,15 +619,7 @@ fn sibling_cache_race_parallel_merges_and_diff_during_writes_remain_consistent()
         let barrier = barrier.clone();
         mergers.push(std::thread::spawn(move || {
             barrier.wait();
-            forkspace(
-                &home,
-                &[
-                    "merge",
-                    &format!("sibling-{index}"),
-                    "--no-install",
-                    "--quiet",
-                ],
-            )
+            forkspace(&home, &["merge", &format!("sibling-{index}")])
         }));
     }
     for output in mergers.into_iter().map(|worker| worker.join().unwrap()) {
