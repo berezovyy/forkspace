@@ -1163,7 +1163,7 @@ mod macos {
         let workspace = fork(base.path(), "respell-pull");
         wait_for_manifest("respell-pull");
         respell(base.path());
-        assert_cli(home.path(), &["pull", "respell-pull", "--no-install"]);
+        assert_cli(home.path(), &["pull", "respell-pull"]);
         assert_eq!(names(&workspace.view_path), respelled);
         assert_eq!(
             fs::read(workspace.view_path.join(nfd)).unwrap(),
@@ -1196,8 +1196,11 @@ mod macos {
         assert!(!ancestor.join("node_modules").exists());
 
         fs::write(base.path().join("top.txt"), b"base edit\n").unwrap();
-        let plan = assert_cli(home.path(), &["pull", "dirs", "--dry-run"]);
-        assert!(plan.contains("1 files"), "only the edit is pulled: {plan}");
+        let pulled = assert_cli(home.path(), &["pull", "dirs"]);
+        assert!(
+            pulled.contains("pulled 1 files"),
+            "only the edit is pulled: {pulled}"
+        );
 
         assert_cli(home.path(), &["drop", "dirs"]);
         assert!(!ancestor.exists());

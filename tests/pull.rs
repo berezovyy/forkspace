@@ -59,13 +59,12 @@ fn workspace(base: &Path, view: &Path, name: &str) -> Workspace {
     ws
 }
 
-fn build_plan(ws: &Workspace, theirs: bool) -> forkspace::error::Result<pull::PullPlan> {
+fn build_plan(ws: &Workspace) -> forkspace::error::Result<pull::PullPlan> {
     tick();
     pull::build_from_changes(
         ws,
         pull::base_changes(ws)?,
         collect_clone_changes(ws, true, false)?,
-        theirs,
     )
 }
 
@@ -93,7 +92,7 @@ fn clean_fast_forward_rebaselines_files_deletes_modes_and_symlinks() {
     fs::remove_file(base.path().join("link")).unwrap();
     std::os::unix::fs::symlink("add", base.path().join("link")).unwrap();
 
-    let plan = build_plan(&ws, false).unwrap();
+    let plan = build_plan(&ws).unwrap();
     assert!(pull::render(&plan).contains("pull plan"));
     let journal = pull::start(&ws, &plan).unwrap();
     pull::finish(&mut ws, &journal).unwrap();
@@ -132,7 +131,7 @@ fn disjoint_edits_preserve_ours_and_conflicts_refuse_atomically() {
     fs::write(base.path().join("a"), b"base-a\n").unwrap();
     fs::write(view.path().join("b"), b"ours-b\n").unwrap();
 
-    let plan = build_plan(&ws, false).unwrap();
+    let plan = build_plan(&ws).unwrap();
     assert_eq!(plan.changes.len(), 1);
     let journal = pull::start(&ws, &plan).unwrap();
     pull::finish(&mut ws, &journal).unwrap();
@@ -148,11 +147,10 @@ fn disjoint_edits_preserve_ours_and_conflicts_refuse_atomically() {
     fs::write(base.path().join("a"), b"base-again\0\n").unwrap();
     fs::write(view.path().join("a"), b"ours-a\0\n").unwrap();
     let before = fs::read(view.path().join("a")).unwrap();
-    let error = build_plan(&ws, false).unwrap_err();
-    assert!(matches!(error, ForkspaceError::PullConflict { .. }));
+    let plan = build_plan(&ws).unwrap();
+    // Planning changes nothing; the plan takes the base's version of what cannot merge.
+    assert_eq!(plan.conflicts, [Path::new("a")]);
     assert_eq!(fs::read(view.path().join("a")).unwrap(), before);
-
-    let plan = build_plan(&ws, true).unwrap();
     let journal = pull::start(&ws, &plan).unwrap();
     pull::finish(&mut ws, &journal).unwrap();
     pull::complete(&journal).unwrap();
@@ -169,7 +167,7 @@ fn open_journal_blocks_stale_ancestor_operations_and_resume_converges() {
     let mut ws = workspace(base.path(), view.path(), "pull-resume");
     tick();
     fs::write(base.path().join("a"), b"new\n").unwrap();
-    let plan = build_plan(&ws, false).unwrap();
+    let plan = build_plan(&ws).unwrap();
     let journal = pull::start(&ws, &plan).unwrap();
     assert!(matches!(
         forkspace::workspace::guard::ensure_no_interrupted_pull(&ws.name),
@@ -196,10 +194,7 @@ fn conflict_kind_matrix_refuses_without_partial_application() {
         tick();
         mutate(base.path(), view.path());
         let before = tree_facts(view.path());
-        assert!(matches!(
-            build_plan(&ws, false),
-            Err(ForkspaceError::PullConflict { .. })
-        ));
+        assert!(!build_plan(&ws).unwrap().conflicts.is_empty());
         assert_eq!(tree_facts(view.path()), before);
     };
 
@@ -269,7 +264,7 @@ fn base_deleted_directory_keeps_files_the_workspace_added_inside() {
         fs::remove_dir_all(base.path().join("dir")).unwrap();
         fs::remove_dir_all(base.path().join("gone")).unwrap();
 
-        let plan = build_plan(&ws, theirs).unwrap();
+        let plan = build_plan(&ws).unwrap();
         let planned: Vec<_> = plan.changes.iter().map(|c| c.path.clone()).collect();
         assert!(!planned.contains(&"dir".into()), "{planned:?}");
         assert!(!planned.contains(&"dir/sub".into()), "{planned:?}");
@@ -323,13 +318,9 @@ fn base_replacing_a_directory_conflicts_with_workspace_additions_inside() {
     fs::write(base.path().join("dir"), b"now a file\n").unwrap();
     let before = tree_facts(view.path());
 
-    match build_plan(&ws, false) {
-        Err(ForkspaceError::PullConflict { paths }) => assert_eq!(paths, ["dir"]),
-        other => panic!("expected a pull conflict, got {other:?}"),
-    }
+    // The pull takes the base version, as for any other conflict, and says so.
+    let plan = build_plan(&ws).unwrap();
     assert_eq!(tree_facts(view.path()), before);
-    // `--theirs` takes the base version, as for any other conflict, and says so.
-    let plan = build_plan(&ws, true).unwrap();
     assert_eq!(plan.conflicts, [Path::new("dir")]);
     assert!(plan.kept.is_empty(), "{:?}", plan.kept);
 }
@@ -417,7 +408,7 @@ fn convergent_edit_is_a_noop_but_still_rebaselines() {
     tick();
     fs::write(base.path().join("same"), b"same-new\n").unwrap();
     fs::write(view.path().join("same"), b"same-new\n").unwrap();
-    let plan = build_plan(&ws, false).unwrap();
+    let plan = build_plan(&ws).unwrap();
     assert!(plan.changes.is_empty());
     assert_eq!(plan.convergent, [std::path::PathBuf::from("same")]);
     let journal = pull::start(&ws, &plan).unwrap();
@@ -429,39 +420,26 @@ fn convergent_edit_is_a_noop_but_still_rebaselines() {
 
 #[test]
 #[serial]
-fn dry_run_text_and_json_match_the_subsequent_public_apply() {
+fn pull_json_prints_the_plan_it_applies() {
     let home = common::setup_test_env();
     let base = tempfile::tempdir().unwrap();
     fs::write(base.path().join("file"), b"old\n").unwrap();
     let ws = forkspace::workspace::create(
         base.path().to_path_buf(),
-        "pull-dry",
-        forkspace::workspace::CreateOptions {
-            ..Default::default()
-        },
+        "pull-json",
+        forkspace::workspace::CreateOptions::default(),
     )
     .unwrap();
     fs::write(base.path().join("file"), b"new\n").unwrap();
-    let before = tree_facts(&ws.view_path);
 
-    let text = forkspace_command(
-        home.path(),
-        &["pull", "pull-dry", "--dry-run", "--no-install"],
+    let json = forkspace_command(home.path(), &["pull", "pull-json", "--json"]);
+    assert!(
+        json.status.success(),
+        "{}",
+        String::from_utf8_lossy(&json.stderr)
     );
-    assert!(text.status.success());
-    assert!(String::from_utf8_lossy(&text.stdout).contains("update file"));
-    assert_eq!(tree_facts(&ws.view_path), before);
-    let json = forkspace_command(
-        home.path(),
-        &["pull", "pull-dry", "--dry-run", "--json", "--no-install"],
-    );
-    assert!(json.status.success());
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
     assert_eq!(value["changes"][0]["path"], "file");
-    assert_eq!(tree_facts(&ws.view_path), before);
-
-    let apply = forkspace_command(home.path(), &["pull", "pull-dry", "--no-install"]);
-    assert!(apply.status.success());
     assert_eq!(fs::read(ws.view_path.join("file")).unwrap(), b"new\n");
 }
 
@@ -551,7 +529,7 @@ fn merge_after_pull_pushes_only_remaining_workspace_edits() {
     write_pair(base.path(), view.path(), "ours-b", b"old\n");
     let mut ws = workspace(base.path(), view.path(), "pull-then-merge");
     fs::write(base.path().join("advanced"), b"base\n").unwrap();
-    let journal = pull::start(&ws, &build_plan(&ws, false).unwrap()).unwrap();
+    let journal = pull::start(&ws, &build_plan(&ws).unwrap()).unwrap();
     pull::finish(&mut ws, &journal).unwrap();
     pull::complete(&journal).unwrap();
     fs::write(view.path().join("ours-a"), b"a\n").unwrap();
@@ -638,14 +616,14 @@ fn degraded_missing_and_interrupted_ancestors_refuse_with_actionable_remedies() 
         unknown_fields: serde_json::Map::new(),
     };
     ws.manifest_status = ManifestStatus::Building;
-    let error = pull::build(&ws, false).unwrap_err().to_string();
+    let error = pull::build(&ws).unwrap_err().to_string();
     assert!(error.contains("no ready fork-time manifest"));
     ws.manifest_status = ManifestStatus::Absent;
-    let error = pull::build(&ws, false).unwrap_err().to_string();
+    let error = pull::build(&ws).unwrap_err().to_string();
     assert!(error.contains("no ready fork-time manifest"));
     ws.manifest_status = ManifestStatus::Ready;
     fs::remove_dir_all(base.path()).unwrap();
-    let error = pull::build(&ws, false).unwrap_err().to_string();
+    let error = pull::build(&ws).unwrap_err().to_string();
     assert!(error.contains("base directory"));
 }
 
@@ -656,15 +634,7 @@ fn zsh_completion_exposes_every_pull_flag() {
         .output()
         .unwrap();
     let text = String::from_utf8(output.stdout).unwrap();
-    for flag in [
-        "--dry-run",
-        "--theirs",
-        "--resume",
-        "--no-install",
-        "--json",
-    ] {
-        assert!(text.contains(flag), "missing {flag}");
-    }
+    assert!(text.contains("--json"), "missing --json");
 }
 
 fn forkspace_command(home: &Path, args: &[&str]) -> std::process::Output {
@@ -679,7 +649,7 @@ fn pull_via_state(name: &str) {
     tick();
     forkspace::state::State::with_state(|state| {
         let mut workspace = state.require_workspace(name)?.clone();
-        let plan = pull::build(&workspace, false)?;
+        let plan = pull::build(&workspace)?;
         let journal = pull::start(&workspace, &plan)?;
         pull::finish(&mut workspace, &journal)?;
         pull::complete(&journal)?;
@@ -749,7 +719,7 @@ fn dirty_rows_are_workspace_writes_not_base_changes() {
     fs::write(base.path().join("c.txt"), b"base\n").unwrap();
 
     assert_eq!(paths(&pull::base_changes(&ws).unwrap()), ["c.txt"]);
-    let plan = build_plan(&ws, false).unwrap();
+    let plan = build_plan(&ws).unwrap();
     assert_eq!(paths(&plan.changes), ["c.txt"]);
     assert!(plan.conflicts.is_empty() && plan.auto_merged.is_empty());
 }
@@ -778,7 +748,7 @@ fn a_base_file_touched_without_changing_bytes_is_not_a_base_change() {
     }
 
     assert!(pull::base_changes(&ws).unwrap().is_empty());
-    let plan = build_plan(&ws, false).unwrap();
+    let plan = build_plan(&ws).unwrap();
     assert!(plan.changes.is_empty() && plan.conflicts.is_empty());
 }
 

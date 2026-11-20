@@ -591,7 +591,7 @@ fn merge_then_pull_moves_one_workspace_s_changes_into_another() {
     );
 
     fs::write(env.view("ws2").join("own.txt"), "ws2\n").unwrap();
-    env.run(&["pull", "ws2", "--no-install"]);
+    env.run(&["pull", "ws2"]);
     assert_eq!(
         fs::read_to_string(env.view("ws2").join("feature.txt")).unwrap(),
         "from ws1\n"

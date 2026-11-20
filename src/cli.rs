@@ -45,7 +45,7 @@ pub enum Commands {
     /// Put your project back as it was before the latest merge
     Undo(UndoArgs),
 
-    /// Bring base changes into a workspace
+    /// Bring your project's newer changes into a workspace
     Pull(PullArgs),
 
     /// Save the current state of a workspace
@@ -290,19 +290,7 @@ pub struct PullArgs {
     #[arg(help = "Workspace (defaults to the one you are in)")]
     pub name: Option<String>,
 
-    #[arg(long, help = "Show the pull plan without applying it")]
-    pub dry_run: bool,
-
-    #[arg(long, help = "Resolve conflicts by taking the base version")]
-    pub theirs: bool,
-
-    #[arg(long, help = "Resume an interrupted pull")]
-    pub resume: bool,
-
-    #[arg(long, help = "Skip automatic dependency installation")]
-    pub no_install: bool,
-
-    #[arg(long, help = "Output the pull plan as JSON")]
+    #[arg(long, help = "Print the pull plan as JSON, for tools")]
     pub json: bool,
 }
 

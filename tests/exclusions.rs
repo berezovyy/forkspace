@@ -121,7 +121,7 @@ fn left_out_paths_never_move_between_a_workspace_and_its_project() {
     write(&project.join("src/c.txt"), "c\n");
     write(&project.join(".claude/worktrees/agent/late.txt"), "late\n");
     write(&project.join("big/late.bin"), "late\n");
-    env.ok(&["pull", "w", "--no-install"]);
+    env.ok(&["pull", "w"]);
     assert_eq!(fs::read_to_string(view.join("src/c.txt")).unwrap(), "c\n");
     assert!(!view.join(".claude/worktrees/agent").exists());
     assert!(!view.join("big/late.bin").exists());

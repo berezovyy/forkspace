@@ -147,7 +147,7 @@ fn a_checkpoint_restores_after_pull_moved_the_fork_point() {
     let id = latest_id(&env, "w");
 
     write(&env.project().join("other.txt"), "changed in the project\n");
-    env.ok(&["pull", "w", "--no-install"]);
+    env.ok(&["pull", "w"]);
     fs::write(view.join("src/big.txt"), "later\n").unwrap();
     env.ok(&["restore", "w", &id.to_string(), "--no-install"]);
     assert_eq!(fs::read(view.join("src/big.txt")).unwrap(), expected);

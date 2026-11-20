@@ -185,7 +185,7 @@ fn undoing_an_older_merge_refuses_files_a_newer_merge_changed() {
     fs::write(env.view("ws1").join("shared.txt"), "1\n").unwrap();
     fs::write(env.view("ws1").join("own.txt"), "1\n").unwrap();
     env.merge("ws1");
-    env.ok(&["pull", "ws2", "--no-install"]);
+    env.ok(&["pull", "ws2"]);
     fs::write(env.view("ws2").join("shared.txt"), "2\n").unwrap();
     env.merge("ws2");
 

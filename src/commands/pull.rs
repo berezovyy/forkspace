@@ -9,9 +9,19 @@ use crate::workspace::{guard, Workspace};
 
 pub fn exec(args: PullArgs) -> Result {
     let name = workspace_name(args.name)?;
-    if !args.resume {
+    // A pull into this workspace that was interrupted is finished first.
+    let resume = journal::find_open(journal::OperationKind::Pull, &name)?.is_some();
+    if !resume {
         crate::changes::manifest::settle_now(&name, true)?;
     }
+    // With --json, stdout holds only the plan; messages go to stderr.
+    let say = |message: String| {
+        if args.json {
+            eprintln!("{message}");
+        } else {
+            println!("{message}");
+        }
+    };
     State::with_state(|state| {
         guard::ensure_no_interrupted_merge(&name)?;
         let workspace = state.require_workspace(&name)?.clone();
@@ -19,23 +29,28 @@ pub fn exec(args: PullArgs) -> Result {
 
         // `count` is `None` when resuming, where the original plan is no longer known; the
         // install then runs, since the plan may have changed the dependencies.
-        let (mut journal, count, marked, mut dependencies_changed) = if args.resume {
+        let mut taken = Vec::new();
+        let mut line_merged = Vec::new();
+        let mut before = None;
+        let (mut journal, count, marked, mut dependencies_changed) = if resume {
             (pull::resume_apply(&workspace)?, None, Vec::new(), true)
         } else {
-            guard::ensure_no_interrupted_pull(&name)?;
-            let plan = pull::build_with(&workspace, args.theirs, !args.no_install)?;
-            print_plan(&plan, args.json)?;
-            if args.dry_run {
-                pull::discard_staging(&workspace);
-                return Ok(());
+            let plan = pull::build_with(&workspace, true)?;
+            if args.json {
+                super::print_json(&plan)?;
             }
             // Pull rewrites workspace files; keep a way back.
-            crate::sync::checkpoint::create(
-                &workspace,
-                Some("before pull".to_string()),
-                false,
-                true,
-            )?;
+            before = Some(
+                crate::sync::checkpoint::create(
+                    &workspace,
+                    Some("before pull".to_string()),
+                    false,
+                    true,
+                )?
+                .id,
+            );
+            taken.clone_from(&plan.conflicts);
+            line_merged.clone_from(&plan.auto_merged);
             let dependencies_changed = install::touches_dependencies(
                 plan.changes
                     .iter()
@@ -66,12 +81,12 @@ pub fn exec(args: PullArgs) -> Result {
             if !open || !pull::base_moved_since(&workspace, previous.guard.as_ref()) {
                 break;
             }
-            let plan = pull::build_since(&workspace, &previous, !args.no_install)?;
+            let plan = pull::build_since(&workspace, &previous, true)?;
             if !plan.changes.is_empty() {
-                println!(
+                say(format!(
                     "the base changed while pulling; pulling {} more files",
                     plan.changes.len()
-                );
+                ));
             }
             dependencies_changed |= install::touches_dependencies(
                 plan.changes
@@ -84,7 +99,7 @@ pub fn exec(args: PullArgs) -> Result {
         }
         let held = journal::held(&journal)?;
 
-        if !args.no_install && dependencies_changed {
+        if dependencies_changed {
             install_in_workspace(&workspace)?;
         }
         let recorded = state.require_workspace_mut(&name)?;
@@ -100,11 +115,26 @@ pub fn exec(args: PullArgs) -> Result {
         pull::complete(&journal)?;
         match count {
             // What was held was not pulled (MERGE-37).
-            Some(count) => println!(
-                "pulled {} files into '{name}' and re-baselined",
+            Some(count) => say(format!(
+                "pulled {} files into '{name}'",
                 (count + extra).saturating_sub(held.len())
-            ),
-            None => println!("resumed pull into '{name}' and re-baselined"),
+            )),
+            None => say(format!("finished the interrupted pull into '{name}'")),
+        }
+        if !line_merged.is_empty() {
+            say(format!(
+                "merged line by line: {}",
+                crate::sync::join_paths(&line_merged)
+            ));
+        }
+        if !taken.is_empty() {
+            let checkpoint = before.map_or_else(String::new, |id| {
+                format!("; yours are in checkpoint {id} (`forkspace restore {name} {id}`)")
+            });
+            say(format!(
+                "took the project's version of {}, which cannot be merged line by line{checkpoint}",
+                crate::sync::join_paths(&taken)
+            ));
         }
         if !left.is_empty() {
             eprintln!(
@@ -136,15 +166,6 @@ const CATCH_UP_ROUNDS: usize = 3;
 /// The named workspace, or the one you are in (see [`crate::workspace::pick`]).
 pub(crate) fn workspace_name(name: Option<String>) -> Result<String> {
     crate::workspace::pick(name)
-}
-
-fn print_plan(plan: &pull::PullPlan, json: bool) -> Result {
-    if json {
-        super::print_json(plan)
-    } else {
-        println!("{}", pull::render(plan));
-        Ok(())
-    }
 }
 
 fn install_in_workspace(workspace: &Workspace) -> Result {

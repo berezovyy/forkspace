@@ -244,7 +244,7 @@ fn a_pulled_workspace_rebuilds_its_manifest_from_the_pull_not_the_view() {
     std::thread::sleep(Duration::from_millis(20));
     write(&view.join("a.txt"), "a edited\n");
     write(&env.project().join("c.txt"), "c from the base\n");
-    env.ok(&["pull", "ws", "--no-install"]);
+    env.ok(&["pull", "ws"]);
     assert_eq!(stdout(&env.ok(&["diff", "ws"])).trim(), "a.txt");
 
     lose_manifest("ws", ManifestStatus::Degraded, None);

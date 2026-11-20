@@ -115,14 +115,24 @@ fn pull_still_sees_ignored_files_that_transfer() {
     .unwrap();
     fs::write(env.project().join("dist/app.js"), "built again\n").unwrap();
 
-    let refused = env.run(&["pull", "ws", "--dry-run", "--no-install"]);
-    assert_eq!(refused.status.code(), Some(5));
-    assert!(String::from_utf8_lossy(&refused.stderr).contains(".env"));
-
-    let plan = env.ok(&["pull", "ws", "--dry-run", "--theirs", "--no-install"]);
-    assert!(plan.contains("update dist/app.js"), "{plan}");
-    assert!(plan.contains("update .env"), "{plan}");
-    assert!(!plan.contains("node_modules"), "{plan}");
+    // .env cannot be merged line by line: the pull takes the project's and says so.
+    let pulled = env.ok(&["pull", "ws"]);
+    assert!(
+        pulled.contains("took the project's version of .env"),
+        "{pulled}"
+    );
+    assert_eq!(
+        fs::read(env.view().join(".env")).unwrap(),
+        b"TOKEN=project\0\n"
+    );
+    assert_eq!(
+        fs::read_to_string(env.view().join("dist/app.js")).unwrap(),
+        "built again\n"
+    );
+    assert_ne!(
+        fs::read_to_string(env.view().join("node_modules/pkg/lib/index.js")).unwrap(),
+        "upgraded\n"
+    );
 }
 
 #[test]

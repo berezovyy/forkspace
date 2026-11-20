@@ -1,4 +1,4 @@
-Bring base changes into a workspace
+Bring your project's newer changes into a workspace
 
 Usage: forkspace pull [OPTIONS] [NAME]
 
@@ -6,9 +6,5 @@ Arguments:
   [NAME]  Workspace (defaults to the one you are in)
 
 Options:
-      --dry-run     Show the pull plan without applying it
-      --theirs      Resolve conflicts by taking the base version
-      --resume      Resume an interrupted pull
-      --no-install  Skip automatic dependency installation
-      --json        Output the pull plan as JSON
-  -h, --help        Print help
+      --json  Print the pull plan as JSON, for tools
+  -h, --help  Print help

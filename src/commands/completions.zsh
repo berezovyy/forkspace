@@ -100,11 +100,7 @@ _forkspace() {
                 pull)
                     _arguments \
                         '1:workspace:_forkspace_workspaces' \
-                        '--dry-run[Show the pull plan without applying]' \
-                        '--theirs[Resolve conflicts with the base version]' \
-                        '--resume[Resume an interrupted pull]' \
-                        '--no-install[Skip dependency installation]' \
-                        '--json[Output the pull plan as JSON]' \
+                        '--json[Print the pull plan as JSON]' \
                         '--help[Show help]'
                     ;;
                 checkpoint)

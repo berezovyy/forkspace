@@ -115,7 +115,7 @@ fn different_lines_reach_the_project_from_both_workspaces() {
     let merged = env.ok(&["merge", "ws2"]);
     assert!(merged.contains("merged line by line: app.txt"), "{merged}");
     // ...and so does pulling first, then merging.
-    let pulled = env.ok(&["pull", "ws3", "--no-install"]);
+    let pulled = env.ok(&["pull", "ws3"]);
     assert!(pulled.contains("merged line by line: app.txt"), "{pulled}");
     let view = env.read(&env.view("ws3").join("app.txt"));
     assert!(view.contains("line 2 ws1\n") && view.contains("line 18 ws2\n"));
@@ -146,7 +146,7 @@ fn same_lines_get_markers_in_the_workspace_and_never_reach_the_project() {
     assert!(String::from_utf8_lossy(&refused.stderr).contains("forkspace pull ws2"));
     assert_eq!(env.read(&env.project().join("app.txt")), project_before);
 
-    let pulled = env.run(&["pull", "ws2", "--no-install"]);
+    let pulled = env.run(&["pull", "ws2"]);
     assert_eq!(exit_code(&pulled), Some(5));
     let marked = env.read(&env.view("ws2").join("app.txt"));
     for marker in [

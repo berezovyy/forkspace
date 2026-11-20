@@ -229,7 +229,7 @@ fn pull_never_deletes_through_a_directory_the_base_replaced_with_a_symlink() {
     env.fork("w");
     replace_dir_with_outside_link(&env, &env.project());
 
-    env.ok(&["pull", "w", "--no-install"]);
+    env.ok(&["pull", "w"]);
     sentinels_intact(&env);
     assert_eq!(
         fs::read_link(env.view("w").join("d")).unwrap(),
@@ -248,7 +248,7 @@ fn pull_never_writes_through_a_parent_swapped_for_a_symlink_after_planning() {
     std::thread::sleep(Duration::from_millis(5));
     write(&env.project().join("d/x.txt"), "x v2 from base\n");
     let workspace = env.workspace("w");
-    let plan = pull::build(&workspace, false).unwrap();
+    let plan = pull::build(&workspace).unwrap();
 
     let view = &workspace.view_path;
     fs::rename(view.join("d"), view.join("d.real")).unwrap();
@@ -281,7 +281,7 @@ fn pull_keeps_what_the_agent_writes_while_it_applies() {
     fs::remove_file(env.project().join("f.txt")).unwrap();
     fs::remove_dir_all(env.project().join("g")).unwrap();
     let workspace = env.workspace("w");
-    let plan = pull::build(&workspace, false).unwrap();
+    let plan = pull::build(&workspace).unwrap();
 
     // The agent writes after planning, before the steps run.
     let view = &workspace.view_path;
@@ -410,7 +410,7 @@ fn a_resumed_pull_also_pulls_base_changes_made_while_it_was_interrupted() {
             "base\nbase edit\n",
         );
     }
-    let Some(mut child) = env.spawn_slow(&["pull", "w", "--no-install"], 300) else {
+    let Some(mut child) = env.spawn_slow(&["pull", "w"], 300) else {
         return;
     };
     env.wait_for_journal("pull", 2);
@@ -419,7 +419,7 @@ fn a_resumed_pull_also_pulls_base_changes_made_while_it_was_interrupted() {
     write(&env.project().join("late.txt"), "late\n");
     write(&env.project().join("a.txt"), "a0\nlate edit\n");
 
-    env.ok(&["pull", "w", "--resume", "--no-install"]);
+    env.ok(&["pull", "w"]);
     let view = env.view("w");
     assert_eq!(read(&view.join("late.txt")), "late\n");
     assert_eq!(read(&view.join("a.txt")), "a0\nlate edit\n");
@@ -447,7 +447,7 @@ fn a_pull_also_pulls_base_changes_made_while_it_applies() {
     std::thread::sleep(Duration::from_millis(5));
     write(&env.project().join("a.txt"), "a1\n");
     write(&env.project().join("d.txt"), "d1\n");
-    let Some(child) = env.spawn_slow(&["pull", "w", "--no-install"], 400) else {
+    let Some(child) = env.spawn_slow(&["pull", "w"], 400) else {
         return;
     };
     // After the step for a.txt, before the one for d.txt.
@@ -512,7 +512,7 @@ fn taking_one_side_of_a_path_both_sides_added_replaces_the_other() {
     write(&env.project().join("both.bin"), "base\0bytes\n");
     write(&env.view("pulled").join("both.bin"), "agent\0bytes\n");
 
-    env.ok(&["pull", "pulled", "--theirs", "--no-install"]);
+    env.ok(&["pull", "pulled"]);
     assert_eq!(read(&env.view("pulled").join("both.bin")), "base\0bytes\n");
 }
 
@@ -536,7 +536,7 @@ fn pull_keeps_a_directory_the_agent_moves_into_one_it_deletes() {
     let view = &workspace.view_path;
     write(&view.join("notes/n1.md"), "IMPORTANT NOTES\n");
     write(&view.join("notes/n2.md"), "MORE\n");
-    let plan = pull::build(&workspace, false).unwrap();
+    let plan = pull::build(&workspace).unwrap();
 
     move_notes_into_g(view);
     let journal = pull::start(&workspace, &plan).unwrap();
@@ -615,7 +615,7 @@ fn base_changes_after_the_pull_last_read_the_base_are_left_for_the_next_pull() {
     std::thread::sleep(Duration::from_millis(5));
     write(&env.project().join("p.txt"), "p1\n");
     let mut workspace = env.workspace("w");
-    let plan = pull::build(&workspace, false).unwrap();
+    let plan = pull::build(&workspace).unwrap();
     let journal = pull::start(&workspace, &plan).unwrap();
 
     write(&env.project().join("late.txt"), "late\n");
@@ -630,7 +630,7 @@ fn base_changes_after_the_pull_last_read_the_base_are_left_for_the_next_pull() {
     );
     assert_eq!(diff_files(&env, "w"), "mine.txt\n");
 
-    env.ok(&["pull", "w", "--no-install"]);
+    env.ok(&["pull", "w"]);
     let view = env.view("w");
     assert_eq!(read(&view.join("late.txt")), "late\n");
     assert_eq!(read(&view.join("a.txt")), "a1 late\n");
@@ -659,7 +659,7 @@ fn a_catch_up_round_never_wedges_on_what_the_agent_wrote() {
         write(&env.project().join(format!("f{index}.txt")), "planned\n");
     }
     let view = env.view("w");
-    let Some(child) = env.spawn_slow(&["pull", "w", "--no-install"], 300) else {
+    let Some(child) = env.spawn_slow(&["pull", "w"], 300) else {
         return;
     };
     env.wait_for_journal("pull", 0);
@@ -675,8 +675,8 @@ fn a_catch_up_round_never_wedges_on_what_the_agent_wrote() {
         .map(|entries| entries.flatten().count())
         .unwrap_or(0);
     assert_eq!(journals, 0, "a journal was left open");
-    let resumed = env.run(&["pull", "w", "--resume", "--theirs", "--no-install"]);
-    assert!(!resumed.status.success());
+    // The pull already counted the agent's f6.txt as its own edit: the next one leaves it.
+    env.ok(&["pull", "w"]);
     assert_eq!(read(&view.join("f6.txt")), "AGENT f6\n");
 }
 
@@ -695,7 +695,7 @@ fn a_catch_up_round_pulls_a_base_directory_renamed_during_the_pull() {
     write(&env.project().join("d/x.txt"), "x1\n");
     write(&env.project().join("z.txt"), "z1\n");
     let mut workspace = env.workspace("w");
-    let plan = pull::build(&workspace, false).unwrap();
+    let plan = pull::build(&workspace).unwrap();
     let journal = pull::start(&workspace, &plan).unwrap();
 
     fs::rename(env.project().join("d"), env.project().join("e")).unwrap();
@@ -723,7 +723,7 @@ fn a_base_file_gone_before_its_step_is_a_base_deletion() {
     write(&env.project().join("gone.txt"), "g1\n");
     write(&env.project().join("swap.tmp"), "editor swap\n");
     let workspace = env.workspace("w");
-    let plan = pull::build(&workspace, false).unwrap();
+    let plan = pull::build(&workspace).unwrap();
 
     fs::remove_file(env.project().join("gone.txt")).unwrap();
     fs::remove_file(env.project().join("swap.tmp")).unwrap();
@@ -751,7 +751,7 @@ fn a_base_file_that_keeps_changing_is_left_for_the_next_pull() {
     for index in 0..8 {
         write(&env.project().join(format!("src/f{index}.txt")), "v1\n");
     }
-    let Some(child) = env.spawn_slow(&["pull", "w", "--no-install"], 50) else {
+    let Some(child) = env.spawn_slow(&["pull", "w"], 50) else {
         return;
     };
     let hot = env.project().join("hot.txt");
@@ -775,7 +775,7 @@ fn a_base_file_that_keeps_changing_is_left_for_the_next_pull() {
 
     assert!(output.status.success(), "{output:?}");
     assert_eq!(diff_files(&env, "w"), "");
-    env.ok(&["pull", "w", "--no-install"]);
+    env.ok(&["pull", "w"]);
     assert_eq!(
         read(&env.view("w").join("hot.txt")),
         read(&env.project().join("hot.txt"))
@@ -798,7 +798,7 @@ fn a_base_file_touched_back_to_its_bytes_is_no_change_after_a_pull() {
     write(&env.project().join("m2.ts"), "m2\n");
     write(&env.project().join("m3.ts"), "m3 base\n");
 
-    env.ok(&["pull", "w", "--no-install"]);
+    env.ok(&["pull", "w"]);
     assert_eq!(read(&env.view("w").join("m3.ts")), "m3 base\n");
     assert_eq!(diff_files(&env, "w"), "m1.ts\n");
 }

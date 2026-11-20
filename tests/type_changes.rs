@@ -114,6 +114,10 @@ fn tree(root: &Path) -> Vec<(PathBuf, String)> {
     found
 }
 
+fn stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
@@ -259,7 +263,7 @@ fn the_before_pull_checkpoint_restores_after_the_base_turned_a_directory_into_a_
     after_fork();
     fs::remove_dir_all(env.project().join("dir")).unwrap();
     write(&env.project().join("dir"), "now a file\n");
-    env.ok(&["pull", "w", "--theirs", "--no-install"]);
+    env.ok(&["pull", "w"]);
     assert_eq!(read(&view.join("dir")), "now a file\n");
 
     let output = env.ok(&["restore", "w", "1", "--no-install"]);
@@ -290,15 +294,16 @@ fn pull_conflicts_when_the_base_adds_inside_a_directory_the_workspace_replaced()
     write(&env.project().join("e/h/a.md"), "new\n");
     write(&env.project().join("y"), "y2\n");
 
-    let output = env.run(&["pull", "w", "--no-install"]);
-    assert_eq!(output.status.code(), Some(5), "{}", stderr(&output));
-    assert!(stderr(&output).contains("e/h"), "{}", stderr(&output));
-    assert_eq!(read(&view.join("e/h")), "a file\n");
-    assert_eq!(read(&view.join("y")), "y\n", "nothing is applied");
-    assert_eq!(env.open_journals(), Vec::<String>::new());
-
-    env.ok(&["pull", "w", "--theirs", "--no-install"]);
+    // The base's directory is taken whole; the workspace's file stays in the checkpoint
+    // taken before the pull.
+    let output = env.ok(&["pull", "w"]);
+    assert!(
+        stdout(&output).contains("took the project's version of e/h"),
+        "{}",
+        stdout(&output)
+    );
     assert_eq!(tree(&view), tree(&env.project()));
+    assert_eq!(env.open_journals(), Vec::<String>::new());
 }
 
 /// PULL-24: the base turned a fork-time file into a directory (or a symlink) the workspace
@@ -319,7 +324,7 @@ fn pull_takes_a_file_the_base_turned_into_a_directory() {
             _ => symlink("top.txt", env.project().join("dir")).unwrap(),
         }
 
-        let output = env.run(&["pull", "w", "--no-install"]);
+        let output = env.run(&["pull", "w"]);
         assert!(output.status.success(), "{shape}: {}", stderr(&output));
         assert_eq!(tree(&env.view("w")), tree(&env.project()), "{shape}");
         assert_eq!(env.open_journals(), Vec::<String>::new(), "{shape}");
@@ -340,10 +345,13 @@ fn pull_conflicts_when_the_workspace_edited_a_file_the_base_turned_into_a_direct
     fs::remove_file(env.project().join("dir")).unwrap();
     write(&env.project().join("dir/y"), "back\n");
 
-    let output = env.run(&["pull", "w", "--no-install"]);
-    assert_eq!(output.status.code(), Some(5), "{}", stderr(&output));
-    assert!(stderr(&output).contains("dir"), "{}", stderr(&output));
-    assert_eq!(read(&view.join("dir")), "the workspace's edit\n");
+    let output = env.ok(&["pull", "w"]);
+    assert!(
+        stdout(&output).contains("took the project's version of dir"),
+        "{}",
+        stdout(&output)
+    );
+    assert_eq!(read(&view.join("dir/y")), "back\n");
 }
 
 /// CKPT-11: a checkpoint taken after the workspace deleted a fork-time directory restores
@@ -476,7 +484,7 @@ fn pull_conflicts_when_the_base_respells_a_directory_the_workspace_changed_insid
         ("edit", "dir/keep.txt", "keep\nworkspace edit\n"),
     ] {
         let view = env.view(name);
-        let output = env.run(&["pull", name, "--no-install"]);
+        let output = env.run(&["pull", name]);
         assert_eq!(output.status.code(), Some(5), "{name}: {}", stderr(&output));
         assert!(stderr(&output).contains("dir"), "{}", stderr(&output));
         assert_eq!(read(&view.join(path)), text, "{name}");
@@ -488,7 +496,7 @@ fn pull_conflicts_when_the_base_respells_a_directory_the_workspace_changed_insid
         assert_eq!(env.open_journals(), Vec::<String>::new());
     }
 
-    env.ok(&["pull", "w", "--theirs", "--no-install"]);
+    env.ok(&["pull", "w"]);
     assert_eq!(names(&view), ["Dir", "other.txt"]);
     assert_eq!(tree(&view), tree(&env.project()));
 }
@@ -518,7 +526,7 @@ fn pull_replaces_a_lower_layer_directory_with_a_file_on_an_overlay_view() {
     fs::remove_dir_all(env.project().join("dir")).unwrap();
     write(&env.project().join("dir"), "now a file\n");
 
-    overlay(&["pull", "w", "--no-install"]);
+    overlay(&["pull", "w"]);
     assert_eq!(read(&view.join("dir")), "now a file\n");
     assert_eq!(names(&view), ["dir", "top.txt"]);
     assert_eq!(env.open_journals(), Vec::<String>::new());

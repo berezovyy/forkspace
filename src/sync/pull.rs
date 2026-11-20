@@ -390,15 +390,16 @@ pub fn build_since(
     )
 }
 
-/// Plan a pull into `workspace`. With `theirs`, conflicting paths take the base version;
-/// without it, any conflict is an error.
-pub fn build(workspace: &Workspace, theirs: bool) -> Result<PullPlan> {
-    build_with(workspace, theirs, false)
+/// Plan a pull into `workspace`. Lines both sides changed get conflict markers; a path that
+/// cannot be merged line by line (binary, no fork-time version, a file against a directory)
+/// takes the base's version, the workspace's staying in the checkpoint taken before the pull.
+pub fn build(workspace: &Workspace) -> Result<PullPlan> {
+    build_with(workspace, false)
 }
 
 /// Like [`build`]; `install_runs` says the install step follows, so a lockfile both sides
 /// changed can simply take the base's version.
-pub fn build_with(workspace: &Workspace, theirs: bool, install_runs: bool) -> Result<PullPlan> {
+pub fn build_with(workspace: &Workspace, install_runs: bool) -> Result<PullPlan> {
     let backend = select_backend(Some(workspace.backend_kind))?;
     // Before the base is read: an entry written after this may be missing from the plan.
     let base_ns = crate::util::fs::ctime_clock_ns();
@@ -414,7 +415,7 @@ pub fn build_with(workspace: &Workspace, theirs: bool, install_runs: bool) -> Re
         workspace,
         theirs_delta,
         ours_delta,
-        Mode::Plan { theirs },
+        Mode::Plan,
         install_runs,
         guard,
     )
@@ -426,7 +427,6 @@ pub fn build_from_changes(
     workspace: &Workspace,
     theirs_delta: Vec<FileChange>,
     ours_delta: Vec<FileChange>,
-    theirs: bool,
 ) -> Result<PullPlan> {
     let guard = StepGuard::capture(
         &workspace.view_path,
@@ -436,7 +436,7 @@ pub fn build_from_changes(
         workspace,
         theirs_delta,
         ours_delta,
-        Mode::Plan { theirs },
+        Mode::Plan,
         false,
         guard,
     )
@@ -445,9 +445,9 @@ pub fn build_from_changes(
 /// What a plan is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
-    /// The pull the user asked for; with `theirs`, conflicts take the base's version, else
-    /// any conflict fails the plan.
-    Plan { theirs: bool },
+    /// The pull the user asked for: what cannot be merged line by line takes the base's
+    /// version.
+    Plan,
     /// A catch-up round ([`build_since`]): conflicts and overlapping edits are deferred.
     Round,
 }
@@ -460,7 +460,7 @@ fn plan_changes(
     install_runs: bool,
     guard: StepGuard,
 ) -> Result<PullPlan> {
-    let theirs = mode == Mode::Plan { theirs: true };
+    let theirs = mode == Mode::Plan;
     let round = mode == Mode::Round;
     // What forks leave out never moves either way (nested worktrees, `.forkspaceexclude`).
     let exclusions = crate::exclude::Exclusions::of(&workspace.base);
@@ -579,11 +579,7 @@ fn plan_changes(
         .map(|change| change.path.clone())
         .collect();
     let policy = Policy {
-        favor: if theirs {
-            Favor::Project
-        } else {
-            Favor::Neither
-        },
+        favor: Favor::Neither,
         allow_markers: !round,
         install_runs,
     };

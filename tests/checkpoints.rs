@@ -174,7 +174,7 @@ fn pull_takes_an_automatic_checkpoint_and_drop_removes_them_all() {
     let env = Env::new();
     fs::write(env.view().join("edit.txt"), "ours\n").unwrap();
     fs::write(env.root.path().join("project/keep.txt"), "base update\n").unwrap();
-    env.ok(&["pull", "ws", "--no-install"]);
+    env.ok(&["pull", "ws"]);
     let listed = env.ok(&["checkpoints", "ws"]);
     assert!(listed.contains("(auto) before pull"), "{listed}");
     assert!(env.home.path().join("checkpoints/ws").is_dir());
