@@ -72,7 +72,6 @@ impl Env {
 impl Drop for Env {
     fn drop(&mut self) {
         self.path = None;
-        let _ = self.run(&["drop", "--all"]);
     }
 }
 

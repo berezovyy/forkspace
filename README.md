@@ -117,7 +117,7 @@ forkspace enter agent-a -- sh -c 'echo "export const otp = true;" > src/otp.ts'
 
 forkspace diff agent-a agent-b agent-c   # what each attempt touched
 forkspace merge agent-a                     # keep one
-forkspace drop --all                        # discard the rest
+forkspace drop agent-b agent-c              # discard the rest
 ```
 
 `forkspace skill` prints instructions an agent can follow to use forkspace safely, and

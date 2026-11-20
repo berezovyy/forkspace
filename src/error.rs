@@ -29,7 +29,7 @@ pub enum ForkspaceError {
     },
 
     // Refusals: the workspace or its base is not in a state where the command is safe.
-    #[error("workspace '{workspace}' has children: {children:?} — use --force to remove all, or drop children first")]
+    #[error("workspaces were made from '{workspace}': {children:?}; drop them too, in the same command or first")]
     HasChildren {
         workspace: String,
         children: Vec<String>,

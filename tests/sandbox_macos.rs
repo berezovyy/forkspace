@@ -35,5 +35,4 @@ fn seatbelt_refuses_writes_to_the_project_and_allows_the_view() {
         fs::read_to_string(home.join("workspaces/ws/app.txt")).unwrap(),
         "inside\n"
     );
-    let _ = run(&["drop", "--all", "--kill"]);
 }

@@ -60,7 +60,7 @@ impl Env {
 
 impl Drop for Env {
     fn drop(&mut self) {
-        let _ = self.run(&["drop", "--all"]);
+        common::drop_all_in(self.home.path());
     }
 }
 

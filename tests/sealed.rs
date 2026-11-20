@@ -88,15 +88,6 @@ impl Env {
     }
 }
 
-impl Drop for Env {
-    fn drop(&mut self) {
-        let _ = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env("FORKSPACE_HOME", self.home.path())
-            .args(["drop", "--all"])
-            .output();
-    }
-}
-
 fn git(path: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")
@@ -539,7 +530,7 @@ fn pull_records_only_what_changed_and_everything_still_measures_right() {
         fs::read_to_string(env.view("fresh").join("new.txt")).unwrap(),
         "newer\n"
     );
-    env.run(&["drop", "--all"]);
+    env.run(&["drop", "w", "fresh"]);
     env.run(&["ls"]);
     assert!(env.frozen_copies().is_empty(), "{:?}", env.frozen_copies());
 }

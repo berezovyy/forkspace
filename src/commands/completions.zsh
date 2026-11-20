@@ -51,11 +51,7 @@ _forkspace() {
                     ;;
                 drop)
                     _arguments \
-                        '1:workspace:_forkspace_workspaces' \
-                        '--force[Force removal]' \
-                        '--kill[Stop processes still running in the workspace]' \
-                        '--all[Remove all workspaces]' \
-                        '--glob[Treat name as glob pattern]' \
+                        '*:workspace:_forkspace_workspaces' \
                         '--help[Show help]'
                     ;;
                 enter)

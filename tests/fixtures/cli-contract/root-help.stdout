@@ -6,7 +6,7 @@ Usage: forkspace <COMMAND>
 
 Commands:
   new          Copy the project you are in into a new workspace
-  drop         Remove a workspace and unmount its overlay
+  drop         Throw workspaces away (and stop what runs in them)
   enter        Open a shell (or run a command) inside a workspace
   run          Start a process in a workspace (dev server, Electron, etc.)
   switch       Switch the active workspace (hot-swap via proxy)

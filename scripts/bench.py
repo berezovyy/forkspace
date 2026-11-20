@@ -444,9 +444,12 @@ def disk_after_fork(home, free_before):
 
 
 def cleanup_home(binary, env, home):
-    done = subprocess.run([str(binary), "drop", "--all"], env=env, capture_output=True, text=True)
-    if done.returncode != 0:
-        log(f"`drop --all` failed in {home}: {done.stderr.strip()}")
+    listed = subprocess.run([str(binary), "ls", "--json"], env=env, capture_output=True, text=True)
+    names = [entry["name"] for entry in json.loads(listed.stdout or "[]")] if listed.returncode == 0 else []
+    if names:
+        done = subprocess.run([str(binary), "drop", *names], env=env, capture_output=True, text=True)
+        if done.returncode != 0:
+            log(f"`drop` failed in {home}: {done.stderr.strip()}")
     remove_tree(home)
 
 

@@ -59,7 +59,7 @@ impl Env {
 
 impl Drop for Env {
     fn drop(&mut self) {
-        let _ = self.run(&["drop", "--all", "--kill"]);
+        common::drop_all_in(self.home.path());
     }
 }
 
@@ -100,7 +100,7 @@ fn systemd_user_available() -> bool {
         .is_some_and(|dir| PathBuf::from(dir).join("systemd/private").exists())
 }
 
-fn a_background_process_blocks_drop_until_killed(marker: &str) {
+fn drop_stops_a_background_process(marker: &str) {
     let env = Env::new(true);
     env.start(&format!("nohup sleep {marker} >/dev/null 2>&1 & exit 0"));
     assert_eq!(running(marker).len(), 1);
@@ -108,28 +108,19 @@ fn a_background_process_blocks_drop_until_killed(marker: &str) {
     let listed = String::from_utf8(env.run(&["ls"]).stdout).unwrap();
     assert!(listed.contains("1 process"), "{listed}");
 
-    let refused = env.run(&["drop", "ws"]);
-    assert_eq!(refused.status.code(), Some(5));
-    let message = String::from_utf8_lossy(&refused.stderr);
-    let pid = running(marker)[0];
-    assert!(message.contains(&format!("sleep (pid {pid}")), "{message}");
-    assert!(message.contains("--kill"), "{message}");
-
-    let killed = env.run(&["drop", "ws", "--kill"]);
+    // Dropping a workspace stops what runs in it.
+    let killed = env.run(&["drop", "ws"]);
     assert!(
         killed.status.success(),
         "{}",
         String::from_utf8_lossy(&killed.stderr)
     );
-    assert!(
-        wait_until_gone(marker),
-        "sleep {marker} survived drop --kill"
-    );
+    assert!(wait_until_gone(marker), "sleep {marker} survived drop");
 }
 
 #[test]
-fn workspace_processes_block_drop_until_killed() {
-    a_background_process_blocks_drop_until_killed("3101");
+fn dropping_a_workspace_stops_its_processes() {
+    drop_stops_a_background_process("3101");
 }
 
 #[test]
@@ -141,46 +132,32 @@ fn processes_that_leave_the_workspace_directory_are_still_killed_through_the_sli
     let env = Env::new(true);
     env.start("setsid sh -c 'cd / && exec sleep 3103' >/dev/null 2>&1 & exit 0");
     assert_eq!(running("3103").len(), 1);
-    let refused = env.run(&["drop", "ws"]);
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("sleep"));
-    assert!(env.run(&["drop", "ws", "--kill"]).status.success());
+    assert!(env.run(&["drop", "ws"]).status.success());
     assert!(wait_until_gone("3103"));
 }
 
-/// `drop --all` checks every workspace with one process scan, names the busy one, and removes
-/// nothing until it is free.
+/// `drop` takes several workspaces at once and stops what runs in any of them.
 #[test]
-fn drop_all_refuses_and_removes_nothing_while_one_workspace_is_in_use() {
+fn drop_takes_several_workspaces_and_stops_their_processes() {
     let env = Env::new(false);
     assert!(env.run(&["new", "idle"]).status.success());
     env.start("nohup sleep 3106 >/dev/null 2>&1 & exit 0");
-
-    let refused = env.run(&["drop", "--all"]);
-    assert_eq!(refused.status.code(), Some(5));
-    let message = String::from_utf8_lossy(&refused.stderr);
-    let pid = running("3106")[0];
-    assert!(message.contains("'ws'"), "{message}");
-    assert!(message.contains(&format!("sleep (pid {pid}")), "{message}");
-    let listed = String::from_utf8(env.run(&["ls"]).stdout).unwrap();
-    assert!(listed.contains("idle") && listed.contains("ws"), "{listed}");
-
-    let dropped = env.run(&["drop", "--all", "--kill"]);
+    let dropped = env.run(&["drop", "idle", "ws"]);
     assert!(
         dropped.status.success(),
         "{}",
         String::from_utf8_lossy(&dropped.stderr)
     );
     assert!(wait_until_gone("3106"));
+    let listed = String::from_utf8(env.run(&["ls"]).stdout).unwrap();
+    assert!(listed.contains("no workspaces"), "{listed}");
 }
 
 #[test]
 fn without_systemd_the_proc_scan_still_finds_the_process() {
     let env = Env::new(false);
     env.start("nohup sleep 3104 >/dev/null 2>&1 & exit 0");
-    let refused = env.run(&["drop", "ws"]);
-    assert_eq!(refused.status.code(), Some(5));
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("sleep"));
-    assert!(env.run(&["drop", "ws", "--kill"]).status.success());
+    assert!(env.run(&["drop", "ws"]).status.success());
     assert!(wait_until_gone("3104"));
     assert!(!common::view_of(env.home.path(), "ws").exists());
 }
@@ -305,6 +282,6 @@ fn workspace_processes_run_under_forkspace_slice_with_limits() {
         Some(1)
     );
 
-    assert!(env.run(&["drop", "limited", "--kill"]).status.success());
+    assert!(env.run(&["drop", "limited"]).status.success());
     assert!(wait_until_gone("3105"));
 }

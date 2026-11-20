@@ -121,11 +121,7 @@ fn test_drop_workspace() {
     assert!(ws_dir.exists());
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
-        name: Some("drop-ws".to_string()),
-        kill: false,
-        force: false,
-        all: false,
-        glob: false,
+        names: vec!["drop-ws".to_string()],
     })
     .unwrap();
 
@@ -140,11 +136,7 @@ fn test_drop_workspace() {
 fn test_drop_nonexistent() {
     let _dir = common::setup_test_env();
     let result = forkspace::commands::drop::exec(forkspace::cli::DropArgs {
-        name: Some("nonexistent-ws".to_string()),
-        kill: false,
-        force: false,
-        all: false,
-        glob: false,
+        names: vec!["nonexistent-ws".to_string()],
     });
     assert!(matches!(
         result.unwrap_err(),
@@ -162,11 +154,7 @@ fn test_drop_with_children_requires_force() {
     let ws2 = common::fork_helper(PathBuf::from("parent-drop"), "child-drop").unwrap();
 
     let result = forkspace::commands::drop::exec(forkspace::cli::DropArgs {
-        name: Some("parent-drop".to_string()),
-        kill: false,
-        force: false,
-        all: false,
-        glob: false,
+        names: vec!["parent-drop".to_string()],
     });
     match result.unwrap_err() {
         ForkspaceError::HasChildren {
@@ -189,7 +177,7 @@ fn test_drop_with_children_requires_force() {
 
 #[test]
 #[serial]
-fn test_drop_force_cascade() {
+fn dropping_a_workspace_with_the_ones_made_from_it() {
     skip_without_overlay!();
     let (_dir, base) = common::setup_with_project();
 
@@ -197,11 +185,7 @@ fn test_drop_force_cascade() {
     let _ws2 = common::fork_helper(PathBuf::from("cascade-parent"), "cascade-child").unwrap();
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
-        name: Some("cascade-parent".to_string()),
-        kill: false,
-        force: true,
-        all: false,
-        glob: false,
+        names: vec!["cascade-parent".to_string(), "cascade-child".to_string()],
     })
     .unwrap();
 

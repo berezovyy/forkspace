@@ -21,7 +21,7 @@ pub enum Commands {
     /// Copy the project you are in into a new workspace
     New(NewArgs),
 
-    /// Remove a workspace and unmount its overlay
+    /// Throw workspaces away (and stop what runs in them)
     Drop(DropArgs),
 
     /// Open a shell (or run a command) inside a workspace
@@ -104,26 +104,8 @@ pub struct NewArgs {
 
 #[derive(Args)]
 pub struct DropArgs {
-    #[arg(
-        required_unless_present = "all",
-        help = "Name of the workspace to remove"
-    )]
-    pub name: Option<String>,
-
-    #[arg(long, help = "Force removal even if the workspace has children")]
-    pub force: bool,
-
-    #[arg(long, help = "Stop processes still running in the workspace")]
-    pub kill: bool,
-
-    #[arg(long, help = "Remove all workspaces")]
-    pub all: bool,
-
-    #[arg(
-        long,
-        help = "Treat name as a glob pattern to match multiple workspaces"
-    )]
-    pub glob: bool,
+    #[arg(required = true, help = "Workspaces to throw away")]
+    pub names: Vec<String>,
 }
 
 #[derive(Args)]

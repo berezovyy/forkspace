@@ -144,11 +144,7 @@ fn plain_copy_is_a_privilege_free_fidelity_floor() {
     assert_eq!(fs::read(base.path().join("edit")).unwrap(), b"changed\n");
 
     forkspace::commands::drop::exec(forkspace::cli::DropArgs {
-        name: Some("copy-floor".to_string()),
-        kill: false,
-        force: false,
-        all: false,
-        glob: false,
+        names: vec!["copy-floor".to_string()],
     })
     .unwrap();
     assert!(!manifest::manifest_path("copy-floor").exists());

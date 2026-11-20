@@ -125,6 +125,32 @@ pub fn changed_paths(json: &[u8]) -> String {
         .collect()
 }
 
+/// Drop every workspace of the home `home`, stopping what runs in them: cleanup for tests
+/// that start processes or use a home of their own.
+pub fn drop_all_in(home: &Path) {
+    let bin = env!("CARGO_BIN_EXE_forkspace");
+    let listed = std::process::Command::new(bin)
+        .env("FORKSPACE_HOME", home)
+        .args(["ls", "--json"])
+        .output();
+    let names: Vec<String> = listed
+        .ok()
+        .and_then(|output| serde_json::from_slice::<serde_json::Value>(&output.stdout).ok())
+        .and_then(|value| value.as_array().cloned())
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry["name"].as_str().map(str::to_string))
+        .collect();
+    if !names.is_empty() {
+        let _ = std::process::Command::new(bin)
+            .env("FORKSPACE_HOME", home)
+            .arg("drop")
+            .args(&names)
+            .output();
+    }
+    unmount_under(home);
+}
+
 pub fn setup_test_env() -> TestHome {
     let dir = TestHome::new();
     // SAFETY: tests using setup_test_env() are serialized with #[serial],

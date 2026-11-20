@@ -130,7 +130,9 @@ MAKE
         sh -eu "$block"
     )
     # Examples may leave workspaces (and overlay mounts) behind; unmount them before cleanup.
-    FORKSPACE_HOME="$home" "$bin" drop --all >/dev/null 2>&1 || true
+    names=$(FORKSPACE_HOME="$home" "$bin" ls --json 2>/dev/null | sed -n 's/^    "name": "\(.*\)",$/\1/p')
+    # shellcheck disable=SC2086
+    [ -z "$names" ] || FORKSPACE_HOME="$home" "$bin" drop $names >/dev/null 2>&1 || true
 done < "$manifest"
 
 # The documented install command is registry-facing. CI proves the same Cargo package installs

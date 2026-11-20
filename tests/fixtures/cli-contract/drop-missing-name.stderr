@@ -1,6 +1,6 @@
 error: the following required arguments were not provided:
-  <NAME>
+  <NAMES>...
 
-Usage: forkspace drop <NAME>
+Usage: forkspace drop <NAMES>...
 
 For more information, try '--help'.

@@ -582,11 +582,7 @@ mod macos {
         let old_view = workspace.view_path.clone();
         let started = Instant::now();
         commands::drop::exec(DropArgs {
-            name: Some("again".into()),
-            kill: false,
-            force: false,
-            all: false,
-            glob: false,
+            names: vec!["again".into()],
         })
         .unwrap();
         assert!(started.elapsed() < Duration::from_secs(1));
@@ -699,11 +695,7 @@ mod macos {
         wait_for_manifest("rebuild");
         assert_eq!(manifest::read("rebuild").unwrap().len(), 2_002);
         commands::drop::exec(DropArgs {
-            name: Some("rebuild".into()),
-            kill: false,
-            force: false,
-            all: false,
-            glob: false,
+            names: vec!["rebuild".into()],
         })
         .unwrap();
 
@@ -760,11 +752,7 @@ mod macos {
         assert!(String::from_utf8_lossy(&output.stdout).contains("3 files"));
 
         commands::drop::exec(DropArgs {
-            name: Some("manifest".into()),
-            kill: false,
-            force: false,
-            all: false,
-            glob: false,
+            names: vec!["manifest".into()],
         })
         .unwrap();
         assert!(!manifest::manifest_path("manifest").exists());
@@ -1359,11 +1347,7 @@ S(('127.0.0.1',int(os.environ['PORT'])),H).serve_forever()
 
         let b_process = state.workspaces["dev-b"].process.clone().unwrap();
         commands::drop::exec(DropArgs {
-            name: Some("dev-b".into()),
-            kill: false,
-            force: false,
-            all: false,
-            glob: false,
+            names: vec!["dev-b".into()],
         })
         .unwrap();
         assert!(!forkspace::process::watch::is_alive(

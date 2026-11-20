@@ -101,7 +101,7 @@ fn refuse_if_used(
     }
     let remedy = if processes == Processes::Refuse && found.iter().any(|member| member.owned) {
         format!(
-            "use `forkspace drop {} --kill` to stop them",
+            "stop them, or run `forkspace drop {}`, which stops them",
             workspace.name
         )
     } else {

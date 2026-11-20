@@ -19,8 +19,6 @@
   {"name":"new-path-name","args":["new","a/b"]},
   {"name":"drop-missing-name","args":["drop"]},
   {"name":"drop-not-found","args":["drop","absent"]},
-  {"name":"drop-all-empty","args":["drop","--all"]},
-  {"name":"drop-glob-empty","args":["drop","none-*","--glob"]},
   {"name":"drop-conflict","args":["drop","parent"],"state_fixture":"conflict-state.json"},
   {"name":"new-exists","args":["new","parent"],"state_fixture":"conflict-state.json"},
   {"name":"enter-missing-name","args":["enter"],"cwd":"/"},
