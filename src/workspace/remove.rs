@@ -47,6 +47,7 @@ fn remove_inner(state: &mut State, name: &str, processes: Processes, checked: bo
         process.terminate();
     }
     super::git_index::stop(name);
+    super::tmp::remove(name);
     if !checked || workspace.process.is_some() {
         crate::util::trace::time("processes", || ensure_unused(&workspace, processes))?;
     }

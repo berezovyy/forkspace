@@ -110,6 +110,9 @@ pub fn exec(args: GcArgs) -> Result {
                 freed += candidate.bytes;
             }
         }
+        // Private TMPDIRs of workspaces that no longer exist (a crash before `drop` ended).
+        let names: Vec<&str> = state.workspaces.keys().map(String::as_str).collect();
+        crate::workspace::tmp::sweep(&names);
         Ok(freed)
     })?;
     println!("freed {}", disk::human(freed));

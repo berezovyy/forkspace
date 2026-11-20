@@ -66,6 +66,12 @@ pub fn writable(workspace: &Workspace) -> Vec<PathBuf> {
         })
         .collect();
     allowed.push(canonical(&workspace.view_path));
+    // The workspace's private TMPDIR, even when the shared temporary directory is left out
+    // because it holds the project or FORKSPACE_HOME.
+    let private_tmp = paths::private_tmp(&workspace.name);
+    if private_tmp.exists() {
+        allowed.push(canonical(&private_tmp));
+    }
     allowed.sort();
     allowed.dedup();
     allowed

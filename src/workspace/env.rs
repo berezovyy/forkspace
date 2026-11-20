@@ -24,6 +24,9 @@ pub fn process_env(state: &State, workspace: &Workspace) -> Result<Vec<(String, 
         ),
     ];
     env.extend(select_backend(Some(workspace.backend_kind))?.shell_env(workspace));
+    if let Some(directory) = super::tmp::ensure(&workspace.name) {
+        env.extend(super::tmp::env(&directory));
+    }
     if std::env::var_os("COMPOSE_PROJECT_NAME").is_none() {
         env.push((
             "COMPOSE_PROJECT_NAME".to_string(),

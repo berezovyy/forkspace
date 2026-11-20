@@ -126,6 +126,20 @@ pub fn manifest_dir() -> PathBuf {
     forkspace_home().join("manifests")
 }
 
+/// Where every workspace's private temporary directory lives:
+/// `<system temporary directory>/forkspace-<uid>`, outside `FORKSPACE_HOME` so that it is on
+/// the fast temporary filesystem and Unix socket paths inside it stay short.
+pub fn private_tmp_root() -> PathBuf {
+    // SAFETY: getuid cannot fail.
+    let uid = unsafe { libc::getuid() };
+    std::env::temp_dir().join(format!("forkspace-{uid}"))
+}
+
+/// The private temporary directory of workspace `name` (`TMPDIR` inside `enter` and `run`).
+pub fn private_tmp(name: &str) -> PathBuf {
+    private_tmp_root().join(name)
+}
+
 /// Dev-server stdout/stderr logs for workspace `name`.
 pub fn log_dir(name: &str) -> PathBuf {
     forkspace_home().join("logs").join(name)
