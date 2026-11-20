@@ -3,8 +3,8 @@
 //!
 //! Directories are still `lstat`ed, because the bulk attributes do not include a directory's
 //! `st_size`. Before the bulk results are trusted, the first directory read in a process is
-//! checked entry by entry against `lstat`; any difference (or any failing call, or
-//! `FORKSPACE_NO_BULK`) switches the process to `readdir` and `lstat` for good, so a surprise in
+//! checked entry by entry against `lstat`; any difference (or any failing call) switches the
+//! process to `readdir` and `lstat` for good, so a surprise in
 //! the attribute layout costs speed, never correctness.
 
 #![cfg(target_os = "macos")]
@@ -34,9 +34,6 @@ static BULK: AtomicU8 = AtomicU8::new(UNKNOWN);
 
 /// Walk `root` on `threads` threads, calling `keep` for every entry below it.
 pub(super) fn walk(root: &Path, threads: usize, keep: &Keep<'_>) -> Result {
-    if std::env::var_os("FORKSPACE_NO_BULK").is_some() {
-        BULK.store(DISTRUSTED, Ordering::Relaxed);
-    }
     run(root, threads, &|directory| {
         visit_directory(root, directory, keep)
     })
@@ -47,8 +44,7 @@ pub(super) fn walk(root: &Path, threads: usize, keep: &Keep<'_>) -> Result {
 /// `getattrlist` per file. Hard links count once. `None` if any read fails or bulk reads are
 /// off, so the caller can measure file by file instead.
 pub(crate) fn private_tree_bytes(root: &Path, threads: usize) -> Option<u64> {
-    if std::env::var_os("FORKSPACE_NO_BULK").is_some() || BULK.load(Ordering::Relaxed) == DISTRUSTED
-    {
+    if BULK.load(Ordering::Relaxed) == DISTRUSTED {
         return None;
     }
     let total = std::sync::atomic::AtomicU64::new(0);
@@ -484,9 +480,7 @@ mod tests {
                 .unwrap();
         }
         let bulk = super::private_tree_bytes(root.path(), 2).expect("bulk private sizes");
-        unsafe { std::env::set_var("FORKSPACE_NO_BULK", "1") };
-        let per_file = crate::disk::tree_private_bytes(root.path()).unwrap();
-        unsafe { std::env::remove_var("FORKSPACE_NO_BULK") };
+        let per_file = crate::disk::per_file_private_bytes(root.path(), true).unwrap();
         assert_eq!(bulk, per_file);
         assert!(bulk >= 79_000, "{bulk}");
     }

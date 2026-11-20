@@ -14,8 +14,7 @@
 //! `enter` holds it open while its command runs. The first holder, the one that takes the
 //! lock beside the pipe exclusively, puts the slots in; the others share the lock. Slots a
 //! killed build never returned are therefore restored once no `enter` holds the pipe.
-//! `FORKSPACE_JOBS` sets the number of slots (default: the CPU count);
-//! `FORKSPACE_JOBSERVER=off` turns it off.
+//! There is one slot per CPU.
 
 use std::fs;
 use std::io::Write;
@@ -30,21 +29,15 @@ pub fn dir() -> PathBuf {
     paths::private_tmp_root().join("jobserver")
 }
 
-fn disabled() -> bool {
-    std::env::var("FORKSPACE_JOBSERVER")
-        .is_ok_and(|value| matches!(value.as_str(), "0" | "off" | "false" | "no"))
-        // A build already under a jobserver (forkspace run inside `make -j`) keeps it.
-        || std::env::var_os("CARGO_MAKEFLAGS").is_some()
+/// A build already under a jobserver (forkspace run inside `make -j`) keeps it.
+fn under_another_jobserver() -> bool {
+    std::env::var_os("CARGO_MAKEFLAGS").is_some()
         || std::env::var("MAKEFLAGS").is_ok_and(|flags| flags.contains("jobserver"))
 }
 
 /// How many jobs may run at once across all workspaces.
 pub fn slots() -> usize {
-    std::env::var("FORKSPACE_JOBS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|slots: &usize| *slots > 0)
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |count| count.get()))
+    std::thread::available_parallelism().map_or(4, |count| count.get())
 }
 
 /// This process's hold on the shared jobserver; the pipe keeps its slots while any holder
@@ -62,10 +55,10 @@ impl Holder {
     }
 }
 
-/// Join the shared jobserver, creating it if needed. `None` when turned off, or when it
-/// cannot be set up (builds then run as they would without forkspace).
+/// Join the shared jobserver, creating it if needed. `None` under another jobserver, or
+/// when it cannot be set up (builds then run as they would without forkspace).
 pub fn join() -> Option<Holder> {
-    if disabled() {
+    if under_another_jobserver() {
         return None;
     }
     let dir = dir();

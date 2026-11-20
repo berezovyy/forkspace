@@ -57,22 +57,6 @@ fn workspaces_get_separate_writable_tmpdirs_that_drop_removes() {
 
 #[test]
 #[serial]
-fn the_private_tmpdir_can_be_turned_off() {
-    let env = Env::new();
-    write(&env.project().join("a.txt"), "a\n");
-    env.fork_copy("w");
-    let output = env
-        .command(&["enter", "w", "--", "sh", "-c", "printf '%s' \"$TMPDIR\""])
-        .env("FORKSPACE_PRIVATE_TMP", "0")
-        .env("TMPDIR", "/tmp")
-        .output()
-        .unwrap();
-    assert!(stdout(&output).starts_with("/tmp"), "{}", stdout(&output));
-    assert!(!stdout(&output).starts_with("/tmp/forkspace-"));
-}
-
-#[test]
-#[serial]
 fn workspaces_of_the_same_name_in_two_homes_do_not_share_a_tmpdir() {
     let first = Env::new();
     let second = Env::new();

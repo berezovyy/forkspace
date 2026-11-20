@@ -4,7 +4,6 @@
 //! directory of their workspace's own, under one directory per `FORKSPACE_HOME`. Parallel agents running the same tests then no longer
 //! meet in fixed `/tmp` paths (sockets, lock files, build scratch), and what a killed or
 //! timed-out command leaves there goes with the workspace on `drop`.
-//! `FORKSPACE_PRIVATE_TMP=0` turns it off.
 
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
@@ -12,17 +11,9 @@ use std::path::{Path, PathBuf};
 
 use crate::paths;
 
-fn disabled() -> bool {
-    std::env::var("FORKSPACE_PRIVATE_TMP")
-        .is_ok_and(|value| matches!(value.as_str(), "0" | "off" | "false" | "no"))
-}
-
-/// The private temporary directory of `name`, created if needed; `None` when turned off or
-/// when it cannot be made safely (a warning says why).
+/// The private temporary directory of `name`, created if needed; `None` when it cannot be
+/// made safely (a warning says why).
 pub fn ensure(name: &str) -> Option<PathBuf> {
-    if disabled() {
-        return None;
-    }
     let directory = paths::private_tmp(name);
     match owned_private_dir(&paths::private_tmp_root())
         .and_then(|()| owned_private_dir(&paths::private_tmp_home()))

@@ -36,6 +36,11 @@ pub fn tree_private_bytes(root: &Path) -> Result<u64> {
             return Ok(bytes);
         }
     }
+    per_file_private_bytes(root, shared_aware)
+}
+
+/// [`tree_private_bytes`] measured one file at a time.
+pub(crate) fn per_file_private_bytes(root: &Path, shared_aware: bool) -> Result<u64> {
     let seen = Mutex::new(HashSet::new());
     let sizes = crate::util::walk::parallel(root, |_, path, entry| {
         if entry.nlink > 1

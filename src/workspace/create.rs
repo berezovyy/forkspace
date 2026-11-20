@@ -30,15 +30,8 @@ pub struct CreateOptions {
     pub live: bool,
     /// Create this Git branch in the view and record it; the fork fails without it.
     pub branch: Option<String>,
-    /// Overlay only: do not flush the workspace's writes on `fsync` (see
-    /// [`no_fsync_by_default`]).
+    /// Overlay only: do not flush the workspace's writes on `fsync`.
     pub no_fsync: bool,
-}
-
-/// Whether `FORKSPACE_FSYNC=off` asks for workspaces that do not flush on `fsync`.
-pub fn no_fsync_by_default() -> bool {
-    std::env::var("FORKSPACE_FSYNC")
-        .is_ok_and(|value| matches!(value.as_str(), "off" | "0" | "false" | "no"))
 }
 
 /// Where a new workspace's contents come from, and the backend that will copy them.
@@ -79,7 +72,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         base: origin.clone(),
         tmpfs: options.tmpfs,
         live: options.live,
-        no_fsync: options.no_fsync || no_fsync_by_default(),
+        no_fsync: options.no_fsync,
         parent_layers,
     };
     let view = match backend.create(&request) {
@@ -108,7 +101,6 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         });
     }
     record_fork_time_files(&workspace);
-    exclude_from_backups_if_asked(&workspace);
     let prepared = give_private_git(&mut workspace)
         .and_then(|()| create_branch(&mut workspace, options.branch.as_deref()));
     if let Err(error) = prepared {
@@ -178,21 +170,6 @@ fn create_branch(workspace: &mut Workspace, branch: Option<&str>) -> Result {
     }
     workspace.branch = Some(branch.to_string());
     Ok(())
-}
-
-/// Workspaces stay in backups by default, since one can hold the only copy of an agent's
-/// unmerged work; `FORKSPACE_BACKUP_WORKSPACES=off` opts them out.
-fn exclude_from_backups_if_asked(workspace: &Workspace) {
-    let opted_out = std::env::var("FORKSPACE_BACKUP_WORKSPACES")
-        .is_ok_and(|value| matches!(value.as_str(), "off" | "0" | "false"));
-    if !opted_out {
-        return;
-    }
-    let directory = match &workspace.backend_state {
-        crate::backend::BackendState::Overlay(_) => crate::paths::overlay_root(&workspace.name),
-        _ => crate::paths::snapshot_root(),
-    };
-    crate::disk::exclude_from_backups(&directory);
 }
 
 /// Keep the fork-time version of a snapshot workspace's source files for line-level merges.

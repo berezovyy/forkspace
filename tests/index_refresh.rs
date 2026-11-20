@@ -58,22 +58,6 @@ fn a_new_workspace_gets_a_refreshed_index_without_a_status() {
 
 #[test]
 #[serial]
-fn the_refresh_can_be_turned_off() {
-    let env = Env::new();
-    repository(&env);
-    let project = env.project();
-    let output = env
-        .command(&["new", "w", "--from", project.to_str().unwrap(), "--copy"])
-        .env("FORKSPACE_GIT_REFRESH", "0")
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    std::thread::sleep(Duration::from_millis(300));
-    assert!(!index_is_fresh(&env.view("w")));
-}
-
-#[test]
-#[serial]
 fn a_running_refresh_neither_blocks_drop_nor_counts_as_a_process() {
     let env = Env::new();
     repository(&env);

@@ -19,24 +19,22 @@ Git worktrees inside it, now that forks leave them out. Workspaces made by 0.2.0
   never move between a workspace and its project.
 - `new` refreshes the workspace's Git index in the background, so the first `git status` in
   it no longer hashes every tracked file again (on 20,000 files: 99 → 15 ms with a copy,
-  725 → about 120 ms on the overlay backend). `FORKSPACE_GIT_REFRESH=0` turns it off.
+  725 → about 120 ms on the overlay backend).
 - `forkspace skill` prints instructions for coding agents that use forkspace.
 - `forkspace hook worktree-create` and `worktree-remove` make the worktrees Claude Code
   creates forkspace workspaces; `forkspace hook claude-settings` prints the settings.
 - `forkspace update` is another name for `forkspace upgrade`.
 - `new --no-fsync` (Linux overlay) mounts the workspace with fuse-overlayfs `fsync=0`:
   1,000 small write+fsync calls take 80 ms instead of 1,390 ms on ext4, at the cost of the
-  last seconds of writes on power loss. `--tmpfs` and `enter --ephemeral` imply it, and
-  `FORKSPACE_FSYNC=off` makes it the default.
+  last seconds of writes on power loss. `--tmpfs` and `enter --ephemeral` imply it.
 - Overlay workspaces start with a Git index refreshed once in the frozen copy every fork of
   the project shares, so no workspace hashes its tracked files or writes its own
   `.git/index`. The background refresh (other backends) turns fsmonitor off.
 - `enter` and `run` commands get a private `TMPDIR` (also `TMP`, `TEMP`) per workspace,
-  writable inside the sandbox and removed by `drop`; `FORKSPACE_PRIVATE_TMP=0` turns it off.
+  writable inside the sandbox and removed by `drop`.
 - `enter` commands share one jobserver across all workspaces through `CARGO_MAKEFLAGS`:
-  parallel `cargo` builds take turns on `FORKSPACE_JOBS` slots (the CPU count by default)
-  instead of each starting a compiler per CPU; a 12-crate build ran at most 3 compilers with
-  2 slots instead of 12. `FORKSPACE_JOBSERVER=off` turns it off.
+  parallel `cargo` builds take turns on one slot per CPU instead of each starting a compiler per CPU; a 12-crate build ran at most 3 compilers with
+  2 slots instead of 12.
 - Checkpoints keep changed files zstd-compressed against their fork-time version: five
   checkpoints of an edited 300 KB file take 17 KB instead of about 1.5 MB.
 - When `new` does not use the fastest backend, or copies bytes it could have cloned, its

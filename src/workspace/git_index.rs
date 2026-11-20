@@ -11,7 +11,6 @@
 //!
 //! The refresh is recorded in `logs/<name>/index-refresh` so that it is not counted as a
 //! process using the workspace, and so that `drop` stops it before removing the view.
-//! `FORKSPACE_GIT_REFRESH=0` turns it off.
 
 use std::fs;
 use std::path::PathBuf;
@@ -42,16 +41,11 @@ fn inherits_fresh_index(workspace: &Workspace) -> bool {
     false
 }
 
-fn disabled() -> bool {
-    std::env::var("FORKSPACE_GIT_REFRESH")
-        .is_ok_and(|value| matches!(value.as_str(), "0" | "off" | "false" | "no"))
-}
-
 /// Start refreshing the index of `workspace` in the background, if its view has a Git
 /// repository. Best effort: a refresh that cannot start only leaves the first `git status`
 /// to do the work.
 pub fn start(workspace: &Workspace) {
-    if disabled() || !workspace.view_path.join(".git").exists() || inherits_fresh_index(workspace) {
+    if !workspace.view_path.join(".git").exists() || inherits_fresh_index(workspace) {
         return;
     }
     let identity = watch::new_identity();

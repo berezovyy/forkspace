@@ -107,26 +107,17 @@ fn lowered(command: Command, _background: bool) -> Command {
 /// Set the limits shared by all workspaces on `forkspace.slice`, once per login session (the
 /// properties are runtime-only, and the marker lives in `$XDG_RUNTIME_DIR`).
 fn ensure_shared_limits() {
-    let weight = std::env::var("FORKSPACE_CPU_WEIGHT").unwrap_or_else(|_| "50".to_string());
-    let memory = std::env::var("FORKSPACE_MEMORY_HIGH").unwrap_or_else(|_| "75%".to_string());
-    let properties = [
-        format!("CPUWeight={weight}"),
-        format!("MemoryHigh={memory}"),
-        "TasksMax=25%".to_string(),
-    ];
+    let properties = ["CPUWeight=50", "MemoryHigh=75%", "TasksMax=25%"];
     let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") else {
         return;
     };
-    let marker = PathBuf::from(runtime).join(format!(
-        "forkspace-limits-{weight}-{}",
-        memory.replace(['/', '%'], "_")
-    ));
+    let marker = PathBuf::from(runtime).join("forkspace-limits-50-75_");
     if marker.exists() {
         return;
     }
     let applied = Command::new("systemctl")
         .args(["--user", "set-property", "--runtime", "forkspace.slice"])
-        .args(&properties)
+        .args(properties)
         .output()
         .is_ok_and(|output| output.status.success());
     if applied {

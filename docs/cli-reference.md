@@ -49,8 +49,7 @@ A workspace starts with a Git index that matches its files, so the first `git st
 does not hash every tracked file again. On the Linux overlay backend the index is refreshed
 once, in the frozen copy every fork of the project shares; on the other backends, right after
 `new`, in the background and at low priority. The refresh does not
-count as a process using the workspace, and `drop` stops it. `FORKSPACE_GIT_REFRESH=0` turns
-it off.
+count as a process using the workspace, and `drop` stops it.
 
 ### `forkspace enter [name] [-- command…]`
 
@@ -164,8 +163,7 @@ new server; open ones finish where they are.
 
 *Linux.* Show or change a workspace's limits; `none` removes one. Running processes get the
 change at once. All workspaces together also run under one `forkspace.slice` with half the CPU
-weight of your own programs and a shared memory ceiling (see `FORKSPACE_CPU_WEIGHT` and
-`FORKSPACE_MEMORY_HIGH`). On macOS, `run` and `enter -- <command>` start commands at background
+weight of your own programs and a memory ceiling of 75% for all of them. On macOS, `run` and `enter -- <command>` start commands at background
 priority instead.
 
 ## Clean up
@@ -245,7 +243,7 @@ Commands started by `enter` and `run` cannot write to the original project or to
 workspaces: Landlock on Linux, `sandbox-exec` on macOS. Setuid programs such as `sudo` gain no
 privileges inside it. Temporary directories (`/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`) and the
 dot-entries of your home directory, such as `~/.npm` and `~/.cargo`, stay writable.
-Commands started by `enter` also share one jobserver across all workspaces, passed as `CARGO_MAKEFLAGS` (`-j --jobserver-auth=fifo:...`): parallel `cargo` builds in different workspaces take turns on `FORKSPACE_JOBS` slots (the CPU count by default) instead of each starting a compiler per CPU. `MAKEFLAGS` is left alone, so plain `make` keeps running serially. Each workspace's commands also get a private temporary directory, `$TMPDIR/forkspace-<uid>/<home>/<name>` (0700, one `<home>` directory per `FORKSPACE_HOME`), as `TMPDIR`, `TMP` and `TEMP`: parallel workspaces no longer meet in fixed `/tmp` paths, and `drop` removes what they leave there (`gc` removes those of workspaces gone in a crash). `FORKSPACE_PRIVATE_TMP=0` keeps the shared one. `enter <name> --sandbox-info` lists where commands may write; `--no-sandbox` or
+Commands started by `enter` also share one jobserver across all workspaces, passed as `CARGO_MAKEFLAGS` (`-j --jobserver-auth=fifo:...`): parallel `cargo` builds in different workspaces take turns on one slot per CPU instead of each starting a compiler per CPU. `MAKEFLAGS` is left alone, so plain `make` keeps running serially. Each workspace's commands also get a private temporary directory, `$TMPDIR/forkspace-<uid>/<home>/<name>` (0700, one `<home>` directory per `FORKSPACE_HOME`), as `TMPDIR`, `TMP` and `TEMP`: parallel workspaces no longer meet in fixed `/tmp` paths, and `drop` removes what they leave there (`gc` removes those of workspaces gone in a crash). `enter <name> --sandbox-info` lists where commands may write; `--no-sandbox` or
 `FORKSPACE_SANDBOX=off` turns it off.
 
 ## Environment
@@ -267,23 +265,14 @@ Read by forkspace:
 | Variable | |
 | :-- | :-- |
 | `FORKSPACE_HOME` | Where workspaces and state live (default `~/.forkspace`, kept owner-only). |
-| `FORKSPACE_FSYNC=off` | Create every overlay workspace as with `--no-fsync`. |
-| `FORKSPACE_JOBS=<n>` | Job slots of the jobserver all workspaces share (default: the number of CPUs). |
-| `FORKSPACE_JOBSERVER=off` | Do not give `enter` commands the shared jobserver. |
-| `FORKSPACE_PRIVATE_TMP=0` | Do not give `enter` and `run` commands a private `TMPDIR`. |
-| `FORKSPACE_GIT_REFRESH=0` | Do not refresh a new workspace's Git index in the background. |
 | `FORKSPACE_TRACE=1` | Print each command's timed phases to stderr, e.g. `forkspace-trace: materialize 41.203ms`. [`scripts/bench.py`](../scripts/bench.py) records them. |
 | `FORKSPACE_SANDBOX=off` | Turn the write sandbox off by default. |
 | `FORKSPACE_NO_SYSTEMD=1` | *Linux.* Do not start commands in a systemd user slice per workspace (no process tracking by slice, no limits). |
-| `FORKSPACE_CPU_WEIGHT` | *Linux.* CPU weight of all workspaces together, against your programs' 100 (default 50). |
-| `FORKSPACE_MEMORY_HIGH` | *Linux.* Memory ceiling of all workspaces together (default `75%`). |
-| `FORKSPACE_BACKUP_WORKSPACES=off` | Mark workspaces as caches too, so backups skip them. Internal stores always carry a `CACHEDIR.TAG` (and a Time Machine exclusion on macOS). |
 | `FORKSPACE_RELEASES_URL` | Where `upgrade` looks for releases (default: this repository's GitHub releases). |
 | `NO_COLOR`, `CLICOLOR_FORCE` | Output is coloured only on a terminal. `NO_COLOR` (any value) turns colour off; `CLICOLOR_FORCE=1` turns it on for pipes too. |
 
 For debugging and tests only: `FORKSPACE_BACKEND=<linux|mac-clone|linux-reflink|copy>` forces
-a backend for new workspaces, `FORKSPACE_NO_LANDLOCK=1` and `FORKSPACE_NO_BULK=1` turn off
-Landlock and macOS bulk directory reads.
+a backend for new workspaces, `FORKSPACE_NO_LANDLOCK=1` turns off Landlock.
 
 ## Exit codes
 
