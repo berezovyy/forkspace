@@ -24,6 +24,33 @@ Git worktrees inside it, now that forks leave them out. Workspaces made by 0.2.0
 - `forkspace hook worktree-create` and `worktree-remove` make the worktrees Claude Code
   creates forkspace workspaces; `forkspace hook claude-settings` prints the settings.
 - `forkspace update` is another name for `forkspace upgrade`.
+- `new --no-fsync` (Linux overlay) mounts the workspace with fuse-overlayfs `fsync=0`:
+  1,000 small write+fsync calls take 80 ms instead of 1,390 ms on ext4, at the cost of the
+  last seconds of writes on power loss. `--tmpfs` and `enter --ephemeral` imply it, and
+  `FORKSPACE_FSYNC=off` makes it the default.
+- Overlay workspaces start with a Git index refreshed once in the frozen copy every fork of
+  the project shares, so no workspace hashes its tracked files or writes its own
+  `.git/index`. The background refresh (other backends) turns fsmonitor off.
+- `enter` and `run` commands get a private `TMPDIR` (also `TMP`, `TEMP`) per workspace,
+  writable inside the sandbox and removed by `drop`; `FORKSPACE_PRIVATE_TMP=0` turns it off.
+- `enter` commands share one jobserver across all workspaces through `CARGO_MAKEFLAGS`:
+  parallel `cargo` builds take turns on `FORKSPACE_JOBS` slots (the CPU count by default)
+  instead of each starting a compiler per CPU; a 12-crate build ran at most 3 compilers with
+  2 slots instead of 12. `FORKSPACE_JOBSERVER=off` turns it off.
+- Checkpoints keep changed files zstd-compressed against their fork-time version: five
+  checkpoints of an edited 300 KB file take 17 KB instead of about 1.5 MB.
+- When `new` does not use the fastest backend, or copies bytes it could have cloned, its
+  note says why, in the failing probe's words (for example `ext4 does not clone files
+  (FICLONE: Operation not supported)`).
+- Forking a project while a tool deletes part of it (`git gc` packing loose objects, a
+  package manager replacing a dependency) no longer fails with "failed to walk ...: No such
+  file or directory"; what was deleted is simply not in the workspace.
+- Trash removal, the frozen-copy flush and the Git index refresh run at the lowest CPU and
+  disk priority.
+- Commands that change nothing no longer rewrite `state.json`, crash recovery no longer
+  checks every workspace's view on every command, and the state file is parsed once:
+  at 1,000 workspaces `diff` takes 14 ms instead of 22 ms.
+- The test suite no longer leaves fuse-overlayfs mounts behind.
 - Linux: writes made within one clock tick (about 1–4 ms) before or after a pull read the
   project, or before a catch-up round, were mistaken for later ones. A round could then keep
   files the pull itself had just written as if an agent had written them, leaving, for

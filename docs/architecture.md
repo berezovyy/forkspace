@@ -41,7 +41,10 @@ blocks are shared.
 ## Durable control plane
 
 `state.json` is written with fsync and rename under `flock`, and carries a `version` that
-`state/migrate.rs` brings forward. Fork has an intent/commit boundary. Merge, pull and restore
+`state/migrate.rs` brings forward. A command that changes nothing does not rewrite it, and
+loading parses it once, straight into the records; with 1,000 workspaces the file is about
+700 KB and every command still reads it whole under the one lock (see
+[platform-parity.md](platform-parity.md#many-workspaces-on-linux)). Fork has an intent/commit boundary. Merge, pull and restore
 apply atomic per-path steps through resumable journals; every step is safe to apply twice, so
 progress is saved at most every 100 ms rather than after each step. Every state load sweeps
 routine leftovers (`state/recovery.rs`); an unfinished operation needs its explicit `--resume`.

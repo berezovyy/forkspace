@@ -60,6 +60,7 @@ desktop (ext4 on NVMe, fuse-overlayfs 1.13, 16 CPUs, 31 GiB, no swap; 2026-11-19
 | Disk for unchanged files | none: every workspace of a project reads the same frozen copy | the first fork of a project copies it once (bytes on ext4, clones on Btrfs/XFS) |
 | `fsync` | flushed by default | `--no-fsync`: 1,000 small write+fsync calls in 80 ms instead of 1,390 ms |
 | Git index | refreshed once in the frozen copy, not written per workspace | first `git status`: no hashing; about 300 ms of cold FUSE lookups for 20,000 files |
+| `state.json` | about 700 bytes | at 1,000 workspaces: 700 KB, `diff` 14 ms, `new` 40–80 ms; every command reads it whole under one lock, so a `diff` waited up to 620 ms while 30 `new` ran at once |
 | inotify | whatever watchers the agent runs | 256 inotify instances per user by default (`fs.inotify.max_user_instances`): one per watching process, the first limit file watchers reach |
 
 Kernel overlayfs would share one page cache between workspaces, but mounting it without root
