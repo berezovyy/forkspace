@@ -3,6 +3,7 @@
 
 pub(crate) mod background;
 pub(crate) mod devserver;
+pub mod jobserver;
 pub mod members;
 mod ports;
 pub(crate) mod proxy;

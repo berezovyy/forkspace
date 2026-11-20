@@ -37,7 +37,12 @@ pub fn exec(args: EnterArgs) -> Result {
         print_sandbox(workspace, args.no_sandbox);
         return Ok(());
     }
-    let command = shell_command(&args, &state, workspace, backend.as_ref())?;
+    let mut command = shell_command(&args, &state, workspace, backend.as_ref())?;
+    // Held until the command exits: builds in every workspace share its job slots.
+    let jobserver = crate::process::jobserver::join();
+    if let Some(holder) = &jobserver {
+        command.env("CARGO_MAKEFLAGS", holder.makeflags());
+    }
     // A command (rather than an interactive shell) runs at background priority on macOS.
     let background = !args.command.is_empty();
     let mut command = crate::process::systemd::scoped(command, workspace, background);
@@ -47,6 +52,7 @@ pub fn exec(args: EnterArgs) -> Result {
     let status = command
         .status()
         .io_context(|| "failed to spawn command".to_string())?;
+    drop(jobserver);
     report_exit(&name, status);
     // The command's own failure is forkspace's exit status, so `forkspace enter ws -- make
     // test` fails when the tests do; cleanup below still happens first.

@@ -72,6 +72,11 @@ pub fn writable(workspace: &Workspace) -> Vec<PathBuf> {
     if private_tmp.exists() {
         allowed.push(canonical(&private_tmp));
     }
+    // The shared jobserver: builds open its pipe for writing to return their job slots.
+    let jobserver = super::jobserver::dir();
+    if jobserver.exists() {
+        allowed.push(canonical(&jobserver));
+    }
     allowed.sort();
     allowed.dedup();
     allowed

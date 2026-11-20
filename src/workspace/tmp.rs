@@ -38,7 +38,7 @@ pub fn ensure(name: &str) -> Option<PathBuf> {
 
 /// Make `path` a directory only its owner can use, or check that it already is one: in a
 /// shared `/tmp`, another user could have created it first, or put a symlink there.
-fn owned_private_dir(path: &Path) -> Result<(), String> {
+pub(crate) fn owned_private_dir(path: &Path) -> Result<(), String> {
     match fs::DirBuilder::new().mode(0o700).create(path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}

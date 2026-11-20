@@ -245,7 +245,7 @@ Commands started by `enter` and `run` cannot write to the original project or to
 workspaces: Landlock on Linux, `sandbox-exec` on macOS. Setuid programs such as `sudo` gain no
 privileges inside it. Temporary directories (`/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`) and the
 dot-entries of your home directory, such as `~/.npm` and `~/.cargo`, stay writable.
-Each workspace's commands also get a private temporary directory, `$TMPDIR/forkspace-<uid>/<name>` (0700), as `TMPDIR`, `TMP` and `TEMP`: parallel workspaces no longer meet in fixed `/tmp` paths, and `drop` removes what they leave there (`gc` removes those of workspaces gone in a crash). `FORKSPACE_PRIVATE_TMP=0` keeps the shared one. `enter <name> --sandbox-info` lists where commands may write; `--no-sandbox` or
+Commands started by `enter` also share one jobserver across all workspaces, passed as `CARGO_MAKEFLAGS` (`-j --jobserver-auth=fifo:...`): parallel `cargo` builds in different workspaces take turns on `FORKSPACE_JOBS` slots (the CPU count by default) instead of each starting a compiler per CPU. `MAKEFLAGS` is left alone, so plain `make` keeps running serially. Each workspace's commands also get a private temporary directory, `$TMPDIR/forkspace-<uid>/<name>` (0700), as `TMPDIR`, `TMP` and `TEMP`: parallel workspaces no longer meet in fixed `/tmp` paths, and `drop` removes what they leave there (`gc` removes those of workspaces gone in a crash). `FORKSPACE_PRIVATE_TMP=0` keeps the shared one. `enter <name> --sandbox-info` lists where commands may write; `--no-sandbox` or
 `FORKSPACE_SANDBOX=off` turns it off.
 
 ## Environment
@@ -268,6 +268,8 @@ Read by forkspace:
 | :-- | :-- |
 | `FORKSPACE_HOME` | Where workspaces and state live (default `~/.forkspace`, kept owner-only). |
 | `FORKSPACE_FSYNC=off` | Create every overlay workspace as with `--no-fsync`. |
+| `FORKSPACE_JOBS=<n>` | Job slots of the jobserver all workspaces share (default: the number of CPUs). |
+| `FORKSPACE_JOBSERVER=off` | Do not give `enter` commands the shared jobserver. |
 | `FORKSPACE_PRIVATE_TMP=0` | Do not give `enter` and `run` commands a private `TMPDIR`. |
 | `FORKSPACE_GIT_REFRESH=0` | Do not refresh a new workspace's Git index in the background. |
 | `FORKSPACE_TRACE=1` | Print each command's timed phases to stderr, e.g. `forkspace-trace: materialize 41.203ms`. [`scripts/bench.py`](../scripts/bench.py) records them. |
