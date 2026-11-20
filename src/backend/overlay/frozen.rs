@@ -435,6 +435,7 @@ fn flush_in_background(dir: &Path) {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    crate::process::background::lower(&mut command);
     // SAFETY: the hook runs between fork and exec and only calls `setsid`, which is
     // async-signal-safe; the new session keeps the flush alive after forkspace exits.
     unsafe {

@@ -365,6 +365,7 @@ pub fn start_trash_removals() {
         };
         let descriptor = lock.as_raw_fd();
         let mut command = removal_command(&path);
+        crate::process::background::lower(&mut command);
         command
             .stdin(Stdio::null())
             .stdout(Stdio::null())

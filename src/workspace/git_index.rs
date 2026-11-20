@@ -48,17 +48,17 @@ pub fn start(workspace: &Workspace) {
         .stderr(Stdio::null());
     {
         use std::os::unix::process::CommandExt;
-        // SAFETY: the hook runs between fork and exec and only calls async-signal-safe
-        // functions.
+        // SAFETY: the hook runs between fork and exec and only calls setsid, which is
+        // async-signal-safe.
         unsafe {
             command.pre_exec(|| {
                 // Its own process group, so `stop` can end it and anything it starts.
                 libc::setsid();
-                lower_priority();
                 Ok(())
             });
         }
     }
+    crate::process::background::lower(&mut command);
     let Ok(child) = command.spawn() else {
         return;
     };
@@ -75,25 +75,6 @@ pub fn start(workspace: &Workspace) {
         let _ = child.wait();
     }
 }
-
-#[cfg(target_os = "linux")]
-fn lower_priority() {
-    // SAFETY: setpriority only reads its arguments.
-    unsafe {
-        libc::setpriority(libc::PRIO_PROCESS, 0, 10);
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn lower_priority() {
-    // SAFETY: setpriority only reads its arguments.
-    unsafe {
-        libc::setpriority(libc::PRIO_DARWIN_PROCESS, 0, libc::PRIO_DARWIN_BG);
-    }
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn lower_priority() {}
 
 /// The refresh of workspace `name`, if it is still running.
 fn running(name: &str) -> Option<u32> {

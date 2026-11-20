@@ -1,6 +1,7 @@
 //! Background processes: dev servers, the proxy daemon in front of them, and liveness
 //! tracking that survives PID reuse.
 
+pub(crate) mod background;
 pub(crate) mod devserver;
 pub mod members;
 mod ports;
