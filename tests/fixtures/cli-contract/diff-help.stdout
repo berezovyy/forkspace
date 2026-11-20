@@ -1,9 +1,9 @@
 Show what changed in a workspace
 
-Usage: forkspace diff [OPTIONS] <NAME>
+Usage: forkspace diff [OPTIONS] [NAME]
 
 Arguments:
-  <NAME>  Name of the workspace to diff
+  [NAME]  Workspace (defaults to the one you are in)
 
 Options:
       --stat          Show a compact stat summary (files changed, insertions, deletions)

@@ -1,6 +1,1 @@
-error: the following required arguments were not provided:
-  <NAME>
-
-Usage: forkspace run <NAME> [-- <COMMAND>...]
-
-For more information, try '--help'.
+error: there are no workspaces yet; make one with `forkspace new`

@@ -301,7 +301,7 @@ fn test_diff_opaque_whiteout_skipped() {
 fn test_diff_command_workspace_not_found() {
     let _dir = common::setup_test_env();
     let result = forkspace::commands::diff::exec(forkspace::cli::DiffArgs {
-        name: "nonexistent".to_string(),
+        name: Some("nonexistent".to_string()),
         stat: false,
         full: false,
         files: false,

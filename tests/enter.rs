@@ -154,8 +154,8 @@ fn test_enter_no_name() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("name required") || stderr.contains("workspace name"),
-        "expected error about missing name, got: {}",
+        stderr.contains("no workspaces yet"),
+        "expected an error saying there is no workspace to enter, got: {}",
         stderr
     );
 }

@@ -20,11 +20,7 @@ pub fn exec(args: EnterArgs) -> Result {
     let name = if args.ephemeral || args.create {
         create_for_entry(&args)?
     } else {
-        args.name.clone().ok_or_else(|| {
-            ForkspaceError::InvalidArgument(
-                "workspace name required — use --new to create one".to_string(),
-            )
-        })?
+        workspace::pick(args.name.clone())?
     };
 
     let state = State::load()?;

@@ -1,1 +1,1 @@
-error: workspace name required — use --new to create one
+error: there are no workspaces yet; make one with `forkspace new`

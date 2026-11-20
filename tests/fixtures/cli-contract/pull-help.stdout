@@ -3,7 +3,7 @@ Bring base changes into a workspace
 Usage: forkspace pull [OPTIONS] [NAME]
 
 Arguments:
-  [NAME]  Workspace name (defaults to $FORKSPACE_WORKSPACE)
+  [NAME]  Workspace (defaults to the one you are in)
 
 Options:
       --dry-run     Show the pull plan without applying it

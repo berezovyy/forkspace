@@ -3,7 +3,7 @@ Apply workspace changes back to the base directory
 Usage: forkspace merge [OPTIONS] [NAME]
 
 Arguments:
-  [NAME]  Name of the workspace to merge (with --undo: whose latest merge to undo)
+  [NAME]  Workspace (defaults to the one you are in; with --undo: whose latest merge to undo)
 
 Options:
       --commit             Create a git commit with the merged changes

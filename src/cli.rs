@@ -169,7 +169,7 @@ pub struct DropArgs {
 
 #[derive(Args)]
 pub struct EnterArgs {
-    #[arg(help = "Name of the workspace to enter (omit to auto-detect)")]
+    #[arg(help = "Workspace (defaults to the one you are in)")]
     pub name: Option<String>,
 
     #[arg(
@@ -234,8 +234,8 @@ pub struct EnterArgs {
 
 #[derive(Args)]
 pub struct RunArgs {
-    #[arg(help = "Name of the workspace")]
-    pub name: String,
+    #[arg(help = "Workspace (defaults to the one you are in)")]
+    pub name: Option<String>,
 
     #[arg(
         long,
@@ -295,8 +295,8 @@ pub struct CompletionsArgs {
 
 #[derive(Args)]
 pub struct DiffArgs {
-    #[arg(help = "Name of the workspace to diff")]
-    pub name: String,
+    #[arg(help = "Workspace (defaults to the one you are in)")]
+    pub name: Option<String>,
 
     #[arg(long, conflicts_with_all = ["full", "files", "json"], help = "Show a compact stat summary (files changed, insertions, deletions)")]
     pub stat: bool,
@@ -335,8 +335,7 @@ pub struct CompareArgs {
 #[derive(Args)]
 pub struct MergeArgs {
     #[arg(
-        required_unless_present = "undo",
-        help = "Name of the workspace to merge (with --undo: whose latest merge to undo)"
+        help = "Workspace (defaults to the one you are in; with --undo: whose latest merge to undo)"
     )]
     pub name: Option<String>,
 
@@ -425,7 +424,7 @@ pub struct LimitArgs {
 
 #[derive(Args)]
 pub struct CheckpointArgs {
-    #[arg(help = "Workspace name (defaults to $FORKSPACE_WORKSPACE)")]
+    #[arg(help = "Workspace (defaults to the one you are in)")]
     pub name: Option<String>,
 
     #[arg(short, long, help = "A label to recognize the checkpoint by")]
@@ -437,7 +436,7 @@ pub struct CheckpointArgs {
 
 #[derive(Args)]
 pub struct CheckpointsArgs {
-    #[arg(help = "Workspace name (defaults to $FORKSPACE_WORKSPACE)")]
+    #[arg(help = "Workspace (defaults to the one you are in)")]
     pub name: Option<String>,
 
     #[arg(long, help = "Output as JSON")]
@@ -467,7 +466,7 @@ pub struct RestoreArgs {
 
 #[derive(Args)]
 pub struct PullArgs {
-    #[arg(help = "Workspace name (defaults to $FORKSPACE_WORKSPACE)")]
+    #[arg(help = "Workspace (defaults to the one you are in)")]
     pub name: Option<String>,
 
     #[arg(long, help = "Show the pull plan without applying it")]

@@ -133,14 +133,9 @@ pub fn exec(args: PullArgs) -> Result {
 /// Catch-up rounds a pull runs at most for base changes made while it applies.
 const CATCH_UP_ROUNDS: usize = 3;
 
-/// The named workspace, or the one this shell was entered into.
+/// The named workspace, or the one you are in (see [`crate::workspace::pick`]).
 pub(crate) fn workspace_name(name: Option<String>) -> Result<String> {
-    name.or_else(|| std::env::var("FORKSPACE_WORKSPACE").ok())
-        .ok_or_else(|| {
-            ForkspaceError::InvalidArgument(
-                "workspace name required (pass one or run inside `forkspace enter`)".to_string(),
-            )
-        })
+    crate::workspace::pick(name)
 }
 
 fn print_plan(plan: &pull::PullPlan, json: bool) -> Result {

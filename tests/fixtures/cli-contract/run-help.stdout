@@ -1,9 +1,9 @@
 Start a process in a workspace (dev server, Electron, etc.)
 
-Usage: forkspace run [OPTIONS] <NAME> [-- <COMMAND>...]
+Usage: forkspace run [OPTIONS] [NAME] [-- <COMMAND>...]
 
 Arguments:
-  <NAME>        Name of the workspace
+  [NAME]        Workspace (defaults to the one you are in)
   [COMMAND]...  Command to run (e.g. npm run dev)
 
 Options:

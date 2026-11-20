@@ -14,12 +14,13 @@ use crate::state::State;
 use crate::workspace::{guard, Workspace};
 
 pub fn exec(args: DiffArgs) -> Result {
-    guard::ensure_idle(&args.name)?;
-    if let Err(error) = crate::changes::manifest::settle_now(&args.name, false) {
+    let name = crate::workspace::pick(args.name.clone())?;
+    guard::ensure_idle(&name)?;
+    if let Err(error) = crate::changes::manifest::settle_now(&name, false) {
         eprintln!("warning: {error}");
     }
     let state = State::load()?;
-    let workspace = state.require_workspace(&args.name)?;
+    let workspace = state.require_workspace(&name)?;
     guard::require_view(workspace)?;
 
     let changes = collect(&args, workspace, &state)?;
@@ -28,7 +29,7 @@ pub fn exec(args: DiffArgs) -> Result {
 
     if args.json {
         let output = DiffOutput {
-            workspace: args.name.clone(),
+            workspace: name.clone(),
             base: workspace.base.clone(),
             changes,
             signals,

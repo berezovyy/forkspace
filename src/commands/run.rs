@@ -8,8 +8,9 @@ use crate::process::devserver::{self, PortDiscovery};
 use crate::state::State;
 
 pub fn exec(args: RunArgs) -> Result {
+    let name = crate::workspace::pick(args.name.clone())?;
     if args.stop {
-        return stop(&args.name);
+        return stop(&name);
     }
     if args.command.is_empty() {
         return Err(ForkspaceError::InvalidArgument(
@@ -19,7 +20,7 @@ pub fn exec(args: RunArgs) -> Result {
 
     let command = args.command.join(" ");
     State::with_state(|state| {
-        let started = devserver::start(state, &args.name, &command, args.port, !args.no_sandbox)?;
+        let started = devserver::start(state, &name, &command, args.port, !args.no_sandbox)?;
         println!(
             "running '{}' on port {} (PID {})",
             command, started.process.port, started.process.pid
@@ -29,8 +30,8 @@ pub fn exec(args: RunArgs) -> Result {
     })?;
     if args.port_wait > 0 {
         report_port(
-            &args.name,
-            devserver::discover_port(&args.name, Duration::from_secs(args.port_wait))?,
+            &name,
+            devserver::discover_port(&name, Duration::from_secs(args.port_wait))?,
         );
     }
     Ok(())

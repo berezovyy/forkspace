@@ -4,12 +4,14 @@ mod create;
 mod env;
 pub mod git_index;
 pub mod guard;
+mod pick;
 mod private_git;
 pub mod remove;
 pub mod tmp;
 
 pub use create::{create, CreateOptions};
 pub use env::{inherited_venvs, process_env, InheritedVenv};
+pub use pick::pick;
 pub use remove::remove;
 
 use std::path::{Path, PathBuf};

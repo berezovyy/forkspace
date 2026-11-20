@@ -3,7 +3,7 @@ Open a shell (or run a command) inside a workspace
 Usage: forkspace enter [OPTIONS] [NAME] [-- <COMMAND>...]
 
 Arguments:
-  [NAME]        Name of the workspace to enter (omit to auto-detect)
+  [NAME]        Workspace (defaults to the one you are in)
   [COMMAND]...  Command to run inside the workspace instead of a shell
 
 Options:

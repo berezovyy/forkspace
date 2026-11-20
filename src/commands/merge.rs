@@ -41,7 +41,7 @@ pub fn exec(args: MergeArgs) -> Result {
     if args.undo {
         return undo(&args);
     }
-    let name = args.name.clone().unwrap_or_default();
+    let name = crate::workspace::pick(args.name.clone())?;
     if !args.resume {
         crate::changes::manifest::settle_now(&name, true)?;
     }
