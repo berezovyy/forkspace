@@ -1,4 +1,5 @@
-//! `forkspace new`: create a workspace from a directory or stack one on another workspace.
+//! `forkspace new`: copy the project you are in (or the workspace you are in) into a new
+//! workspace.
 
 use std::path::{Path, PathBuf};
 
@@ -11,13 +12,26 @@ use crate::workspace::{self, CreateOptions, Workspace};
 
 pub fn exec(args: NewArgs) -> Result {
     let limits = super::limit::from_flags(args.memory.as_deref(), args.cpu.as_deref())?;
+    let ws = create(args.name)?;
+    if !limits.is_empty() {
+        super::limit::warn_without_systemd(&limits);
+        State::with_state(|state| {
+            state.require_workspace_mut(&ws.name)?.limits = limits;
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// Make workspace `name` (or the next free `<project>-N`) from where you are, and say so.
+pub(crate) fn create(name: Option<String>) -> Result<Workspace> {
     let source = Source::here()?;
     // Only a project whose own folder holds `.git` gets a branch: the copy then has a
     // repository of its own. A folder inside some other repository (one Git ignores, say)
     // must never have `git switch` run in that outer repository.
     let repository = source.directory.join(".git").exists()
         && git::toplevel(&source.directory).is_some_and(|top| top == source.directory);
-    let name = match args.name {
+    let name = match name {
         Some(name) => {
             workspace::validate_name(&name)?;
             if repository {
@@ -40,13 +54,6 @@ pub fn exec(args: NewArgs) -> Result {
             ..Default::default()
         },
     )?;
-    if !limits.is_empty() {
-        super::limit::warn_without_systemd(&limits);
-        State::with_state(|state| {
-            state.require_workspace_mut(&ws.name)?.limits = limits;
-            Ok(())
-        })?;
-    }
     print_backend_notes(&ws);
     warn_inherited_venvs(&ws);
     println!(
@@ -54,7 +61,7 @@ pub fn exec(args: NewArgs) -> Result {
         ws.name,
         ws.view_path.display()
     );
-    Ok(())
+    Ok(ws)
 }
 
 /// What `new` copies: the workspace you are in, else the Git project you are in (its top
@@ -83,9 +90,13 @@ impl Source {
             });
         }
         let directory = git::toplevel(&here).unwrap_or(here);
+        refuse_home_or_above(&directory)?;
+        // A hidden folder's name would make a hidden, reserved workspace name.
         let label = directory
             .file_name()
             .and_then(|name| name.to_str())
+            .map(|name| name.trim_start_matches('.'))
+            .filter(|name| !name.is_empty())
             .unwrap_or("workspace")
             .to_string();
         Ok(Self {
@@ -94,6 +105,22 @@ impl Source {
             label,
         })
     }
+}
+
+/// Copying your home folder, or a folder above it, is never what a project fork means: it
+/// would copy everything you have. Say where to run instead.
+fn refuse_home_or_above(directory: &Path) -> Result {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .and_then(|home| home.canonicalize().ok());
+    let above_home = home.is_some_and(|home| home.starts_with(directory));
+    if above_home || directory.parent().is_none() {
+        return Err(ForkspaceError::InvalidArgument(format!(
+            "{} is your home folder or above it; run forkspace inside a project folder",
+            directory.display()
+        )));
+    }
+    Ok(())
 }
 
 /// `<label>-1`, `<label>-2`, ...: the first name no workspace has and, in a Git project, no

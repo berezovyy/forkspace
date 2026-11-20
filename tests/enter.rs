@@ -116,95 +116,42 @@ fn test_enter_env_base() {
 
 #[test]
 #[serial]
-fn test_enter_nonexistent() {
-    let _dir = common::setup_test_env();
-
-    let output = Command::new(forkspace_bin())
-        .env("FORKSPACE_HOME", std::env::var("FORKSPACE_HOME").unwrap())
-        .args(["enter", "nonexistent-ws", "--", "echo", "hi"])
-        .output()
-        .expect("failed to run forkspace enter");
-
-    assert!(
-        !output.status.success(),
-        "expected failure for nonexistent workspace"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("not found") || stderr.contains("nonexistent"),
-        "expected error about workspace not found, got: {}",
-        stderr
-    );
-}
-
-#[test]
-#[serial]
-fn test_enter_no_name() {
-    let _dir = common::setup_test_env();
-
-    let output = Command::new(forkspace_bin())
-        .env("FORKSPACE_HOME", std::env::var("FORKSPACE_HOME").unwrap())
-        .args(["enter"])
-        .output()
-        .expect("failed to run forkspace enter");
-
-    assert!(
-        !output.status.success(),
-        "expected failure when no name provided"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("no workspaces yet"),
-        "expected an error saying there is no workspace to enter, got: {}",
-        stderr
-    );
-}
-
-#[test]
-#[serial]
-fn test_enter_new_creates_workspace() {
-    skip_without_overlay!();
+fn enter_makes_a_missing_workspace_from_your_project() {
     let (_dir, base) = common::setup_with_project();
-
     let output = Command::new(forkspace_bin())
         .env("FORKSPACE_HOME", std::env::var("FORKSPACE_HOME").unwrap())
-        .args([
-            "enter",
-            "--new",
-            "new-enter-ws",
-            "--from",
-            base.path().to_str().unwrap(),
-            "--",
-            "echo",
-            "inside-new",
-        ])
+        .current_dir(base.path())
+        .args(["enter", "new-enter-ws", "--", "echo", "inside-new"])
         .output()
-        .expect("failed to run forkspace enter --new");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+        .unwrap();
     assert!(
         output.status.success(),
-        "forkspace enter --new failed: stderr={}",
+        "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        stdout.contains("inside-new"),
-        "expected 'inside-new' in stdout, got: {}",
-        stdout
-    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("inside-new"));
+    assert!(State::load()
+        .unwrap()
+        .workspaces
+        .contains_key("new-enter-ws"));
 
-    // Verify workspace was created in state
-    let state = State::load().unwrap();
-    let ws = state.workspaces.get("new-enter-ws");
+    // With no workspace at all, `enter` makes one too.
+    let other = tempfile::tempdir().unwrap();
+    std::fs::write(other.path().join("a.txt"), "a\n").unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let output = Command::new(forkspace_bin())
+        .env("FORKSPACE_HOME", home.path())
+        .current_dir(other.path())
+        .args(["enter", "--", "cat", "a.txt"])
+        .output()
+        .unwrap();
     assert!(
-        ws.is_some(),
-        "workspace 'new-enter-ws' should exist in state"
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-
-    // Clean up
-    if let Some(ws) = ws {
-        common::cleanup_workspace(ws);
-    }
+    assert!(String::from_utf8_lossy(&output.stdout).contains("created workspace"));
+    common::unmount_under(home.path());
 }
 
 // ── Ephemeral tests ──
@@ -240,105 +187,8 @@ fn test_ephemeral_state_without_ephemeral_field() {
     assert_eq!(ws.tmpfs_size(), None);
 }
 
-#[test]
-#[serial]
-fn test_enter_ephemeral_with_overlay() {
-    skip_without_overlay!();
-    let (_dir, base) = common::setup_with_project();
-
-    let output = Command::new(forkspace_bin())
-        .env("FORKSPACE_HOME", std::env::var("FORKSPACE_HOME").unwrap())
-        .args([
-            "enter",
-            "--ephemeral",
-            "--from",
-            base.path().to_str().unwrap(),
-            "--",
-            "echo",
-            "ephemeral-test",
-        ])
-        .output()
-        .expect("failed to run forkspace enter --ephemeral");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(
-        output.status.success(),
-        "forkspace enter --ephemeral failed: stderr={}",
-        stderr
-    );
-    assert!(
-        stdout.contains("ephemeral-test"),
-        "expected 'ephemeral-test' in stdout, got: {}",
-        stdout
-    );
-    assert!(
-        stdout.contains("ephemeral workspace removed"),
-        "expected 'ephemeral workspace removed' in stdout, got: {}",
-        stdout
-    );
-
-    // Verify workspace was cleaned up (no ephemeral workspaces in state)
-    let state = State::load().unwrap();
-    let workspaces = state.workspaces.values().collect::<Vec<_>>();
-    for ws in workspaces {
-        assert!(
-            !ws.name.starts_with("ephemeral-"),
-            "ephemeral workspace '{}' should have been dropped",
-            ws.name
-        );
-    }
-}
-
-#[test]
-#[serial]
-fn test_enter_ephemeral_with_name() {
-    skip_without_overlay!();
-    let (_dir, base) = common::setup_with_project();
-
-    let output = Command::new(forkspace_bin())
-        .env("FORKSPACE_HOME", std::env::var("FORKSPACE_HOME").unwrap())
-        .args([
-            "enter",
-            "--ephemeral",
-            "my-eph-ws",
-            "--from",
-            base.path().to_str().unwrap(),
-            "--",
-            "echo",
-            "named-ephemeral",
-        ])
-        .output()
-        .expect("failed to run forkspace enter --ephemeral with name");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "forkspace enter --ephemeral with name failed: stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        stdout.contains("named-ephemeral"),
-        "expected 'named-ephemeral' in stdout, got: {}",
-        stdout
-    );
-    assert!(
-        stdout.contains("ephemeral workspace removed"),
-        "expected drop message in stdout, got: {}",
-        stdout
-    );
-
-    // Verify workspace is gone from state
-    let state = State::load().unwrap();
-    assert!(
-        !state.workspaces.contains_key("my-eph-ws"),
-        "ephemeral workspace 'my-eph-ws' should have been dropped"
-    );
-}
-
 /// `enter -- command` exits with the command's status, so a failing `make test` fails the
-/// `enter`; an ephemeral workspace is still removed first.
+/// `enter`.
 #[test]
 #[serial]
 fn enter_exits_with_the_command_status() {
@@ -363,61 +213,5 @@ fn enter_exits_with_the_command_status() {
         .status
         .success());
 
-    let ephemeral = Command::new(forkspace_bin())
-        .env("FORKSPACE_HOME", &home)
-        .current_dir(base.path())
-        .args(["enter", "--ephemeral", "--", "sh", "-c", "exit 4"])
-        .output()
-        .unwrap();
-    assert_eq!(ephemeral.status.code(), Some(4), "{ephemeral:?}");
-    assert!(String::from_utf8_lossy(&ephemeral.stdout).contains("ephemeral workspace removed"));
-    assert_eq!(State::load().unwrap().workspaces.len(), 1);
     assert!(forkspace(&["drop", "status-ws"]).status.success());
-}
-
-/// MERGE-29: `--ephemeral --merge-on-exit` keeps the workspace whenever its changes were not
-/// merged (here: no terminal to ask, with and without a failing command) and says so; a
-/// clean one is still removed.
-#[test]
-#[serial]
-fn an_ephemeral_workspace_with_unmerged_changes_is_kept() {
-    let (_dir, base) = common::setup_with_project();
-    let home = std::env::var("FORKSPACE_HOME").unwrap();
-    let enter = |script: &str| {
-        Command::new(forkspace_bin())
-            .env("FORKSPACE_HOME", &home)
-            .current_dir(base.path())
-            .args(["enter", "--ephemeral", "--merge-on-exit", "--"])
-            .args(["sh", "-c", script])
-            .output()
-            .unwrap()
-    };
-    let views = || -> Vec<PathBuf> {
-        State::load()
-            .unwrap()
-            .workspaces
-            .values()
-            .map(|workspace| workspace.view_path.clone())
-            .collect()
-    };
-
-    let kept = enter("printf 'AGENT\\n' > agent.txt");
-    assert!(kept.status.success(), "{kept:?}");
-    let stdout = String::from_utf8_lossy(&kept.stdout);
-    assert!(!stdout.contains("ephemeral workspace removed"), "{stdout}");
-    assert!(String::from_utf8_lossy(&kept.stderr).contains("kept ephemeral workspace"));
-    assert_eq!(views().len(), 1);
-    assert_eq!(
-        std::fs::read_to_string(views()[0].join("agent.txt")).unwrap(),
-        "AGENT\n"
-    );
-
-    let failed = enter("printf 'AGENT 2\\n' > agent2.txt; exit 3");
-    assert_eq!(failed.status.code(), Some(3), "{failed:?}");
-    assert_eq!(views().len(), 2);
-
-    let clean = enter("true");
-    assert!(clean.status.success(), "{clean:?}");
-    assert!(String::from_utf8_lossy(&clean.stdout).contains("ephemeral workspace removed"));
-    assert_eq!(views().len(), 2);
 }

@@ -124,14 +124,3 @@ fn background_children_are_restricted_too() {
     std::thread::sleep(Duration::from_millis(600));
     assert_eq!(read(&project_file), "original\n");
 }
-
-#[test]
-fn no_sandbox_restores_unrestricted_writes() {
-    let env = Env::new();
-    let project_file = env.path("project/app.txt");
-    env.sh(
-        &format!("echo agent > '{}'", project_file.display()),
-        &["--no-sandbox"],
-    );
-    assert_eq!(read(&project_file), "agent\n");
-}

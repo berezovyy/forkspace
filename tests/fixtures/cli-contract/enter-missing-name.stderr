@@ -1,1 +1,1 @@
-error: there are no workspaces yet; make one with `forkspace new`
+error: / is your home folder or above it; run forkspace inside a project folder

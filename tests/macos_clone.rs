@@ -598,7 +598,7 @@ mod macos {
 
     #[test]
     #[serial]
-    fn names_concurrent_fork_and_ephemeral_lifecycle_match_linux_contract() {
+    fn names_and_concurrent_forks_match_linux_contract() {
         let (_home, base) = setup();
         for name in ["", ".", "..", "a/b", "a\0b"] {
             assert!(matches!(
@@ -651,32 +651,6 @@ mod macos {
                 .count(),
             1
         );
-
-        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env(
-                "FORKSPACE_HOME",
-                std::env::var_os("FORKSPACE_HOME").unwrap(),
-            )
-            .args([
-                "enter",
-                "ephemeral-mac",
-                "--ephemeral",
-                "--from",
-                base.path().to_str().unwrap(),
-                "--",
-                "true",
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(!State::load()
-            .unwrap()
-            .workspaces
-            .contains_key("ephemeral-mac"));
     }
 
     #[test]
@@ -1284,32 +1258,6 @@ mod macos {
         assert_cli(home.path(), &["drop", "dirs"]);
         assert!(!ancestor.exists());
         assert!(!workspace.view_path.exists());
-    }
-
-    #[test]
-    #[serial]
-    fn merge_on_exit_with_non_tty_stdin_keeps_workspace() {
-        let (home, base) = setup();
-        fork(base.path(), "unattended");
-        wait_for_manifest("unattended");
-        let output = Command::new(env!("CARGO_BIN_EXE_forkspace"))
-            .env("FORKSPACE_HOME", home.path())
-            .args([
-                "enter",
-                "unattended",
-                "--merge-on-exit",
-                "--",
-                "sh",
-                "-c",
-                "printf changed > README.md",
-            ])
-            .stdin(Stdio::null())
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        assert_eq!(fs::read(base.path().join("README.md")).unwrap(), b"base\n");
-        assert!(State::load().unwrap().workspaces.contains_key("unattended"));
-        assert!(String::from_utf8_lossy(&output.stdout).contains("keeping workspace"));
     }
 
     #[test]

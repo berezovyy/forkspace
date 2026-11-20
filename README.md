@@ -149,11 +149,11 @@ forkspace switch feature-b                # localhost:4000 → feature-b
 
 ### Throwaway experiments
 
-Try a risky upgrade, a large refactor or a destructive script without cleaning up afterwards.
-An ephemeral workspace is removed as soon as its command or shell exits.
+Try a risky upgrade, a large refactor or a destructive script, then throw the copy away.
 
 ```bash
-forkspace enter --ephemeral -- make test
+forkspace enter try -- make test
+forkspace drop try
 ```
 
 ### Stacked changes

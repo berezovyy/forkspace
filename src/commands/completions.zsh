@@ -62,13 +62,6 @@ _forkspace() {
                 enter)
                     _arguments \
                         '1:workspace:_forkspace_workspaces' \
-                        '--create[Create if not exists]' \
-                        '--from=[Base directory]:directory:_directories' \
-                        '--ephemeral[Destroy on exit]' \
-                        '--no-sandbox[Let the command write outside the workspace]' \
-                        '--sandbox-info[List where commands may write, then exit]' \
-                        '--merge-on-exit[Merge changes on exit]' \
-                        '--session=[Session identifier]:session:' \
                         '--help[Show help]'
                     ;;
                 run)

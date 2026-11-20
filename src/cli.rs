@@ -131,39 +131,10 @@ pub struct DropArgs {
 
 #[derive(Args)]
 pub struct EnterArgs {
-    #[arg(help = "Workspace (defaults to the one you are in)")]
+    #[arg(
+        help = "Workspace (defaults to the one you are in; made from your project if it does not exist)"
+    )]
     pub name: Option<String>,
-
-    #[arg(
-        long,
-        alias = "new",
-        help = "Create the workspace if it does not exist"
-    )]
-    pub create: bool,
-
-    #[arg(long, help = "Base directory when creating a new workspace on entry")]
-    pub from: Option<String>,
-
-    #[arg(long, help = "Destroy the workspace automatically on exit")]
-    pub ephemeral: bool,
-
-    #[arg(long, help = "Let the shell or command write outside the workspace")]
-    pub no_sandbox: bool,
-
-    #[arg(
-        long,
-        help = "List where commands in the workspace may write, then exit"
-    )]
-    pub sandbox_info: bool,
-
-    #[arg(
-        long,
-        help = "Merge changes back to the base directory when exiting the shell"
-    )]
-    pub merge_on_exit: bool,
-
-    #[arg(long, help = "Session identifier to set in the spawned shell")]
-    pub session: Option<String>,
 
     #[arg(
         last = true,
