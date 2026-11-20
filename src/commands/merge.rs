@@ -74,8 +74,8 @@ pub fn exec(args: MergeArgs) -> Result {
                 println!("nothing to merge in '{name}'");
             } else if held.is_empty() {
                 println!(
-                    "merged {} files into {} ({} added, {} modified, {} deleted)",
-                    counts.total(),
+                    "merged {} into {} ({} added, {} modified, {} deleted)",
+                    crate::util::count(counts.total(), "file"),
                     workspace.base.display(),
                     counts.added,
                     counts.modified,
@@ -83,8 +83,8 @@ pub fn exec(args: MergeArgs) -> Result {
                 );
             } else {
                 println!(
-                    "merged {} files; left {} alone that changed while merging",
-                    counts.total(),
+                    "merged {}; left {} alone that changed while merging",
+                    crate::util::count(counts.total(), "file"),
                     held.len()
                 );
             }

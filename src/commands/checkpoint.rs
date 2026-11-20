@@ -21,9 +21,9 @@ pub fn save(args: SaveArgs) -> Result {
         checkpoint::create(&workspace, note, false, false)
     })?;
     println!(
-        "saved snapshot {} of '{name}' ({} paths, {}); go back with `forkspace restore {name} {}`",
+        "saved snapshot {} of '{name}' ({}, {}); go back with `forkspace restore {name} {}`",
         saved.id,
-        saved.entries.len(),
+        crate::util::count(saved.entries.len(), "file"),
         human_bytes(saved.bytes),
         saved.id
     );
@@ -92,12 +92,12 @@ fn list(name: &str) -> Result {
         println!("no snapshots of '{name}' yet; make one with `forkspace save`");
         return Ok(());
     }
-    println!("ID  CREATED                    PATHS  SIZE      NOTE");
+    println!("ID  AGE   FILES  SIZE      NOTE");
     for saved in &checkpoints {
         println!(
-            "{:<3} {:<26} {:<6} {:<9} {}",
+            "{:<3} {:<5} {:<6} {:<9} {}",
             saved.id,
-            saved.created,
+            crate::util::describe_age(crate::util::seconds_since(&saved.created)),
             saved.entries.len(),
             human_bytes(saved.bytes),
             label(saved)

@@ -10,11 +10,11 @@ pub fn exec(args: UndoArgs) -> Result {
     // The state lock keeps a merge from running into the project while it is restored.
     let report = State::with_state(|_| undo::undo(args.name.as_deref()))?;
     println!(
-        "undid the merge of '{}' into {}: restored {} files, removed {} added files",
+        "undid the merge of '{}' into {}: restored {}, removed {}",
         report.workspace,
         report.project.display(),
-        report.restored,
-        report.removed
+        crate::util::count(report.restored, "file"),
+        crate::util::count(report.removed, "added file")
     );
     if let Some(branch) = &report.branch_reverted {
         println!("put branch '{branch}' back as it was before the merge");

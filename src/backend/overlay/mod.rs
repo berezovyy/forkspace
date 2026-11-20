@@ -221,17 +221,10 @@ fn describe_freeze(frozen: &frozen::Frozen) -> Option<String> {
     if !frozen.created || frozen.copied_files == 0 {
         return None;
     }
-    let how = match &frozen.no_reflink {
-        _ if frozen.reflinked_files == frozen.copied_files => "cloned".to_string(),
-        Some(reason) => format!("copied byte for byte: {reason}"),
-        None => "copied".to_string(),
-    };
     Some(format!(
-        "froze a copy of the base for this workspace ({} files, {:.1} MiB, {how}; \
-         linked {} unchanged files); later forks reuse it",
-        frozen.copied_files,
-        frozen.copied_bytes as f64 / f64::from(1 << 20),
-        frozen.linked_files
+        "kept a copy of your project for its workspaces ({}, {}); the next ones reuse it",
+        crate::util::count(frozen.copied_files as usize, "file"),
+        crate::disk::human(frozen.copied_bytes)
     ))
 }
 

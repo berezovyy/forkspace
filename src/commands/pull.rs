@@ -116,8 +116,8 @@ pub fn exec(args: PullArgs) -> Result {
         match count {
             // What was held was not pulled (MERGE-37).
             Some(count) => say(format!(
-                "pulled {} files into '{name}'",
-                (count + extra).saturating_sub(held.len())
+                "pulled {} into '{name}'",
+                crate::util::count((count + extra).saturating_sub(held.len()), "file")
             )),
             None => say(format!("finished the interrupted pull into '{name}'")),
         }

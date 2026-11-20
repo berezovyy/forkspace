@@ -56,15 +56,15 @@ pub fn exec(args: LsArgs) -> Result {
     Ok(())
 }
 
-/// `forkspace uses 2.1 GB (workspaces 0.8 GB, frozen copies 0.9 GB, …)`.
+/// `forkspace uses 2.1 GB (workspaces 0.8 GB, copies of your projects 0.9 GB, …)`.
 fn print_total(in_workspaces: u64) {
     let Ok(stores) = disk::StoreUsage::measure() else {
         return;
     };
     let mut parts = vec![format!("workspaces {}", disk::human(in_workspaces))];
     for (label, bytes) in [
-        ("frozen copies", stores.frozen),
-        ("undo and checkpoints", stores.history),
+        ("copies of your projects", stores.frozen),
+        ("undo and snapshots", stores.history),
         ("other", stores.other),
     ] {
         if bytes > 0 {
@@ -118,7 +118,7 @@ fn table_row(workspace: &Workspace, processes: usize, size: Option<u64>) -> Resu
         workspace.name.clone(),
         origin(workspace),
         count,
-        describe_age(age_seconds(workspace)),
+        crate::util::describe_age(age_seconds(workspace)),
         size.map_or_else(|| "?".to_string(), disk::human),
         describe_process(workspace, processes),
     ])
@@ -128,16 +128,6 @@ fn table_row(workspace: &Workspace, processes: usize, size: Option<u64>) -> Resu
 fn age_seconds(workspace: &Workspace) -> u64 {
     let now = crate::util::now_unix_ns();
     u64::try_from(now.saturating_sub(workspace.fork_time_ns) / 1_000_000_000).unwrap_or(u64::MAX)
-}
-
-/// `45s`, `12m`, `5h`, `3d`.
-fn describe_age(seconds: u64) -> String {
-    match seconds {
-        0..60 => format!("{seconds}s"),
-        60..3_600 => format!("{}m", seconds / 60),
-        3_600..86_400 => format!("{}h", seconds / 3_600),
-        _ => format!("{}d", seconds / 86_400),
-    }
 }
 
 /// Whether the workspace's folder is gone (deleted or moved by hand).
@@ -173,7 +163,7 @@ fn describe_count(count: ChangeCount) -> String {
     match count {
         ChangeCount::Ready(0) => "nothing".to_string(),
         ChangeCount::Ready(1) => "1 file".to_string(),
-        ChangeCount::Ready(count) => format!("{count} files"),
+        ChangeCount::Ready(count) => crate::util::count(count, "file"),
         ChangeCount::Pending => "-".to_string(),
         ChangeCount::Degraded => "unknown".to_string(),
     }

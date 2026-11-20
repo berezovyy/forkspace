@@ -48,11 +48,6 @@ pub(crate) struct Frozen {
     /// Files copied (or reflinked) and hard-linked while creating it.
     pub copied_files: u64,
     pub copied_bytes: u64,
-    pub linked_files: u64,
-    /// Of `copied_files`, those cloned rather than copied byte for byte.
-    pub reflinked_files: u64,
-    /// Why files were copied byte for byte instead of cloned, when they were.
-    pub no_reflink: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -104,9 +99,6 @@ pub(crate) fn freeze(source: &Path, basis: Basis<'_>) -> Result<Frozen> {
                         created: false,
                         copied_files: 0,
                         copied_bytes: 0,
-                        linked_files: 0,
-                        reflinked_files: 0,
-                        no_reflink: None,
                     });
                 }
             }
@@ -304,9 +296,6 @@ fn build(
         created: true,
         copied_files: stats.copied_files + stats.reflinked_files,
         copied_bytes: stats.copied_bytes,
-        linked_files: stats.linked_files,
-        reflinked_files: stats.reflinked_files,
-        no_reflink,
     })
 }
 
