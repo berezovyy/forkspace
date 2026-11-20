@@ -27,6 +27,11 @@ changes for that workspace.
 | `--cpu <percent>` | *Linux.* Cap the workspace's CPU time, as a percentage of one CPU, e.g. `200%`. |
 | `--session <id>` | Record a session identifier, to group related workspaces. |
 
+When `new` does not use the fastest backend, or copies bytes it could have cloned, its note
+says why, in the words of the probe that failed: for example `passed over fuse-overlayfs:
+cannot open /dev/fuse: No such file or directory; reflinks: ext4 does not clone files (FICLONE:
+Operation not supported)`. `forkspace ls --json` keeps it as `probe_reason`.
+
 A workspace holds everything in the source directory, ignored files included, except:
 
 - Git worktrees nested inside the project (such as Claude Code's `.claude/worktrees/*`). They

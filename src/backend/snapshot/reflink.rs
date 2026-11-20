@@ -103,28 +103,34 @@ pub(crate) fn probe(base: &Path, destination_parent: &Path) -> ProbeResult {
     if base_meta.dev() != destination_meta.dev() {
         return ProbeResult::unavailable("base and workspace root are on different filesystems");
     }
-    if scratch_clone_succeeds(destination_parent) {
-        ProbeResult::available("FICLONE scratch-file probe succeeded")
-    } else {
-        ProbeResult::unavailable("FICLONE scratch-file probe failed")
+    match scratch_clone(destination_parent) {
+        Ok(()) => ProbeResult::available("FICLONE scratch-file probe succeeded"),
+        Err(cause) => ProbeResult::unavailable(format!(
+            "{} does not clone files (FICLONE: {cause})",
+            crate::util::fs::filesystem_name(destination_parent)
+        )),
     }
 }
 
-fn scratch_clone_succeeds(directory: &Path) -> bool {
+/// Clone a scratch file inside `directory`; the error says why that failed.
+fn scratch_clone(directory: &Path) -> std::result::Result<(), String> {
     let token = format!("{}-{}", std::process::id(), now_unix_ns());
     let source = directory.join(format!(".forkspace-reflink-source-{token}"));
     let target = directory.join(format!(".forkspace-reflink-target-{token}"));
     let cloned = (|| {
-        fs::write(&source, b"x").ok()?;
-        let input = fs::File::open(&source).ok()?;
+        fs::write(&source, b"x").map_err(|error| format!("write a scratch file: {error}"))?;
+        let input = fs::File::open(&source).map_err(|error| error.to_string())?;
         let output = fs::OpenOptions::new()
             .create_new(true)
             .write(true)
             .open(&target)
-            .ok()?;
-        clone_file(&input, &output).then_some(())
-    })()
-    .is_some();
+            .map_err(|error| error.to_string())?;
+        if clone_file(&input, &output) {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error().to_string())
+        }
+    })();
     let _ = fs::remove_file(&source);
     let _ = fs::remove_file(&target);
     cloned

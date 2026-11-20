@@ -49,6 +49,10 @@ pub(crate) struct Frozen {
     pub copied_files: u64,
     pub copied_bytes: u64,
     pub linked_files: u64,
+    /// Of `copied_files`, those cloned rather than copied byte for byte.
+    pub reflinked_files: u64,
+    /// Why files were copied byte for byte instead of cloned, when they were.
+    pub no_reflink: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -101,6 +105,8 @@ pub(crate) fn freeze(source: &Path, basis: Basis<'_>) -> Result<Frozen> {
                         copied_files: 0,
                         copied_bytes: 0,
                         linked_files: 0,
+                        reflinked_files: 0,
+                        no_reflink: None,
                     });
                 }
             }
@@ -220,7 +226,8 @@ fn build(
     let id = format!("{started_ns:x}-{}", std::process::id());
     let staging = root.join(format!(".{id}.tmp"));
     let tree = staging.join(TREE);
-    let reflink = reflink_available(source, root);
+    let no_reflink = reflink_refusal(source, root);
+    let reflink = no_reflink.is_none();
     // With a boot id the flush can happen in the background: a copy a crash leaves unflushed
     // is checked before anything trusts it again (see [`settle`]).
     let boot = boot_id();
@@ -291,6 +298,8 @@ fn build(
         copied_files: stats.copied_files + stats.reflinked_files,
         copied_bytes: stats.copied_bytes,
         linked_files: stats.linked_files,
+        reflinked_files: stats.reflinked_files,
+        no_reflink,
     })
 }
 
@@ -747,14 +756,16 @@ fn deleted_in(delta: &Path, relative: &Path) -> bool {
     }
 }
 
+/// Why files of `source` cannot be cloned into `root`, or `None` when they can.
 #[cfg(target_os = "linux")]
-fn reflink_available(source: &Path, root: &Path) -> bool {
-    crate::backend::snapshot::reflink_probe(source, root).available
+fn reflink_refusal(source: &Path, root: &Path) -> Option<String> {
+    let probe = crate::backend::snapshot::reflink_probe(source, root);
+    (!probe.available).then_some(probe.reason)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn reflink_available(_source: &Path, _root: &Path) -> bool {
-    false
+fn reflink_refusal(_source: &Path, _root: &Path) -> Option<String> {
+    Some("file clones are Linux-only here".to_string())
 }
 
 #[cfg(target_os = "linux")]

@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 
 use crate::backend::{
-    pending_create_path, select_backend, select_backend_for_create, CreateReq, DestroyMode,
-    OverlayState, WorkspaceBackend,
+    choose_backend_for_create, pending_create_path, select_backend, select_backend_for_create,
+    CreateReq, DestroyMode, OverlayState, WorkspaceBackend,
 };
 use crate::changes::manifest::{Builder, ManifestStatus};
 use crate::error::{ForkspaceError, Result};
@@ -48,6 +48,8 @@ struct Origin {
     /// The parent's overlay layers, when stacking on an overlay workspace.
     parent_layers: Option<OverlayState>,
     backend: Box<dyn WorkspaceBackend>,
+    /// Why faster backends were passed over, when they were.
+    skipped: Option<String>,
 }
 
 /// Fork `base` into a new workspace called `name`.
@@ -62,6 +64,7 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         parent,
         parent_layers,
         backend,
+        skipped,
     } = resolve_origin(base, name, options.force_copy)?;
 
     backend.preflight(&origin)?;
@@ -98,6 +101,12 @@ pub fn create(base: PathBuf, name: &str, options: CreateOptions) -> Result<Works
         backend.kind(),
         view,
     );
+    if let Some(skipped) = skipped {
+        workspace.probe_reason = Some(match workspace.probe_reason.take() {
+            Some(reason) => format!("{reason} (passed over {skipped})"),
+            None => format!("passed over {skipped}"),
+        });
+    }
     record_fork_time_files(&workspace);
     exclude_from_backups_if_asked(&workspace);
     let prepared = give_private_git(&mut workspace)
@@ -221,12 +230,13 @@ fn resolve_origin(base: PathBuf, name: &str, force_copy: bool) -> Result<Origin>
     ensure_name_free(&state, name)?;
 
     let Some(parent) = state.workspaces.get(base.to_str().unwrap_or("")) else {
-        let backend = select_backend_for_create(&base, force_copy)?;
+        let (backend, skipped) = choose_backend_for_create(&base, force_copy)?;
         return Ok(Origin {
             path: base,
             parent: None,
             parent_layers: None,
             backend,
+            skipped,
         });
     };
 
@@ -248,6 +258,7 @@ fn resolve_origin(base: PathBuf, name: &str, force_copy: bool) -> Result<Origin>
         parent: Some(parent.name.clone()),
         parent_layers: parent.linux_state().ok().cloned(),
         backend,
+        skipped: None,
     })
 }
 

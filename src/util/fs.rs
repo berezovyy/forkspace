@@ -330,3 +330,38 @@ fn raw_flagged_rename(from: &std::ffi::CStr, to: &std::ffi::CStr, flag: RenameFl
 fn flagged_rename(_from: &Path, _to: &Path, _flag: RenameFlag) -> std::io::Result<FlaggedRename> {
     Ok(FlaggedRename::Unsupported)
 }
+
+/// The type of the filesystem holding `path` (`ext4`, `tmpfs`, ...), for messages.
+/// Used only to word messages: what a filesystem can do is always probed, never inferred
+/// from its type.
+#[cfg(target_os = "linux")]
+pub fn filesystem_name(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return "this filesystem".to_string();
+    };
+    let mut info = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: `path` is NUL-terminated and `info` is a valid out-pointer.
+    if unsafe { libc::statfs(path.as_ptr(), info.as_mut_ptr()) } != 0 {
+        return "this filesystem".to_string();
+    }
+    // SAFETY: statfs filled `info`.
+    let kind = unsafe { info.assume_init() }.f_type as u64;
+    let name = match kind {
+        0xEF53 => "ext4",
+        0x5846_5342 => "XFS",
+        0x9123_683E => "Btrfs",
+        0x0102_1994 => "tmpfs",
+        0x794C_7630 => "overlayfs",
+        0x6573_5546 => "a FUSE filesystem",
+        0x6969 => "NFS",
+        0x2FC1_2FC1 => "ZFS",
+        0xF2F5_2010 => "F2FS",
+        0x4D44 => "FAT",
+        0x2011_BAB0 => "exFAT",
+        0x5346_544E => "NTFS",
+        0xCA45_1A4E => "bcachefs",
+        _ => return format!("this filesystem (type {kind:#x})"),
+    };
+    name.to_string()
+}

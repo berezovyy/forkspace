@@ -61,6 +61,27 @@ impl ProbeReport {
             .map(|candidate| candidate.reason.as_str())
     }
 
+    /// Why the candidates before the winner were passed over, e.g. `fuse-overlayfs: cannot open
+    /// /dev/fuse: ...; reflinks: ext4 does not clone files (...)`; `None` when the first
+    /// candidate won.
+    pub fn skipped(&self) -> Option<String> {
+        let skipped: Vec<String> = self
+            .candidates
+            .iter()
+            .take_while(|candidate| !candidate.available)
+            .map(|candidate| {
+                let what = match candidate.backend {
+                    BackendKind::Overlay => "fuse-overlayfs",
+                    BackendKind::LinuxReflink => "reflinks",
+                    BackendKind::MacClone => "APFS clones",
+                    BackendKind::PlainCopy => "copy",
+                };
+                format!("{what}: {}", candidate.reason)
+            })
+            .collect();
+        (!skipped.is_empty()).then(|| skipped.join("; "))
+    }
+
     fn first_available(&self) -> Option<&ProbeVerdict> {
         self.candidates.iter().find(|candidate| candidate.available)
     }
@@ -99,4 +120,35 @@ pub fn reflink_supported(base: &Path, destination_parent: &Path) -> bool {
 #[cfg(not(target_os = "linux"))]
 pub fn reflink_supported(_base: &Path, _destination_parent: &Path) -> bool {
     false
+}
+
+#[cfg(test)]
+mod skipped_tests {
+    use super::*;
+
+    #[test]
+    fn skipped_names_each_faster_candidate_and_its_reason() {
+        let mut report = ProbeReport::default();
+        report.record(
+            BackendKind::Overlay,
+            ProbeResult::unavailable("cannot open /dev/fuse: No such file or directory"),
+        );
+        report.record(
+            BackendKind::LinuxReflink,
+            ProbeResult::unavailable(
+                "ext4 does not clone files (FICLONE: Operation not supported)",
+            ),
+        );
+        report.record(BackendKind::PlainCopy, ProbeResult::available("always"));
+        assert_eq!(
+            report.skipped().as_deref(),
+            Some(
+                "fuse-overlayfs: cannot open /dev/fuse: No such file or directory; \
+                 reflinks: ext4 does not clone files (FICLONE: Operation not supported)"
+            )
+        );
+        let mut first_wins = ProbeReport::default();
+        first_wins.record(BackendKind::Overlay, ProbeResult::available("usable"));
+        assert_eq!(first_wins.skipped(), None);
+    }
 }

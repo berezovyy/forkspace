@@ -219,13 +219,23 @@ pub fn select_backend_for_create(
     base: &Path,
     force_copy: bool,
 ) -> Result<Box<dyn WorkspaceBackend>> {
+    Ok(choose_backend_for_create(base, force_copy)?.0)
+}
+
+/// [`select_backend_for_create`], also saying why faster backends were passed over, when they
+/// were: the probes' own reasons, such as `fuse-overlayfs: cannot open /dev/fuse: ...`.
+pub fn choose_backend_for_create(
+    base: &Path,
+    force_copy: bool,
+) -> Result<(Box<dyn WorkspaceBackend>, Option<String>)> {
     if force_copy {
-        return select_backend(Some(BackendKind::PlainCopy));
+        return Ok((select_backend(Some(BackendKind::PlainCopy))?, None));
     }
     if std::env::var_os("FORKSPACE_BACKEND").is_some() {
-        return select_backend(None);
+        return Ok((select_backend(None)?, None));
     }
-    select_backend(Some(probe_create_kind(base)?))
+    let (kind, skipped) = probe_create_kind(base)?;
+    Ok((select_backend(Some(kind))?, skipped))
 }
 
 /// Where a workspace of `kind` named `name` will live. Recorded before creation so an
@@ -279,26 +289,30 @@ fn instantiate(kind: BackendKind) -> Option<Box<dyn WorkspaceBackend>> {
 
 /// The best backend kind for forking `base` on this platform.
 #[cfg(target_os = "linux")]
-fn probe_create_kind(base: &Path) -> Result<BackendKind> {
-    probe::linux_report(base, &paths::snapshot_root())
+fn probe_create_kind(base: &Path) -> Result<(BackendKind, Option<String>)> {
+    let report = probe::linux_report(base, &paths::snapshot_root());
+    let kind = report
         .winner()
         .ok_or_else(|| ForkspaceError::BackendUnavailable {
-            diagnosis: "no workspace materialization primitive passed its capability probe"
-                .to_string(),
+            diagnosis: format!(
+                "no workspace materialization primitive passed its capability probe ({})",
+                report.skipped().unwrap_or_default()
+            ),
             remedy: "ensure FORKSPACE_HOME is writable and retry".to_string(),
-        })
+        })?;
+    Ok((kind, report.skipped()))
 }
 
 /// The best backend kind for forking `base` on this platform.
 #[cfg(target_os = "macos")]
-fn probe_create_kind(_base: &Path) -> Result<BackendKind> {
-    Ok(BackendKind::MacClone)
+fn probe_create_kind(_base: &Path) -> Result<(BackendKind, Option<String>)> {
+    Ok((BackendKind::MacClone, None))
 }
 
 /// The best backend kind for forking `base` on this platform.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn probe_create_kind(_base: &Path) -> Result<BackendKind> {
-    Ok(BackendKind::PlainCopy)
+fn probe_create_kind(_base: &Path) -> Result<(BackendKind, Option<String>)> {
+    Ok((BackendKind::PlainCopy, None))
 }
 
 fn unavailable(kind: BackendKind) -> ForkspaceError {
