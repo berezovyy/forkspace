@@ -47,6 +47,26 @@ compiled in, and everything above the primitive that materializes a workspace is
 The macOS tests in this table run on Apple Silicon (macOS 26, APFS). Tests that drive Linux
 overlay layers directly are skipped there; the overlay backend itself is Linux-only.
 
+## Many workspaces on Linux
+
+What each overlay workspace costs, and the limits that apply first, measured on a Linux 7.0
+desktop (ext4 on NVMe, fuse-overlayfs 1.13, 16 CPUs, 31 GiB, no swap; 2026-11-19):
+
+| Resource | Per overlay workspace | Limit or effect |
+|---|---|---|
+| fuse-overlayfs daemon | about 1.4 MB resident | none in practice: 1,000 workspaces ≈ 1.4 GB |
+| FUSE mounts | one | `fusermount` allows 1,000 mounts in total unless root raises `mount_max` in `/etc/fuse.conf` |
+| Page cache for files read through the view | one copy per workspace, on top of the frozen copy's own | reading one 300 MB file through 3 workspaces cached 1.2 GB; the cache is reclaimable, but the copies compete for it |
+| Disk for unchanged files | none: every workspace of a project reads the same frozen copy | the first fork of a project copies it once (bytes on ext4, clones on Btrfs/XFS) |
+| `fsync` | flushed by default | `--no-fsync`: 1,000 small write+fsync calls in 80 ms instead of 1,390 ms |
+| Git index | refreshed once in the frozen copy, not written per workspace | first `git status`: no hashing; about 300 ms of cold FUSE lookups for 20,000 files |
+| inotify | whatever watchers the agent runs | 256 inotify instances per user by default (`fs.inotify.max_user_instances`): one per watching process, the first limit file watchers reach |
+
+Kernel overlayfs would share one page cache between workspaces, but mounting it without root
+needs an unprivileged user namespace, which distributions such as Ubuntu 24.04+ restrict
+(`kernel.apparmor_restrict_unprivileged_userns=1`). Without swap, the memory of idle agent
+processes cannot be reclaimed, and merging identical pages (KSM) needs root to enable.
+
 ## Limitations
 
 - Forks leave out Git worktrees nested in the project, `.claude/worktrees/` and what
