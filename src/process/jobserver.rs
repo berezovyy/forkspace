@@ -44,8 +44,11 @@ pub fn slots() -> usize {
 /// lives.
 pub struct Holder {
     fifo: PathBuf,
-    _pipe: fs::File,
+    // Fields drop in this order: the lock goes before the pipe. A holder that closed the pipe
+    // first could leave a joiner with an empty pipe it may not fill (the lock was still held),
+    // so its builds would run one job at a time.
     _lock: fs::File,
+    _pipe: fs::File,
 }
 
 impl Holder {
@@ -88,8 +91,10 @@ pub fn join() -> Option<Holder> {
     // SAFETY: flock only reads its arguments.
     let first = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
     if first {
-        // No other holder: the pipe is empty (or holds what a still-running build put back,
-        // which is at most a few extra slots for a while). Fill it.
+        // No other holder. A holder that is exiting may still have the pipe open with its
+        // slots in it: take whatever is there, then put in exactly the slot count. (A build
+        // whose `enter` was killed can still return a slot later: a few extra for a while.)
+        drain(&mut pipe);
         let _ = pipe.write_all(&vec![b'+'; slots()]);
     }
     // SAFETY: as above. Turns the exclusive lock into a shared one, or waits for the first
@@ -97,9 +102,16 @@ pub fn join() -> Option<Holder> {
     unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH) };
     Some(Holder {
         fifo,
-        _pipe: pipe,
         _lock: lock,
+        _pipe: pipe,
     })
+}
+
+/// Read everything `pipe` (non-blocking) holds right now.
+fn drain(pipe: &mut fs::File) {
+    use std::io::Read;
+    let mut buffer = [0_u8; 4096];
+    while matches!(pipe.read(&mut buffer), Ok(read) if read > 0) {}
 }
 
 /// Make `path` a named pipe of this user, or check that it is one.

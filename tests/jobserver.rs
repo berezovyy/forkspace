@@ -45,3 +45,32 @@ fn enter_commands_share_a_fifo_jobserver_with_a_slot_per_cpu() {
     let again = run(&env, TAKE_ALL);
     assert!(again.ends_with(&format!(":{cpus}")), "{again}");
 }
+
+/// A joiner that finds slots left in the pipe by a holder on its way out keeps the slot
+/// count exact instead of adding to them.
+#[test]
+#[serial]
+fn a_first_holder_replaces_leftover_slots_instead_of_adding_to_them() {
+    let env = Env::new();
+    write(&env.project().join("a.txt"), "a\n");
+    env.fork_copy("w");
+    let cpus = std::thread::available_parallelism().unwrap().get();
+    // Learn where the pipe is, then hold it open with extra slots in it, as an exiting
+    // holder that has not closed it yet would.
+    let taken = run(&env, TAKE_ALL);
+    // "result:<CARGO_MAKEFLAGS>:<count>", the flags ending in "--jobserver-auth=fifo:<path>".
+    let fifo = taken
+        .split_once("--jobserver-auth=fifo:")
+        .and_then(|(_, rest)| rest.rsplit_once(':'))
+        .map(|(path, _)| path.to_string())
+        .unwrap();
+    let mut held = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&fifo)
+        .unwrap();
+    std::io::Write::write_all(&mut held, &[b'+'; 5]).unwrap();
+    let again = run(&env, TAKE_ALL);
+    assert!(again.ends_with(&format!(":{cpus}")), "{again}");
+    drop(held);
+}
