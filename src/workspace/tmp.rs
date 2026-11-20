@@ -15,12 +15,14 @@ use crate::paths;
 /// made safely (a warning says why).
 pub fn ensure(name: &str) -> Option<PathBuf> {
     let directory = paths::private_tmp(name);
+    // The marker goes in before anything else does: another home's sweep removes a home
+    // directory without one (see `sweep_abandoned_homes`).
     match owned_private_dir(&paths::private_tmp_root())
         .and_then(|()| owned_private_dir(&paths::private_tmp_home()))
+        .and_then(|()| record_home())
         .and_then(|()| owned_private_dir(&directory))
     {
         Ok(()) => {
-            record_home();
             sweep_abandoned_homes();
             Some(directory)
         }
@@ -61,15 +63,21 @@ pub(crate) fn owned_private_dir(path: &Path) -> Result<(), String> {
 /// The file in each home's directory that names the `FORKSPACE_HOME` it belongs to.
 const HOME_MARKER: &str = ".home";
 
-fn record_home() {
+fn record_home() -> Result<(), String> {
     let marker = paths::private_tmp_home().join(HOME_MARKER);
-    if !marker.exists() {
-        let _ = fs::write(
-            &marker,
-            paths::forkspace_home().as_os_str().as_encoded_bytes(),
-        );
+    if marker.exists() {
+        return Ok(());
     }
+    fs::write(
+        &marker,
+        paths::forkspace_home().as_os_str().as_encoded_bytes(),
+    )
+    .map_err(|error| format!("{}: {error}", marker.display()))
 }
+
+/// How long a home directory without its marker is left alone: one that `ensure` is creating
+/// right now has none for a moment.
+const UNMARKED_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Remove the directories of homes that no longer exist (a test's temporary home, a home
 /// deleted by hand): nothing else would ever remove what their workspaces left there.
@@ -86,10 +94,14 @@ fn sweep_abandoned_homes() {
         {
             continue;
         }
-        let home = fs::read(path.join(HOME_MARKER))
-            .ok()
-            .map(|bytes| PathBuf::from(String::from_utf8_lossy(&bytes).into_owned()));
-        if home.is_none_or(|home| !home.exists()) {
+        let abandoned = match fs::read(path.join(HOME_MARKER)) {
+            Ok(bytes) => !PathBuf::from(String::from_utf8_lossy(&bytes).into_owned()).exists(),
+            Err(_) => entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > UNMARKED_GRACE)),
+        };
+        if abandoned {
             let _ = fs::remove_dir_all(&path);
         }
     }

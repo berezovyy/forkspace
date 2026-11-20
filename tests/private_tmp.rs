@@ -74,3 +74,29 @@ fn workspaces_of_the_same_name_in_two_homes_do_not_share_a_tmpdir() {
     );
     second.ok(&["drop", "same"]);
 }
+
+#[test]
+#[serial]
+fn a_home_directory_still_being_made_is_not_swept_but_an_old_unmarked_one_is() {
+    let env = Env::new();
+    write(&env.project().join("a.txt"), "a\n");
+    env.fork_copy("w");
+    let root = forkspace::paths::private_tmp_root();
+    std::fs::create_dir_all(&root).unwrap();
+    // Another home's `enter` between creating its directory and writing its marker.
+    let fresh = root.join("fresh-unmarked");
+    let old = root.join("old-unmarked");
+    std::fs::create_dir_all(&fresh).unwrap();
+    std::fs::create_dir_all(&old).unwrap();
+    let aged = std::process::Command::new("touch")
+        .args(["-d", "2 hours ago"])
+        .arg(&old)
+        .status()
+        .unwrap();
+    assert!(aged.success());
+
+    tmpdir_of(&env, "w");
+    assert!(fresh.exists(), "a directory being made was swept");
+    assert!(!old.exists(), "an abandoned directory was kept");
+    let _ = std::fs::remove_dir_all(&fresh);
+}
